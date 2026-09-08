@@ -1,0 +1,1 @@
+"""TradeGuard test suite"""
