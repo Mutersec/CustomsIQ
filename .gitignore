@@ -51,3 +51,6 @@ data/sanctions/sources/
 # Logs
 logs/
 *.log
+
+# Nested clone of this repo (not a submodule)
+/CustomsIQ/
