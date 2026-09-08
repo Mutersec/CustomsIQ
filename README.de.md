@@ -8,8 +8,8 @@ Sanktionslisten prüfen.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Testabdeckung](https://img.shields.io/badge/Testabdeckung-99%25-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-40%20bestanden-brightgreen)
+![Testabdeckung](https://img.shields.io/badge/Testabdeckung-96%25-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-61%20bestanden-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/Linting-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/Stil-black-000000)
@@ -64,6 +64,7 @@ entscheidet.
 | 🔍 | **Unscharfe Suche** | Freitextbeschreibung → nach Ähnlichkeitswert sortierte KN-/TARIC-Codes |
 | 🚫 | **Sanktionsprüfung** | Name → Treffer auf Verbotslisten, tolerant gegenüber Wortstellung und Teilnamen |
 | 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
+| 📥 | **Import echter Daten** | Lädt die offizielle EU-KN-Nomenklatur idempotent aus einer lokalen Datei |
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
 | 🌐 | **REST-API** | `GET /search` und `GET /screen` über FastAPI, mit erzeugter `/docs`-Oberfläche |
 | 🗄️ | **Speicherung ohne Einrichtungsaufwand** | SQLite aus der Standardbibliothek, vorbefüllt mit 20 Codes + 18 fiktiven Einträgen |
@@ -409,9 +410,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Modul | Abdeckung |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
+| `scripts/import_cn_codes.py` | 🟢 91 % |
 | `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 100 % |
 | `main.py` | 🟢 93 % |
-| **Gesamt** | **🟢 99 %** (40 Tests, Schwelle bei 80 %) |
+| **Gesamt** | **🟢 96 %** (61 Tests, Schwelle bei 80 %) |
 
 ### Getestete Grenzfälle
 
@@ -490,6 +492,52 @@ einige synthetische Personennamen, nachnamenzuerst gespeichert, wie es echte Lis
 > oder Organisation, und die Liste darf niemals für eine echte Prüfung verwendet werden. Der
 > Produktivbetrieb erfordert die offizielle konsolidierte EU-Finanzsanktionsliste.
 
+### Import der echten KN-Nomenklatur
+
+Die 20 Zeilen oben sind ein Demo-Datenbestand — **auch auf der [Live-Demo](https://customsiq-gs0u.onrender.com/)**, die bewusst
+mit den Mockdaten läuft. Für die vollständige Nomenklatur laden Sie die offizielle KN-Referenzdatei
+herunter und importieren sie:
+
+**1. Datei beschaffen** (manuell — der Importer geht nie ins Netz):
+
+| Quelle | Was zu nehmen ist |
+|---|---|
+| [Eurostat RAMON](https://ec.europa.eu/eurostat/ramon/) → *Nomenclatures* → *CN* | Die KN des laufenden Jahres als CSV oder Excel |
+| [TARIC-Auskunft](https://ec.europa.eu/taxation_customs/dds2/taric/) | Ein Warennummern-Export mit englischen Beschreibungen |
+
+**2. Importieren:**
+
+```bash
+python scripts/import_cn_codes.py path/to/cn_codes.csv
+```
+
+| Option | Standard | Zweck |
+|---|---|---|
+| `--db` | `CUSTOMSIQ_DATABASE_PATH` | Zieldatenbank; in eine eigene Datei importieren, um die Mock-DB zu erhalten |
+| `--code-column` | automatisch erkannt | Falls der Export eine unbekannte Spaltenüberschrift nutzt |
+| `--description-column` | automatisch erkannt | Dasselbe für die Beschreibungsspalte |
+| `--batch-size` | `1000` | Zeilen pro Upsert |
+
+Der Importer erkennt die üblichen RAMON-/TARIC-Spaltennamen automatisch, leitet die Kategorie aus
+dem HS-Kapitel (den ersten beiden Ziffern) ab, überspringt die Kapitel- und Positionszeilen oberhalb
+der achtstelligen Endcodes, protokolliert fehlerhafte Zeilen und überspringt sie statt abzubrechen,
+und **führt einen Upsert auf den Code aus — ein erneuter Lauf aktualisiert die Daten, statt sie zu
+verdoppeln**.
+
+Die Anwendung auf die importierte Datenbank zeigen lassen:
+
+```bash
+CUSTOMSIQ_DATABASE_PATH=cn_full.db uvicorn src.customsiq.api:app
+```
+
+Excel-Eingabe benötigt zusätzlich `pip install openpyxl`; das ist bewusst keine Projektabhängigkeit,
+da nur dieses Werkzeug sie je bräuchte. Ein CSV-Export erübrigt sie vollständig.
+
+> 📜 **Quellenangabe.** Die Kombinierte Nomenklatur ist öffentliche Referenzdatenbasis der
+> Europäischen Union (© Europäische Union) und gemäß der
+> [Weiterverwendungspolitik der Kommission](https://ec.europa.eu/info/legal-notice_en) nachnutzbar.
+> CustomsIQ verbreitet sie nicht — Sie laden sie selbst von den oben genannten Quellen.
+
 ---
 
 ## 🗺️ Roadmap
@@ -530,7 +578,9 @@ CustomsIQ/
 │   │   ├── cn_classifier.py     # 🚧 Gerüst
 │   │   └── tariff_calculator.py # 🚧 Gerüst
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
-├── tests/                       # 40 Tests — Unit, API, CLI, Prüfung, Grenzfälle
+├── scripts/import_cn_codes.py   # einmaliges Werkzeug: offizielle KN-Datei → hs_codes
+├── tests/                       # 61 Tests — Unit, API, CLI, Prüfung, Import, Grenzfälle
+│   └── fixtures/                # Beispiel-KN-Export für die Importer-Tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
 └── .env.example

@@ -145,6 +145,30 @@ def seed(
     )
 
 
+def upsert_hs_codes(conn: sqlite3.Connection, records: Iterable[HSCode]) -> int:
+    """Insert HS code records, updating any whose code is already stored.
+
+    Used by the CN import tool (scripts/import_cn_codes.py) so re-running an
+    import refreshes existing rows instead of duplicating or failing on them.
+
+    Args:
+        conn: An open database connection.
+        records: HS code records to write.
+
+    Returns:
+        The number of rows written.
+    """
+    rows = [(r.code, r.description, r.category) for r in records]
+    conn.executemany(
+        "INSERT INTO hs_codes (code, description, category) VALUES (?, ?, ?) "
+        "ON CONFLICT(code) DO UPDATE SET "
+        "description = excluded.description, category = excluded.category",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
 def fetch_all(conn: sqlite3.Connection) -> list[HSCode]:
     """Return every HS code record in the database.
 

@@ -8,8 +8,8 @@ sanctions lists.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-40%20passing-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-61%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
@@ -63,6 +63,7 @@ not a black box that decides alone.
 | 🔍 | **Fuzzy search** | Free-text description → CN/TARIC codes ranked by similarity score |
 | 🚫 | **Sanctions screening** | Name → denied-party hits, tolerant of word order and partial names |
 | 🖥️ | **Web UI** | Single-page frontend served at `/` — no build step, no framework, no CDN |
+| 📥 | **Real-data import** | Load the official EU CN nomenclature from a local file, idempotently |
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
 | 🌐 | **REST API** | `GET /search` and `GET /screen` on FastAPI, with auto-generated `/docs` |
 | 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 codes + 18 mock entities |
@@ -402,9 +403,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | Module | Coverage |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
+| `scripts/import_cn_codes.py` | 🟢 91% |
 | `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 100% |
 | `main.py` | 🟢 93% |
-| **Total** | **🟢 99%** (40 tests, gate at 80%) |
+| **Total** | **🟢 96%** (61 tests, gate at 80%) |
 
 ### Edge cases under test
 
@@ -482,6 +484,51 @@ synthetic person names, stored surname-first the way real lists publish them.
 > organisation, and the list must never be used for actual screening. Production screening
 > requires the official EU Consolidated Financial Sanctions List.
 
+### Importing the real CN nomenclature
+
+The 20-row sample above is a demo dataset — **including on the [live demo](https://customsiq-gs0u.onrender.com/)**,
+which deliberately runs the mock data. To work with the full nomenclature locally, download the
+official CN reference file and import it:
+
+**1. Get the file** (manual — the importer never touches the network):
+
+| Source | What to take |
+|---|---|
+| [Eurostat RAMON](https://ec.europa.eu/eurostat/ramon/) → *Nomenclatures* → *CN* | The current year's CN, exported as CSV or Excel |
+| [TARIC consultation](https://ec.europa.eu/taxation_customs/dds2/taric/) | A goods-code export with English descriptions |
+
+**2. Import it:**
+
+```bash
+python scripts/import_cn_codes.py path/to/cn_codes.csv
+```
+
+| Option | Default | Purpose |
+|---|---|---|
+| `--db` | `CUSTOMSIQ_DATABASE_PATH` | Target database; import into a separate file to keep the mock DB intact |
+| `--code-column` | auto-detected | Override when the export uses an unfamiliar header |
+| `--description-column` | auto-detected | Same, for the description column |
+| `--batch-size` | `1000` | Rows written per upsert |
+
+The importer auto-detects the usual RAMON/TARIC column names, derives each code's category from
+its HS chapter (the first two digits), skips the chapter/heading rows above the 8-digit leaves,
+logs and skips malformed rows rather than aborting, and **upserts on the code — so re-running it
+refreshes the data instead of duplicating it**.
+
+Point the app at the imported database to use it:
+
+```bash
+CUSTOMSIQ_DATABASE_PATH=cn_full.db uvicorn src.customsiq.api:app
+```
+
+Excel input additionally needs `pip install openpyxl`; it is deliberately not a project
+dependency, since only this tool would ever use it. Exporting the sheet to CSV avoids it entirely.
+
+> 📜 **Attribution.** The Combined Nomenclature is public reference data of the European Union
+> (© European Union), reusable under the
+> [Commission's reuse policy](https://ec.europa.eu/info/legal-notice_en). CustomsIQ redistributes
+> none of it — you download it yourself from the sources above.
+
 ---
 
 ## 🗺️ Roadmap
@@ -522,7 +569,9 @@ CustomsIQ/
 │   │   ├── cn_classifier.py     # 🚧 scaffolded
 │   │   └── tariff_calculator.py # 🚧 scaffolded
 │   └── utils/validators.py      # CN/TARIC format & country code validation
-├── tests/                       # 40 tests — unit, API, CLI, screening, edge cases
+├── scripts/import_cn_codes.py   # one-off tool: official CN file → hs_codes
+├── tests/                       # 61 tests — unit, API, CLI, screening, import, edge cases
+│   └── fixtures/                # sample CN export for the importer's tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
 └── .env.example

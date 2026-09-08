@@ -8,8 +8,8 @@ listelerine karşı tarayın.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Kapsam](https://img.shields.io/badge/kapsam-%9925-brightgreen)
-![Testler](https://img.shields.io/badge/testler-40%20ge%C3%A7ti-brightgreen)
+![Kapsam](https://img.shields.io/badge/kapsam-%9625-brightgreen)
+![Testler](https://img.shields.io/badge/testler-61%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
@@ -63,6 +63,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 🔍 | **Bulanık arama** | Serbest metin açıklama → benzerlik skoruna göre sıralanmış CN/TARIC kodları |
 | 🚫 | **Yaptırım taraması** | İsim → kelime sırasına ve kısmi isimlere toleranslı yasaklı taraf eşleşmeleri |
 | 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
+| 📥 | **Gerçek veri içe aktarma** | Resmî AB CN nomanklatürünü yerel dosyadan idempotent biçimde yükler |
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
 | 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
@@ -404,9 +405,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Modül | Kapsam |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
+| `scripts/import_cn_codes.py` | 🟢 %91 |
 | `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 %100 |
 | `main.py` | 🟢 %93 |
-| **Toplam** | **🟢 %99** (40 test, eşik %80) |
+| **Toplam** | **🟢 %96** (61 test, eşik %80) |
 
 ### Test edilen uç durumlar
 
@@ -485,6 +487,51 @@ biçimine uygun olarak soyadı önce yazılmış birkaç sentetik kişi ismi.
 > gelmez ve liste asla gerçek tarama için kullanılmamalıdır. Üretim taraması, resmî AB Konsolide Mali
 > Yaptırımlar Listesi'ni gerektirir.
 
+### Gerçek CN nomanklatürünü içe aktarma
+
+Yukarıdaki 20 satırlık örnek bir demo veri kümesidir — **[canlı demo](https://customsiq-gs0u.onrender.com/) dahil**, orası da
+bilinçli olarak mock veriyle çalışır. Tam nomanklatürle yerelde çalışmak için resmî CN referans
+dosyasını indirip içe aktarın:
+
+**1. Dosyayı edinin** (elle — içe aktarıcı ağa hiç bağlanmaz):
+
+| Kaynak | Ne alınmalı |
+|---|---|
+| [Eurostat RAMON](https://ec.europa.eu/eurostat/ramon/) → *Nomenclatures* → *CN* | Güncel yılın CN'i, CSV veya Excel olarak |
+| [TARIC danışma sitesi](https://ec.europa.eu/taxation_customs/dds2/taric/) | İngilizce açıklamalı eşya kodu dışa aktarımı |
+
+**2. İçe aktarın:**
+
+```bash
+python scripts/import_cn_codes.py path/to/cn_codes.csv
+```
+
+| Seçenek | Varsayılan | Amaç |
+|---|---|---|
+| `--db` | `CUSTOMSIQ_DATABASE_PATH` | Hedef veritabanı; mock DB'yi bozmamak için ayrı bir dosyaya aktarın |
+| `--code-column` | otomatik algılanır | Dışa aktarım alışılmadık bir başlık kullanıyorsa |
+| `--description-column` | otomatik algılanır | Aynısı, açıklama sütunu için |
+| `--batch-size` | `1000` | Her upsert'te yazılan satır sayısı |
+
+İçe aktarıcı olağan RAMON/TARIC sütun adlarını otomatik algılar, her kodun kategorisini HS
+bölümünden (ilk iki hane) türetir, 8 haneli yaprakların üstündeki bölüm/pozisyon satırlarını atlar,
+bozuk satırları iptal etmek yerine loglayıp geçer ve **kod üzerinden upsert yapar — yani yeniden
+çalıştırmak veriyi çoğaltmaz, tazeler**.
+
+Uygulamayı içe aktarılan veritabanına yöneltmek için:
+
+```bash
+CUSTOMSIQ_DATABASE_PATH=cn_full.db uvicorn src.customsiq.api:app
+```
+
+Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje bağımlılığı değildir,
+çünkü onu yalnızca bu araç kullanır. Sayfayı CSV'ye aktarmak bu ihtiyacı tamamen ortadan kaldırır.
+
+> 📜 **Atıf.** Kombine Nomanklatür, Avrupa Birliği'nin kamuya açık referans verisidir
+> (© Avrupa Birliği) ve [Komisyon'un yeniden kullanım politikası](https://ec.europa.eu/info/legal-notice_en)
+> kapsamında yeniden kullanılabilir. CustomsIQ bu veriyi dağıtmaz — yukarıdaki kaynaklardan kendiniz
+> indirirsiniz.
+
 ---
 
 ## 🗺️ Yol haritası
@@ -525,7 +572,9 @@ CustomsIQ/
 │   │   ├── cn_classifier.py     # 🚧 iskelet
 │   │   └── tariff_calculator.py # 🚧 iskelet
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
-├── tests/                       # 40 test — birim, API, CLI, tarama, uç durumlar
+├── scripts/import_cn_codes.py   # tek seferlik araç: resmî CN dosyası → hs_codes
+├── tests/                       # 61 test — birim, API, CLI, tarama, içe aktarma, uç durumlar
+│   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
 └── .env.example
