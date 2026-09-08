@@ -1,15 +1,15 @@
 """Embargo and Sanctions Screening Module"""
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 
 class EmbargoScreener:
     """Screen for embargoes, sanctions, and restricted trade."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize embargo screener."""
-        self.sanctions_lists = {}
-        self.embargo_countries = set()
+        self.sanctions_lists: dict = {}
+        self.embargo_countries: set = set()
         self._load_sanctions_data()
 
     def _load_sanctions_data(self) -> None:
@@ -17,7 +17,7 @@ class EmbargoScreener:
         # TODO: Load from data/sanctions/
         pass
 
-    def screen_entity(self, entity_name: str, country: Optional[str] = None) -> Dict:
+    def screen_entity(self, entity_name: str, country: Optional[str] = None) -> dict:
         """
         Screen an entity against sanctions lists.
 
@@ -28,17 +28,17 @@ class EmbargoScreener:
         Returns:
             Screening result with match status and details
         """
-        pass
+        raise NotImplementedError
 
-    def screen_country(self, country_code: str) -> Dict:
+    def screen_country(self, country_code: str) -> dict:
         """Check if country is under embargo."""
-        pass
+        raise NotImplementedError
 
-    def screen_product(self, gtip_code: str, destination_country: str) -> Dict:
+    def screen_product(self, gtip_code: str, destination_country: str) -> dict:
         """
         Screen product based on GTIP code and destination.
 
         Returns:
             Restriction status and applicable regulations
         """
-        pass
+        raise NotImplementedError

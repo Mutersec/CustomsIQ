@@ -1,1 +1,1 @@
-"""Unit tests for TradeGuard modules"""
+"""Unit tests for CustomsIQ modules"""

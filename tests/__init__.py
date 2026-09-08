@@ -1,1 +1,1 @@
-"""TradeGuard test suite"""
+"""CustomsIQ test suite"""

@@ -1,1 +1,1 @@
-"""Utility modules for TradeGuard"""
+"""Utility modules for CustomsIQ"""

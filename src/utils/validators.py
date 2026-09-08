@@ -1,7 +1,5 @@
 """Validation utilities for trade compliance"""
 
-from typing import Tuple
-
 
 def validate_gtip_format(gtip_code: str) -> bool:
     """
@@ -31,7 +29,7 @@ def validate_country_code(country_code: str) -> bool:
     return isinstance(country_code, str) and len(country_code) == 2 and country_code.isalpha()
 
 
-def parse_gtip_code(gtip_code: str) -> Tuple[str, str, str, str]:
+def parse_gtip_code(gtip_code: str) -> tuple[str, str, str, str]:
     """
     Parse GTIP code into its components.
 
@@ -47,9 +45,4 @@ def parse_gtip_code(gtip_code: str) -> Tuple[str, str, str, str]:
     if not validate_gtip_format(gtip_code):
         raise ValueError(f"Invalid GTIP format: {gtip_code}")
 
-    return (
-        gtip_code[0:2],
-        gtip_code[2:4],
-        gtip_code[4:8],
-        gtip_code[8:12]
-    )
+    return (gtip_code[0:2], gtip_code[2:4], gtip_code[4:8], gtip_code[8:12])

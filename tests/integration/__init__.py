@@ -1,1 +1,1 @@
-"""Integration tests for TradeGuard"""
+"""Integration tests for CustomsIQ"""
