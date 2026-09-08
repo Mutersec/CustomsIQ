@@ -3,12 +3,13 @@
 # 🛃 CustomsIQ
 
 ### Gümrük ve dış ticaret operasyonları için uyum araç seti
-**Sade bir ürün açıklamasını doğru HS / CN tarife koduna dönüştürün.**
+**Eşyayı doğru HS / CN tarife kodunda sınıflandırın ve karşı tarafları yaptırım
+listelerine karşı tarayın.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Kapsam](https://img.shields.io/badge/kapsam-%9725-brightgreen)
-![Testler](https://img.shields.io/badge/testler-20%20ge%C3%A7ti-brightgreen)
+![Kapsam](https://img.shields.io/badge/kapsam-%9825-brightgreen)
+![Testler](https://img.shields.io/badge/testler-37%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
@@ -56,53 +57,65 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | | Özellik | Açıklama |
 |---|---|---|
 | 🔍 | **Bulanık arama** | Serbest metin açıklama → benzerlik skoruna göre sıralanmış CN/TARIC kodları |
-| 💻 | **Etkileşimli CLI** | Açıklamayı yazın, terminalde anında sıralı sonuç alın |
-| 🌐 | **REST API** | FastAPI ile sunulan `GET /search` ve otomatik üretilen `/docs` arayüzü |
-| 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 demo koduyla hazır gelir |
-| ⚙️ | **Ortam tabanlı yapılandırma** | `pydantic-settings` `.env` dosyasını okur — sabit kodlanmış yol yok |
+| 🚫 | **Yaptırım taraması** | İsim → kelime sırasına ve kısmi isimlere toleranslı yasaklı taraf eşleşmeleri |
+| 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
+| 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
+| 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
+| ⚙️ | **Ortam tabanlı yapılandırma** | `pydantic-settings` `.env` dosyasını okur — sabit kodlanmış yol veya eşik yok |
 | 🚨 | **Tipli hatalar** | `InvalidQueryError`, `HSCodeNotFoundError` → temiz HTTP `400` / `404` semantiği |
-| 🧪 | **Zorunlu kalite** | ruff + black + mypy + %97 kapsam; her push'ta CI tarafından denetlenir |
+| 🧪 | **Zorunlu kalite** | ruff + black + mypy + %98 kapsam; her push'ta CI tarafından denetlenir |
 
 ---
 
 ## 🏗️ Mimari
 
-CLI ve HTTP API, **ortak tek bir `search()` fonksiyonunun ince birer adaptörüdür** — sıralama
-mantığı tam olarak tek bir yerde bulunur ve asla tekrarlanmaz.
+İki yetenek — **CN kodu araması** ve **yaptırım taraması** — ortak tek bir eşleştirme katmanı
+üzerinde durur. CLI ve HTTP API, `search()` ve `screen_entity()` fonksiyonlarının ince birer
+adaptörüdür; skorlama ve doğrulama mantığı tam olarak tek bir yerde bulunur, asla tekrarlanmaz.
 
 ```mermaid
 flowchart LR
     subgraph Arayuzler["Arayüzler"]
         CLI["💻 main.py<br/>Etkileşimli CLI"]
-        API["🌐 api.py<br/>FastAPI /search"]
+        API["🌐 api.py<br/>FastAPI /search · /screen"]
     end
 
-    CORE["🔍 search.py<br/>doğrulama + sıralama"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes")]
+    SEARCH["🔍 search.py<br/>CN kodu sıralama"]
+    SCREEN["🚫 embargo_screener.py<br/>yaptırım eşleşmeleri"]
+    MATCH["🧩 matching.py<br/>doğrulama + benzerlik"]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
-    CLI --> CORE
-    API --> CORE
-    CORE --> DB
-    CORE -. hata fırlatır .-> EXC
+    CLI --> SEARCH
+    CLI --> SCREEN
+    API --> SEARCH
+    API --> SCREEN
+    SEARCH --> MATCH
+    SCREEN --> MATCH
+    SEARCH --> DB
+    SCREEN --> DB
+    MATCH -. hata fırlatır .-> EXC
     DB -. hata fırlatır .-> EXC
     CFG --> CLI
     CFG --> API
+    CFG --> SCREEN
 ```
 
 ### Modül sorumlulukları
 
 | Modül | Sorumluluk |
 |---|---|
-| `models.py` | `HSCode` — değişmez `(kod, açıklama, kategori)` kaydı |
-| `database.py` | SQLite şeması, bağlantı, örnek veri, `fetch_all()`, `get_by_code()` |
-| `search.py` | Sorgu doğrulama + `difflib` benzerlik sıralaması (**tek doğruluk kaynağı**) |
+| `models.py` | `HSCode` ve `SanctionedEntity` — değişmez kayıtlar |
+| `database.py` | SQLite şeması, bağlantı, örnek veri, `fetch_all*()`, `get_by_code()` |
+| `matching.py` | Girdi doğrulama + benzerlik skorlaması (**her iki yetenek de bunu kullanır**) |
+| `search.py` | CN kodlarını açıklama benzerliğine göre sıralar |
+| `embargo_screener.py` | Yaptırım listesi eşleşmelerini isim benzerliğine göre sıralar |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError` |
 | `config.py` | `pydantic-settings`; `CUSTOMSIQ_*` ortam değişkenlerini ve `.env` dosyasını okur |
 | `logging_config.py` | Ortak loglama kurulumu — stdout'a sade format, hiçbir yerde `print()` yok |
-| `main.py` | Etkileşimli CLI giriş noktası |
-| `api.py` | FastAPI uygulaması: `GET /` ve `GET /search` |
+| `main.py` | Etkileşimli CLI giriş noktası (arama + `screen <isim>`) |
+| `api.py` | FastAPI uygulaması: `GET /`, `GET /search`, `GET /screen` |
 
 ### Veri modeli
 
@@ -111,6 +124,13 @@ CREATE TABLE hs_codes (
     code        TEXT PRIMARY KEY,   -- örn. "6109100000"
     description TEXT NOT NULL,      -- örn. "Cotton T-shirts, knitted"
     category    TEXT NOT NULL       -- örn. "Textile"
+);
+
+CREATE TABLE sanctioned_entities (
+    name        TEXT PRIMARY KEY,   -- örn. "Northwind Maritime Holdings Ltd"
+    country     TEXT NOT NULL,      -- ISO 3166-1 alpha-2, örn. "CY"
+    list_source TEXT NOT NULL,      -- örn. "EU Consolidated Financial Sanctions List"
+    date_added  TEXT NOT NULL       -- ISO 8601 tarih, örn. "2023-04-12"
 );
 ```
 
@@ -134,7 +154,7 @@ yeterlidir.
 
 ### 🔀 Ne zaman geçilmeli
 
-Aşağıdakilerden **herhangi biri** gerçekleştiğinde `search.py` içindeki `_similarity()` fonksiyonunu
+Aşağıdakilerden **herhangi biri** gerçekleştiğinde `matching.py` içindeki `similarity()` fonksiyonunu
 `rapidfuzz.fuzz.WRatio` ile değiştirin:
 
 1. **📈 Ölçek** — gerçek tarife cetveli (on binlerce satır) doğrusal taramayı ölçülebilir biçimde yavaşlattığında.
@@ -151,7 +171,32 @@ Aşağıdakilerden **herhangi biri** gerçekleştiğinde `search.py` içindeki `
 | **Postgres değil SQLite** | Tek düğümlü, ağırlıklı okuma yapılan referans verisi; sıfır operasyon yükü | Çoklu yazar eşzamanlılığı gerektiğinde bağlantı katmanı değiştirilir |
 | **`check_same_thread=False` ile tek paylaşımlı bağlantı** | Basit; FastAPI'nin thread havuzuyla çalışır | Eşzamanlı yazmalar ortaya çıktığında bağlantı havuzu |
 | **`print()` değil loglama** | CLI ve API için aynı çıktı yolu; seviye yapılandırmayla kontrol edilir | — |
-| **Doğrulamanın `search()` içinde olması** | Hem CLI hem API bunu devralır; yeni bir çağıran eklenerek atlanması imkânsızdır | — |
+| **Doğrulamanın `matching.py` içinde olması** | Arama, tarama, CLI ve API bunu devralır; yeni bir çağıran eklenerek atlanması imkânsızdır | — |
+| **`EmbargoScreeningError` eklenmemesi** | Taramanın girdi doğrulaması aramanınkiyle birebir aynı; yeni sınıf yerine `InvalidQueryError` yeniden kullanılır | Tarama gerçekten farklı bir hata durumu kazanırsa eklenir |
+
+### 🚫 İsim eşleştirmesi, ürün eşleştirmesi değildir
+
+Yaptırım taraması tutarlılık ve sıfır bağımlılık için aynı `difflib` çekirdeğini kullanır; ancak
+isimler, düz orana ek olarak iki sinyal daha gerektirdi. Demo liste üzerinde ölçülen değerler:
+
+| Sorgu ↔ listedeki isim | düz | token-sıralı | token örtüşmesi |
+|---|---|---|---|
+| `John Smith` ↔ `Smith, John` | 0.50 ❌ | **1.00** ✅ | 1.00 |
+| `Northwind Maritime` ↔ `Northwind Maritime Holdings Ltd` | 0.73 ❌ | 0.73 ❌ | **1.00** ✅ |
+| `Smith` ↔ `John Smith` | 0.67 | 0.67 | 1.00 ⚠️ |
+
+Kelime sırası varyantları **token sıralaması**, kısmi şirket isimleri ise **token örtüşmesi**
+gerektirir: 0.75 eşiğinde diğer iki sinyal 2. satırı tamamen kaçırır. Örtüşme terimi yalnızca kısa
+ismin ≥ 2 kelimesi olduğunda dikkate alınır; aksi hâlde tek başına bir soyadı (3. satır) o soyadını
+içeren her kaydı yakalardı. Tarama, geçerli sinyallerin en yükseğini alır ve bilinçli olarak
+kapsayıcıdır: bir yanlış negatif yaptırımlı tarafın geçmesine yol açar, yanlış pozitif ise uzmana
+yalnızca bir bakışa mal olur.
+
+**`rapidfuzz`'a geçişi ilk gerektirecek olan da ürün araması değil, budur.** Bu iki sinyal aslında
+`rapidfuzz`'un `token_sort_ratio` ve `token_set_ratio` fonksiyonlarının elle yazılmış hâlidir; ayrıca
+`partial_ratio` ve çok daha hızlı tarama sunar. Gerçek AB Konsolide Mali Yaptırımlar Listesi binlerce
+kayıt içerir, her taramada baştan taranır ve `difflib`'in karşılığı olmayan takma ad ile
+transliterasyon desteği gerektirir.
 
 ### 🇪🇺 AB uyumu
 
@@ -194,6 +239,7 @@ Tüm ayarlar ortam değişkenlerinden veya `.env` dosyasından okunur:
 |---|---|---|
 | `CUSTOMSIQ_DATABASE_PATH` | `customsiq.db` | SQLite dosya yolu (geçici veritabanı için `:memory:`) |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python log seviyesi (`DEBUG`, `INFO`, `WARNING`, …) |
+| `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Tarama eşleşmesi için asgari isim benzerlik skoru (0–1) |
 
 ---
 
@@ -206,15 +252,25 @@ python -m src.customsiq.main
 ```
 
 ```text
-seeded 20 HS code records
-CustomsIQ - HS Code Search (type 'quit' to exit)
+seeded 20 rows into hs_codes
+seeded 18 rows into sanctioned_entities
+CustomsIQ (type 'quit' to exit)
+Enter a product description to search CN codes,
+or 'screen <name>' to run a sanctions check.
 
-Product description: cotton t-shirt
+> cotton t-shirt
 1. 6109100000  (74%)  Cotton T-shirts, knitted        [Textile]
 2. 6203420000  (57%)  Men's cotton trousers           [Textile]
 3. 6204620000  (54%)  Women's cotton trousers         [Textile]
 4. 6110200000  (42%)  Cotton pullovers and sweaters   [Textile]
 5. 8528721000  (35%)  Color television receivers      [Electronics]
+
+> screen Northwind Maritime
+1 potential sanctions match(es) for 'Northwind Maritime':
+1. Northwind Maritime Holdings Ltd  (100%)  [CY]  EU Consolidated Financial Sanctions List  listed 2023-04-12
+
+> screen Quokka Beachwear
+No sanctions match for 'Quokka Beachwear'.
 ```
 
 ### 🌐 REST API
@@ -267,6 +323,7 @@ for result in search(conn, "lithium battery", limit=3):
 |---|---|---|
 | `GET` | `/` | Servis bilgisi — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Ürün açıklaması için sıralanmış CN kodu eşleşmeleri |
+| `GET` | `/screen` | Kişi veya kuruluş ismi için yaptırım listesi eşleşmeleri |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -275,6 +332,31 @@ for result in search(conn, "lithium battery", limit=3):
 |---|---|---|---|---|
 | `q` | `str` | *zorunlu* | 1–500 karakter, boş olamaz | Serbest metin ürün açıklaması |
 | `limit` | `int` | `5` | 1–50 | Azami sonuç sayısı |
+
+**`GET /screen` parametreleri**
+
+| Parametre | Tip | Varsayılan | Kısıtlar | Açıklama |
+|---|---|---|---|---|
+| `name` | `str` | *zorunlu* | 1–500 karakter, boş olamaz | Taranacak kişi veya kuruluş ismi |
+
+Tarama `limit` almaz: eşiğin üzerindeki her eşleşme döndürülür; sessizce kırpılmış bir eşleşme
+listesi, kötü bir sıralamadan öte bir uyum ihlali olurdu.
+
+```bash
+curl "http://localhost:8000/screen?name=Northwind+Maritime"
+```
+
+```json
+[
+  {
+    "name": "Northwind Maritime Holdings Ltd",
+    "country": "CY",
+    "list_source": "EU Consolidated Financial Sanctions List",
+    "date_added": "2023-04-12",
+    "score": 1.0
+  }
+]
+```
 
 **Durum kodları**
 
@@ -307,21 +389,25 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 
 | Modül | Kapsam |
 |---|---|
-| `api.py` · `config.py` · `database.py` | 🟢 %100 |
+| `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
 | `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 %100 |
-| `main.py` | 🟢 %90 |
-| **Toplam** | **🟢 %97,5** (20 test, eşik %80) |
+| `api.py` | 🟢 %96 |
+| `main.py` | 🟢 %93 |
+| **Toplam** | **🟢 %98** (37 test, eşik %80) |
 
 ### Test edilen uç durumlar
 
 | Durum | Beklenen davranış |
 |---|---|
-| Boş / yalnızca boşluktan oluşan sorgu | `InvalidQueryError` → HTTP `400` |
+| Boş / yalnızca boşluktan oluşan sorgu veya isim | `InvalidQueryError` → HTTP `400` |
 | 500 karakterden uzun sorgu | `InvalidQueryError` → HTTP `400` |
 | SQL injection biçimli girdi (`'; DROP TABLE hs_codes; --`) | Parametreli sorgularla güvenle işlenir; tablo bozulmaz |
-| Emoji ve ASCII dışı girdi (`📱 telefon şarj aleti`) | Normal şekilde skorlanır, çökme olmaz |
+| Emoji ve ASCII dışı girdi (`📱 Handy-Ladegerät`, `Ünal Çelik A.Ş.`) | Normal şekilde skorlanır, çökme olmaz |
+| Ters kelime sıralı isim (`Aleksandr Voronin-Teske`) | Soyadı önce yazılmış liste kaydıyla eşleşir |
+| Kısmi şirket ismi (`Northwind Maritime`) | Listedeki tam isimle eşleşir |
+| Listede karşılığı olmayan isim | Hata değil, boş sonuç |
 | Bilinmeyen kodun birebir sorgulanması | `HSCodeNotFoundError` |
-| Dolu veritabanının yeniden doldurulması | Idempotent — mükerrer kayıt oluşmaz |
+| Dolu veritabanının yeniden doldurulması | Idempotent — iki tabloda da mükerrer kayıt oluşmaz |
 
 ---
 
@@ -369,19 +455,39 @@ koduyla** doldurulur:
 > [AB TARIC veritabanındaki](https://ec.europa.eu/taxation_customs/dds2/taric) resmî nomanklatür
 > gereklidir.
 
+### Yaptırım listesi
+
+`sanctioned_entities` tablosu, AB Konsolide Mali Yaptırımlar Listesi kayıtları tarzında **18 kayıtla**
+doldurulur: uydurma ticaret, denizcilik ve mühendislik şirketleri ile gerçek listelerin yayımlama
+biçimine uygun olarak soyadı önce yazılmış birkaç sentetik kişi ismi.
+
+| Alan | Örnek |
+|---|---|
+| `name` | `Northwind Maritime Holdings Ltd` · `Voronin-Teske, Aleksandr` |
+| `country` | `CY`, `AE`, `DE`, `RS`, `MT`, `NL`, … |
+| `list_source` | `EU Consolidated Financial Sanctions List` · `EU Dual-Use Export Control Watchlist` |
+| `date_added` | `2023-04-12` |
+
+> 🚨 **Bu listedeki her isim kurgusaldır.** Hiçbiri gerçek bir yaptırımlı kişi veya kuruluşa karşılık
+> gelmez ve liste asla gerçek tarama için kullanılmamalıdır. Üretim taraması, resmî AB Konsolide Mali
+> Yaptırımlar Listesi'ni gerektirir.
+
 ---
 
 ## 🗺️ Yol haritası
 
-CN arama modülü bugün kullanıma hazırdır. Üç uyum modülü daha iskelet hâlinde yer alıyor ve
-uygulanmayı bekliyor — gerçek bir mantık içermedikleri sürece kapsam eşiğinin dışında tutulurlar:
+CN kodu araması ve yaptırım taraması bugün kullanıma hazırdır. İki uyum modülü iskelet hâlinde
+kalmaya devam ediyor — gerçek bir mantık içermedikleri sürece kapsam eşiğinin dışında tutulurlar:
 
-| Modül | Durum | Planlanan kapsam |
+| Modül | Durum | Kapsam |
 |---|---|---|
 | `search.py` + `api.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden bulanık CN kodu araması |
+| `embargo_screener.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden yasaklı taraf isim taraması |
 | `cn_classifier.py` | 🚧 İskelet | AB TARIC veri kümesine karşı kural ve güven skoru tabanlı sınıflandırma |
 | `tariff_calculator.py` | 🚧 İskelet | Vergi hesaplama, menşe kuralları, AB tercihli ticaret anlaşması oranları |
-| `embargo_screener.py` | 🚧 İskelet | AB Konsolide Mali Yaptırımlar Listesi'ne karşı tarama |
+
+Tarama için planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri, ürün/varış yeri kısıtları ve
+kuruluş isimleri için takma ad ile transliterasyon desteği.
 
 ---
 
@@ -392,19 +498,20 @@ CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── src/
 │   ├── customsiq/
-│   │   ├── models.py            # HSCode kaydı
-│   │   ├── database.py          # SQLite katmanı + örnek veri
-│   │   ├── search.py            # doğrulama + benzerlik sıralaması
+│   │   ├── models.py            # HSCode + SanctionedEntity kayıtları
+│   │   ├── database.py          # SQLite katmanı + örnek veri (iki tablo)
+│   │   ├── matching.py          # ortak doğrulama + benzerlik skorlaması
+│   │   ├── search.py            # CN kodu sıralaması
+│   │   ├── embargo_screener.py  # yaptırım isim taraması
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # ortak loglama kurulumu
 │   │   ├── main.py              # CLI giriş noktası
 │   │   ├── api.py               # FastAPI uygulaması
 │   │   ├── cn_classifier.py     # 🚧 iskelet
-│   │   ├── tariff_calculator.py # 🚧 iskelet
-│   │   └── embargo_screener.py  # 🚧 iskelet
+│   │   └── tariff_calculator.py # 🚧 iskelet
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
-├── tests/                       # 20 test — birim, API, CLI, uç durumlar
+├── tests/                       # 37 test — birim, API, CLI, tarama, uç durumlar
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
 └── .env.example

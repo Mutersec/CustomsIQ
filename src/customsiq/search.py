@@ -2,16 +2,13 @@
 
 import logging
 import sqlite3
-from difflib import SequenceMatcher
 from typing import NamedTuple
 
 from src.customsiq.database import fetch_all
-from src.customsiq.exceptions import InvalidQueryError
+from src.customsiq.matching import similarity, validate_query
 from src.customsiq.models import HSCode
 
 logger = logging.getLogger(__name__)
-
-MAX_QUERY_LENGTH = 500
 
 
 class SearchResult(NamedTuple):
@@ -19,11 +16,6 @@ class SearchResult(NamedTuple):
 
     hs_code: HSCode
     score: float
-
-
-def _similarity(a: str, b: str) -> float:
-    """Return a case-insensitive similarity ratio between two strings, in [0, 1]."""
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
 def search(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[SearchResult]:
@@ -41,13 +33,10 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[SearchR
         InvalidQueryError: If the query is empty/whitespace-only, or longer
             than MAX_QUERY_LENGTH characters.
     """
-    if not query.strip():
-        raise InvalidQueryError("Query must not be empty.")
-    if len(query) > MAX_QUERY_LENGTH:
-        raise InvalidQueryError(f"Query must be at most {MAX_QUERY_LENGTH} characters.")
+    validate_query(query)
 
     logger.debug("searching for query=%r limit=%d", query, limit)
     records = fetch_all(conn)
-    scored = [SearchResult(record, _similarity(query, record.description)) for record in records]
+    scored = [SearchResult(record, similarity(query, record.description)) for record in records]
     scored.sort(key=lambda result: result.score, reverse=True)
     return scored[:limit]

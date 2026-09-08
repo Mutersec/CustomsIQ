@@ -22,7 +22,6 @@ source = ["src/customsiq"]
 omit = [
     "src/customsiq/cn_classifier.py",
     "src/customsiq/tariff_calculator.py",
-    "src/customsiq/embargo_screener.py",
 ]
 
 [tool.coverage.report]

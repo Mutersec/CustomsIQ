@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     database_path: str = "customsiq.db"
     log_level: str = "INFO"
+    screening_threshold: float = 0.75
 
 
 settings = Settings()

@@ -6,8 +6,9 @@ import pytest
 
 from src.customsiq.database import SAMPLE_DATA, fetch_all, get_by_code, get_connection, seed
 from src.customsiq.exceptions import HSCodeNotFoundError, InvalidQueryError
+from src.customsiq.matching import MAX_QUERY_LENGTH
 from src.customsiq.models import HSCode
-from src.customsiq.search import MAX_QUERY_LENGTH, search
+from src.customsiq.search import search
 
 
 @pytest.fixture

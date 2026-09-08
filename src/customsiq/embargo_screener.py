@@ -1,45 +1,56 @@
-"""Embargo and Sanctions Screening Module"""
+"""Sanctions / denied-party screening against the stored entity list."""
 
-from typing import Optional
+import logging
+import sqlite3
+from typing import NamedTuple, Optional
+
+from src.customsiq.config import settings
+from src.customsiq.database import fetch_all_entities
+from src.customsiq.matching import name_similarity, validate_query
+from src.customsiq.models import SanctionedEntity
+
+logger = logging.getLogger(__name__)
 
 
-class EmbargoScreener:
-    """Screen for embargoes, sanctions, and restricted trade."""
+class ScreeningMatch(NamedTuple):
+    """A sanctioned entity that a screened name may refer to."""
 
-    def __init__(self) -> None:
-        """Initialize embargo screener."""
-        self.sanctions_lists: dict = {}
-        self.embargo_countries: set = set()
-        self._load_sanctions_data()
+    entity: SanctionedEntity
+    score: float
 
-    def _load_sanctions_data(self) -> None:
-        """Load sanctions and embargo data from sources."""
-        # TODO: Load from data/sanctions/ (source: EU Consolidated Financial
-        # Sanctions List)
-        pass
 
-    def screen_entity(self, entity_name: str, country: Optional[str] = None) -> dict:
-        """
-        Screen an entity against sanctions lists.
+def screen_entity(
+    conn: sqlite3.Connection, name: str, threshold: Optional[float] = None
+) -> list[ScreeningMatch]:
+    """Screen a name against the sanctions list and return every plausible hit.
 
-        Args:
-            entity_name: Company or individual name
-            country: Country of origin
+    Unlike `search.search`, this takes no `limit`: an analyst has to see every
+    entity above the threshold, since a silently truncated hit list would be a
+    compliance failure rather than just a worse ranking.
 
-        Returns:
-            Screening result with match status and details
-        """
-        raise NotImplementedError
+    Args:
+        conn: An open database connection.
+        name: Person or organisation name to screen.
+        threshold: Minimum similarity score to report. Defaults to
+            `settings.screening_threshold`.
 
-    def screen_country(self, country_code: str) -> dict:
-        """Check if country is under embargo."""
-        raise NotImplementedError
+    Returns:
+        Matches scoring at or above the threshold, highest score first.
 
-    def screen_product(self, cn_code: str, destination_country: str) -> dict:
-        """
-        Screen product based on CN code and destination.
+    Raises:
+        InvalidQueryError: If the name is empty/whitespace-only, or longer
+            than MAX_QUERY_LENGTH characters.
+    """
+    validate_query(name)
+    cutoff = settings.screening_threshold if threshold is None else threshold
 
-        Returns:
-            Restriction status and applicable regulations
-        """
-        raise NotImplementedError
+    logger.debug("screening name=%r threshold=%.2f", name, cutoff)
+    matches = [
+        ScreeningMatch(entity, score)
+        for entity in fetch_all_entities(conn)
+        if (score := name_similarity(name, entity.name)) >= cutoff
+    ]
+    matches.sort(key=lambda match: match.score, reverse=True)
+    if matches:
+        logger.info("screening hit: %r matched %d listed record(s)", name, len(matches))
+    return matches

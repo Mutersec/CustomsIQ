@@ -3,12 +3,13 @@
 # 🛃 CustomsIQ
 
 ### Trade compliance toolkit for customs & foreign trade operations
-**Turn a plain-language product description into the right HS / CN tariff code.**
+**Classify goods under the right HS / CN tariff code, and screen counterparties against
+sanctions lists.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-20%20passing-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-37%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
@@ -56,53 +57,65 @@ not a black box that decides alone.
 | | Feature | Description |
 |---|---|---|
 | 🔍 | **Fuzzy search** | Free-text description → CN/TARIC codes ranked by similarity score |
-| 💻 | **Interactive CLI** | Type a description, get instant ranked results in the terminal |
-| 🌐 | **REST API** | `GET /search` served by FastAPI, with auto-generated `/docs` |
-| 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 demo codes |
-| ⚙️ | **Env-based config** | `pydantic-settings` reads `.env` — no hardcoded paths |
+| 🚫 | **Sanctions screening** | Name → denied-party hits, tolerant of word order and partial names |
+| 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
+| 🌐 | **REST API** | `GET /search` and `GET /screen` on FastAPI, with auto-generated `/docs` |
+| 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 codes + 18 mock entities |
+| ⚙️ | **Env-based config** | `pydantic-settings` reads `.env` — no hardcoded paths or thresholds |
 | 🚨 | **Typed errors** | `InvalidQueryError`, `HSCodeNotFoundError` → clean HTTP 400 / 404 semantics |
-| 🧪 | **Enforced quality** | ruff + black + mypy + 97% coverage, gated in CI on every push |
+| 🧪 | **Enforced quality** | ruff + black + mypy + 98% coverage, gated in CI on every push |
 
 ---
 
 ## 🏗️ Architecture
 
-The CLI and the HTTP API are **thin adapters over one shared `search()` function** — ranking logic
-exists in exactly one place and is never duplicated.
+Two features — **CN code search** and **sanctions screening** — sit on one shared matching layer.
+The CLI and the HTTP API are thin adapters over `search()` and `screen_entity()`; scoring and
+validation logic exists in exactly one place and is never duplicated.
 
 ```mermaid
 flowchart LR
     subgraph Interfaces
         CLI["💻 main.py<br/>Interactive CLI"]
-        API["🌐 api.py<br/>FastAPI /search"]
+        API["🌐 api.py<br/>FastAPI /search · /screen"]
     end
 
-    CORE["🔍 search.py<br/>validate + rank"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes")]
+    SEARCH["🔍 search.py<br/>rank CN codes"]
+    SCREEN["🚫 embargo_screener.py<br/>rank sanctions hits"]
+    MATCH["🧩 matching.py<br/>validate + similarity"]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
-    CLI --> CORE
-    API --> CORE
-    CORE --> DB
-    CORE -. raises .-> EXC
+    CLI --> SEARCH
+    CLI --> SCREEN
+    API --> SEARCH
+    API --> SCREEN
+    SEARCH --> MATCH
+    SCREEN --> MATCH
+    SEARCH --> DB
+    SCREEN --> DB
+    MATCH -. raises .-> EXC
     DB -. raises .-> EXC
     CFG --> CLI
     CFG --> API
+    CFG --> SCREEN
 ```
 
 ### Module responsibilities
 
 | Module | Responsibility |
 |---|---|
-| `models.py` | `HSCode` — the immutable `(code, description, category)` record |
-| `database.py` | SQLite schema, connection, seed data, `fetch_all()`, `get_by_code()` |
-| `search.py` | Query validation + `difflib` similarity ranking (**the single source of truth**) |
+| `models.py` | `HSCode` and `SanctionedEntity` — the immutable records |
+| `database.py` | SQLite schema, connection, seed data, `fetch_all*()`, `get_by_code()` |
+| `matching.py` | Input validation + similarity scoring (**shared by both features**) |
+| `search.py` | Ranks CN codes by description similarity |
+| `embargo_screener.py` | Ranks sanctions-list hits by name similarity |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError` |
 | `config.py` | `pydantic-settings`; reads `CUSTOMSIQ_*` env vars and `.env` |
 | `logging_config.py` | Shared logging setup — plain formatter to stdout, no `print()` anywhere |
-| `main.py` | Interactive CLI entry point |
-| `api.py` | FastAPI app: `GET /` and `GET /search` |
+| `main.py` | Interactive CLI entry point (search + `screen <name>`) |
+| `api.py` | FastAPI app: `GET /`, `GET /search`, `GET /screen` |
 
 ### Data model
 
@@ -111,6 +124,13 @@ CREATE TABLE hs_codes (
     code        TEXT PRIMARY KEY,   -- e.g. "6109100000"
     description TEXT NOT NULL,      -- e.g. "Cotton T-shirts, knitted"
     category    TEXT NOT NULL       -- e.g. "Textile"
+);
+
+CREATE TABLE sanctioned_entities (
+    name        TEXT PRIMARY KEY,   -- e.g. "Northwind Maritime Holdings Ltd"
+    country     TEXT NOT NULL,      -- ISO 3166-1 alpha-2, e.g. "CY"
+    list_source TEXT NOT NULL,      -- e.g. "EU Consolidated Financial Sanctions List"
+    date_added  TEXT NOT NULL       -- ISO 8601 date, e.g. "2023-04-12"
 );
 ```
 
@@ -133,7 +153,7 @@ or audit, and no install friction — while being entirely adequate at the curre
 
 ### 🔀 When to migrate
 
-Swap `_similarity()` in `search.py` for `rapidfuzz.fuzz.WRatio` as soon as **any** of these becomes true:
+Swap `similarity()` in `matching.py` for `rapidfuzz.fuzz.WRatio` as soon as **any** of these becomes true:
 
 1. **📈 Scale** — the real tariff schedule (tens of thousands of rows) makes the linear scan measurably slow.
 2. **🔤 Word order** — queries like *"trousers cotton men's"* must match *"Men's cotton trousers"*, which positional matching handles poorly.
@@ -149,7 +169,32 @@ Swap `_similarity()` in `search.py` for `rapidfuzz.fuzz.WRatio` as soon as **any
 | **SQLite, not Postgres** | Single-node, read-mostly reference data; zero ops overhead | Swap the connection layer if multi-writer concurrency arrives |
 | **One shared connection** with `check_same_thread=False` | Simple, works with FastAPI's threadpool | Connection pool once concurrent writes appear |
 | **Logging, not `print()`** | Same output path for CLI and API; level controlled by config | — |
-| **Validation inside `search()`** | Both CLI and API inherit it; impossible to bypass by adding a new caller | — |
+| **No `EmbargoScreeningError`** | Screening's input validation is identical to search's, so it reuses `InvalidQueryError` rather than duplicating a class | Add one if screening grows a genuinely distinct failure mode |
+| **Validation inside `matching.py`** | Search, screening, CLI and API all inherit it; impossible to bypass by adding a new caller | — |
+
+### 🚫 Name matching is not product matching
+
+Sanctions screening reuses the same `difflib` core for consistency and zero dependencies, but
+names needed two extra signals on top of the plain ratio. Measured against the demo list:
+
+| Query vs. listed name | plain | token-sorted | token overlap |
+|---|---|---|---|
+| `John Smith` vs `Smith, John` | 0.50 ❌ | **1.00** ✅ | 1.00 |
+| `Northwind Maritime` vs `Northwind Maritime Holdings Ltd` | 0.73 ❌ | 0.73 ❌ | **1.00** ✅ |
+| `Smith` vs `John Smith` | 0.67 | 0.67 | 1.00 ⚠️ |
+
+Word-order variants need **token sorting**; partial company names need a **token-overlap** term,
+since at a 0.75 threshold both other signals miss row 2 outright. The overlap term is only trusted
+when the shorter name has ≥ 2 tokens — otherwise a lone surname (row 3) matches every record
+containing it. Screening takes the max of the applicable signals and is deliberately
+over-inclusive: a false negative lets a sanctioned party through, a false positive costs an
+analyst one glance.
+
+**This — not product search — is what will justify `rapidfuzz` first.** Those two signals are
+hand-rolled versions of its `token_sort_ratio` and `token_set_ratio`, and it also brings
+`partial_ratio` and far faster scanning. The real EU Consolidated Financial Sanctions List holds
+thousands of entries, rescanned on every screen, and needs alias and transliteration handling that
+`difflib` has no answer for.
 
 ### 🇪🇺 EU alignment
 
@@ -192,6 +237,7 @@ All settings are read from environment variables or `.env`:
 |---|---|---|
 | `CUSTOMSIQ_DATABASE_PATH` | `customsiq.db` | SQLite file path (`:memory:` for an ephemeral DB) |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, …) |
+| `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Minimum name-similarity score (0–1) for a screening hit |
 
 ---
 
@@ -204,15 +250,25 @@ python -m src.customsiq.main
 ```
 
 ```text
-seeded 20 HS code records
-CustomsIQ - HS Code Search (type 'quit' to exit)
+seeded 20 rows into hs_codes
+seeded 18 rows into sanctioned_entities
+CustomsIQ (type 'quit' to exit)
+Enter a product description to search CN codes,
+or 'screen <name>' to run a sanctions check.
 
-Product description: cotton t-shirt
+> cotton t-shirt
 1. 6109100000  (74%)  Cotton T-shirts, knitted        [Textile]
 2. 6203420000  (57%)  Men's cotton trousers           [Textile]
 3. 6204620000  (54%)  Women's cotton trousers         [Textile]
 4. 6110200000  (42%)  Cotton pullovers and sweaters   [Textile]
 5. 8528721000  (35%)  Color television receivers      [Electronics]
+
+> screen Northwind Maritime
+1 potential sanctions match(es) for 'Northwind Maritime':
+1. Northwind Maritime Holdings Ltd  (100%)  [CY]  EU Consolidated Financial Sanctions List  listed 2023-04-12
+
+> screen Quokka Beachwear
+No sanctions match for 'Quokka Beachwear'.
 ```
 
 ### 🌐 REST API
@@ -265,6 +321,7 @@ for result in search(conn, "lithium battery", limit=3):
 |---|---|---|
 | `GET` | `/` | Service info — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Ranked CN code matches for a product description |
+| `GET` | `/screen` | Sanctions-list hits for a person or organisation name |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
 **`GET /search` parameters**
@@ -273,6 +330,31 @@ for result in search(conn, "lithium battery", limit=3):
 |---|---|---|---|---|
 | `q` | `str` | *required* | 1–500 chars, not blank | Free-text product description |
 | `limit` | `int` | `5` | 1–50 | Maximum number of results |
+
+**`GET /screen` parameters**
+
+| Parameter | Type | Default | Constraints | Description |
+|---|---|---|---|---|
+| `name` | `str` | *required* | 1–500 chars, not blank | Person or organisation name to screen |
+
+Screening takes no `limit`: every hit above the threshold is returned, since a silently truncated
+hit list would be a compliance failure rather than just a worse ranking.
+
+```bash
+curl "http://localhost:8000/screen?name=Northwind+Maritime"
+```
+
+```json
+[
+  {
+    "name": "Northwind Maritime Holdings Ltd",
+    "country": "CY",
+    "list_source": "EU Consolidated Financial Sanctions List",
+    "date_added": "2023-04-12",
+    "score": 1.0
+  }
+]
+```
 
 **Status codes**
 
@@ -305,21 +387,25 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 
 | Module | Coverage |
 |---|---|
-| `api.py` · `config.py` · `database.py` | 🟢 100% |
+| `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
 | `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 100% |
-| `main.py` | 🟢 90% |
-| **Total** | **🟢 97.5%** (20 tests, gate at 80%) |
+| `api.py` | 🟢 96% |
+| `main.py` | 🟢 93% |
+| **Total** | **🟢 98%** (37 tests, gate at 80%) |
 
 ### Edge cases under test
 
 | Case | Expected behaviour |
 |---|---|
-| Empty / whitespace-only query | `InvalidQueryError` → HTTP `400` |
+| Empty / whitespace-only query or name | `InvalidQueryError` → HTTP `400` |
 | Query longer than 500 characters | `InvalidQueryError` → HTTP `400` |
 | SQL-injection-shaped input (`'; DROP TABLE hs_codes; --`) | Handled safely by parameterized queries; table intact |
-| Emoji & non-ASCII input (`📱 telefon şarj aleti`) | Scored normally, no crash |
+| Emoji & non-ASCII input (`📱 Handy-Ladegerät`, `Ünal Çelik A.Ş.`) | Scored normally, no crash |
+| Reversed name order (`Aleksandr Voronin-Teske`) | Matches the surname-first list entry |
+| Partial company name (`Northwind Maritime`) | Matches the full listed name |
+| Name matching nothing on the list | Empty result, not an error |
 | Unknown exact code lookup | `HSCodeNotFoundError` |
-| Re-seeding a populated database | Idempotent — no duplicate rows |
+| Re-seeding a populated database | Idempotent — no duplicate rows in either table |
 
 ---
 
@@ -366,19 +452,39 @@ EU Combined Nomenclature style:
 > ⚠️ This is **demo data** for development and testing. Production use requires the official
 > nomenclature from the [EU TARIC database](https://ec.europa.eu/taxation_customs/dds2/taric).
 
+### Sanctions list
+
+The `sanctioned_entities` table is seeded with **18 entries** styled after EU Consolidated
+Financial Sanctions List rows — invented trading, shipping and engineering companies plus a few
+synthetic person names, stored surname-first the way real lists publish them.
+
+| Field | Example |
+|---|---|
+| `name` | `Northwind Maritime Holdings Ltd` · `Voronin-Teske, Aleksandr` |
+| `country` | `CY`, `AE`, `DE`, `RS`, `MT`, `NL`, … |
+| `list_source` | `EU Consolidated Financial Sanctions List` · `EU Dual-Use Export Control Watchlist` |
+| `date_added` | `2023-04-12` |
+
+> 🚨 **Every name in this list is fictional.** None correspond to any real sanctioned person or
+> organisation, and the list must never be used for actual screening. Production screening
+> requires the official EU Consolidated Financial Sanctions List.
+
 ---
 
 ## 🗺️ Roadmap
 
-The CN code module ships today. Three further compliance modules are scaffolded and awaiting
-implementation — they are excluded from the coverage gate until they have real logic:
+CN code search and sanctions screening both ship today. Two compliance modules remain scaffolded
+and awaiting implementation — they are excluded from the coverage gate until they have real logic:
 
-| Module | Status | Planned scope |
+| Module | Status | Scope |
 |---|---|---|
 | `search.py` + `api.py` | ✅ **Shipped** | Fuzzy CN code search via CLI and REST |
+| `embargo_screener.py` | ✅ **Shipped** | Denied-party name screening via CLI and REST |
 | `cn_classifier.py` | 🚧 Scaffolded | Rule- and confidence-based classification against the EU TARIC dataset |
 | `tariff_calculator.py` | 🚧 Scaffolded | Duty calculation, origin rules, EU preferential trade agreement rates |
-| `embargo_screener.py` | 🚧 Scaffolded | Screening against the EU Consolidated Financial Sanctions List |
+
+Planned extensions to screening: country-level embargo checks and product/destination
+restrictions, plus alias and transliteration handling for entity names.
 
 ---
 
@@ -389,19 +495,20 @@ CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── src/
 │   ├── customsiq/
-│   │   ├── models.py            # HSCode record
-│   │   ├── database.py          # SQLite layer + seed data
-│   │   ├── search.py            # validation + similarity ranking
+│   │   ├── models.py            # HSCode + SanctionedEntity records
+│   │   ├── database.py          # SQLite layer + seed data (both tables)
+│   │   ├── matching.py          # shared validation + similarity scoring
+│   │   ├── search.py            # CN code ranking
+│   │   ├── embargo_screener.py  # sanctions name screening
 │   │   ├── exceptions.py        # typed error hierarchy
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # shared logging setup
 │   │   ├── main.py              # CLI entry point
 │   │   ├── api.py               # FastAPI app
 │   │   ├── cn_classifier.py     # 🚧 scaffolded
-│   │   ├── tariff_calculator.py # 🚧 scaffolded
-│   │   └── embargo_screener.py  # 🚧 scaffolded
+│   │   └── tariff_calculator.py # 🚧 scaffolded
 │   └── utils/validators.py      # CN/TARIC format & country code validation
-├── tests/                       # 20 tests — unit, API, CLI, edge cases
+├── tests/                       # 37 tests — unit, API, CLI, screening, edge cases
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
 └── .env.example

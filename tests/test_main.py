@@ -26,3 +26,19 @@ def test_run_handles_blank_and_invalid_query(monkeypatch: pytest.MonkeyPatch, ca
     run(":memory:")
     out = capsys.readouterr().out
     assert "at most" in out
+
+
+def test_run_screens_a_listed_name(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """'screen <name>' runs sanctions screening and reports the hit."""
+    monkeypatch.setattr("builtins.input", _fake_input(["screen Northwind Maritime", "quit"]))
+    run(":memory:")
+    out = capsys.readouterr().out
+    assert "Northwind Maritime Holdings Ltd" in out
+    assert "potential sanctions match" in out
+
+
+def test_run_screens_a_clean_name(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """A name matching nothing reports a clean result rather than an error."""
+    monkeypatch.setattr("builtins.input", _fake_input(["screen Quokka Beachwear", "quit"]))
+    run(":memory:")
+    assert "No sanctions match" in capsys.readouterr().out

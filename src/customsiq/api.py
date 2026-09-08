@@ -1,4 +1,4 @@
-"""FastAPI HTTP surface for HS code search."""
+"""FastAPI HTTP surface for HS code search and sanctions screening."""
 
 import sqlite3
 
@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 from src.customsiq.config import settings
 from src.customsiq.database import get_connection, seed
+from src.customsiq.embargo_screener import screen_entity
 from src.customsiq.exceptions import InvalidQueryError
 from src.customsiq.search import search
 
@@ -43,4 +44,29 @@ def search_hs_codes(
             "score": r.score,
         }
         for r in results
+    ]
+
+
+@app.get("/screen")
+def screen_name(
+    name: str = Query(..., description="Person or organisation name to screen"),
+) -> list[dict]:
+    """Return every sanctioned entity that `name` may refer to.
+
+    Reuses `src.customsiq.embargo_screener.screen_entity`, the same function
+    the CLI calls, so screening logic is defined in exactly one place.
+    """
+    try:
+        matches = screen_entity(_conn, name)
+    except InvalidQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return [
+        {
+            "name": m.entity.name,
+            "country": m.entity.country,
+            "list_source": m.entity.list_source,
+            "date_added": m.entity.date_added,
+            "score": m.score,
+        }
+        for m in matches
     ]
