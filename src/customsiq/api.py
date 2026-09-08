@@ -15,6 +15,12 @@ _conn: sqlite3.Connection = get_connection(settings.database_path)
 seed(_conn)
 
 
+@app.get("/")
+def root() -> dict:
+    """Basic service info, pointing to the interactive API docs."""
+    return {"service": "CustomsIQ API", "docs": "/docs", "status": "running"}
+
+
 @app.get("/search")
 def search_hs_codes(
     q: str = Query(..., description="Free-text product description"),
