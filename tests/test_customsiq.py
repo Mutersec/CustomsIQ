@@ -68,7 +68,7 @@ def test_search_handles_special_characters(conn: sqlite3.Connection) -> None:
     assert isinstance(results, list)
     assert len(fetch_all(conn)) == len(SAMPLE_DATA)  # table untouched
 
-    emoji_results = search(conn, "📱 telefon şarj aleti")
+    emoji_results = search(conn, "📱 Handy-Ladegerät")
     assert isinstance(emoji_results, list)
 
 

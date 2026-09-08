@@ -1,4 +1,4 @@
-"""Command-line interface for interactive HS (GTİP) code search."""
+"""Command-line interface for interactive HS/CN code search."""
 
 import logging
 

@@ -3,7 +3,7 @@
 # 🛃 CustomsIQ
 
 ### Compliance-Toolkit für Zoll- und Außenhandelsprozesse
-**Aus einer alltagssprachlichen Produktbeschreibung die richtige HS-Codenummer ermitteln.**
+**Aus einer alltagssprachlichen Produktbeschreibung die richtige HS-/KN-Codenummer ermitteln.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
@@ -34,9 +34,10 @@
 
 ## 🎯 Problemstellung
 
-Die Zuordnung der korrekten **HS-Codenummer** (türkisch: *GTİP — Gümrük Tarife İstatistik
-Pozisyonu*) gehört zu den langsamsten und fehleranfälligsten Schritten einer Zollanmeldung. Heute
-geschieht sie manuell — anhand eines Zolltarifs mit Zehntausenden von Zeilen.
+Die Zuordnung der korrekten **KN-Codenummer** (der EU-*Kombinierten Nomenklatur*, die den
+internationalen HS-Code auf 8 Stellen und im TARIC auf 10 Stellen erweitert) gehört zu den
+langsamsten und fehleranfälligsten Schritten einer Zollanmeldung. Heute geschieht sie manuell —
+anhand eines Zolltarifs mit Zehntausenden von Zeilen.
 
 | Schwachstelle | Betriebswirtschaftliche Folge |
 |---|---|
@@ -55,7 +56,7 @@ entscheidet.
 
 | | Funktion | Beschreibung |
 |---|---|---|
-| 🔍 | **Unscharfe Suche** | Freitextbeschreibung → nach Ähnlichkeitswert sortierte HS-Codes |
+| 🔍 | **Unscharfe Suche** | Freitextbeschreibung → nach Ähnlichkeitswert sortierte KN-/TARIC-Codes |
 | 💻 | **Interaktive CLI** | Beschreibung eingeben, sofort sortierte Treffer im Terminal erhalten |
 | 🌐 | **REST-API** | `GET /search` über FastAPI, mit automatisch erzeugter `/docs`-Oberfläche |
 | 🗄️ | **Speicherung ohne Einrichtungsaufwand** | SQLite aus der Standardbibliothek, vorbefüllt mit 20 Demo-Codes |
@@ -152,6 +153,20 @@ Punkte zutrifft:
 | **Eine gemeinsame Verbindung** mit `check_same_thread=False` | Einfach und mit dem Threadpool von FastAPI verträglich | Verbindungspool, sobald parallele Schreibzugriffe auftreten |
 | **Logging statt `print()`** | Derselbe Ausgabeweg für CLI und API; Level über die Konfiguration steuerbar | — |
 | **Validierung innerhalb von `search()`** | CLI und API erben sie; ein neuer Aufrufer kann sie nicht versehentlich umgehen | — |
+
+### 🇪🇺 EU-Ausrichtung
+
+> Datenmodell und Terminologie orientieren sich an der Kombinierten Nomenklatur der EU und an
+> EU-Rahmenwerken für Außenhandels-Compliance — passend zum Zielmarkt (Compliance-Rollen im
+> EU-Außenhandel).
+
+Konkret bedeutet das:
+
+| Bereich | Maßgebliche Quelle |
+|---|---|
+| Tarifcodes und Nomenklatur | [EU-TARIC-Datenbank](https://ec.europa.eu/taxation_customs/dds2/taric) — KN-8-Codes, TARIC-10 mit EU-Unterpositionen |
+| Sanktions- und Embargoprüfung | Konsolidierte EU-Finanzsanktionsliste |
+| Präferenzzollsätze | EU-Handelsabkommen |
 
 ---
 
@@ -253,7 +268,7 @@ for result in search(conn, "lithium battery", limit=3):
 | Methode | Endpunkt | Beschreibung |
 |---|---|---|
 | `GET` | `/` | Dienstinformationen — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
-| `GET` | `/search` | Sortierte HS-Code-Treffer zu einer Produktbeschreibung |
+| `GET` | `/search` | Sortierte KN-Code-Treffer zu einer Produktbeschreibung |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
 **Parameter von `GET /search`**
@@ -315,7 +330,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 
 ## 📦 Beispieldaten
 
-Die Datenbank wird mit **20 repräsentativen HS-Codes aus 8 Kategorien** vorbefüllt:
+Die Datenbank wird mit **20 repräsentativen KN-/TARIC-Codes aus 8 Kategorien** vorbefüllt, formuliert
+im Stil der EU-Kombinierten Nomenklatur:
 
 | Kategorie | Codes |
 |---|---|
@@ -327,7 +343,7 @@ Die Datenbank wird mit **20 repräsentativen HS-Codes aus 8 Kategorien** vorbef�
 <details>
 <summary><b>Alle 20 hinterlegten Codes anzeigen</b></summary>
 
-| HS-Code | Beschreibung | Kategorie |
+| KN-/TARIC-Code | Beschreibung | Kategorie |
 |---|---|---|
 | `8517120000` | Mobiltelefone und Smartphones | Elektronik |
 | `8471300000` | Tragbare automatische Datenverarbeitungsmaschinen (Notebooks) | Elektronik |
@@ -353,22 +369,23 @@ Die Datenbank wird mit **20 repräsentativen HS-Codes aus 8 Kategorien** vorbef�
 </details>
 
 > ⚠️ Hierbei handelt es sich um **Demodaten** für Entwicklung und Tests. Für den Produktivbetrieb
-> wird der offizielle Zolltarif des türkischen Handelsministeriums benötigt.
+> wird die offizielle Nomenklatur aus der
+> [EU-TARIC-Datenbank](https://ec.europa.eu/taxation_customs/dds2/taric) benötigt.
 
 ---
 
 ## 🗺️ Roadmap
 
-Das HS-Code-Modul ist einsatzbereit. Drei weitere Compliance-Module sind als Gerüst angelegt und
+Das KN-Code-Modul ist einsatzbereit. Drei weitere Compliance-Module sind als Gerüst angelegt und
 warten auf die Implementierung — bis sie echte Logik enthalten, bleiben sie von der
 Abdeckungsschwelle ausgenommen:
 
 | Modul | Status | Geplanter Funktionsumfang |
 |---|---|---|
-| `search.py` + `api.py` | ✅ **Ausgeliefert** | Unscharfe HS-Code-Suche über CLI und REST |
-| `gtip_classifier.py` | 🚧 Gerüst | Regel- und konfidenzbasierte Tarifierung, JSON-gestützter Datenbestand |
-| `tariff_calculator.py` | 🚧 Gerüst | Zollberechnung, Ursprungsregeln, Präferenzzollsätze |
-| `embargo_screener.py` | 🚧 Gerüst | Sanktionslistenprüfung für Unternehmen, Länder und Waren |
+| `search.py` + `api.py` | ✅ **Ausgeliefert** | Unscharfe KN-Code-Suche über CLI und REST |
+| `cn_classifier.py` | 🚧 Gerüst | Regel- und konfidenzbasierte Tarifierung gegen den EU-TARIC-Datenbestand |
+| `tariff_calculator.py` | 🚧 Gerüst | Zollberechnung, Ursprungsregeln, Präferenzzollsätze aus EU-Handelsabkommen |
+| `embargo_screener.py` | 🚧 Gerüst | Prüfung gegen die konsolidierte EU-Finanzsanktionsliste |
 
 ---
 
@@ -387,10 +404,10 @@ CustomsIQ/
 │   │   ├── logging_config.py    # gemeinsames Logging-Setup
 │   │   ├── main.py              # CLI-Einstiegspunkt
 │   │   ├── api.py               # FastAPI-Anwendung
-│   │   ├── gtip_classifier.py   # 🚧 Gerüst
+│   │   ├── cn_classifier.py     # 🚧 Gerüst
 │   │   ├── tariff_calculator.py # 🚧 Gerüst
 │   │   └── embargo_screener.py  # 🚧 Gerüst
-│   └── utils/validators.py      # Validierung von GTİP-Format und Ländercode
+│   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
 ├── tests/                       # 20 Tests — Unit, API, CLI, Grenzfälle
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

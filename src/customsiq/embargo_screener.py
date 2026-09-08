@@ -14,7 +14,8 @@ class EmbargoScreener:
 
     def _load_sanctions_data(self) -> None:
         """Load sanctions and embargo data from sources."""
-        # TODO: Load from data/sanctions/
+        # TODO: Load from data/sanctions/ (source: EU Consolidated Financial
+        # Sanctions List)
         pass
 
     def screen_entity(self, entity_name: str, country: Optional[str] = None) -> dict:
@@ -34,9 +35,9 @@ class EmbargoScreener:
         """Check if country is under embargo."""
         raise NotImplementedError
 
-    def screen_product(self, gtip_code: str, destination_country: str) -> dict:
+    def screen_product(self, cn_code: str, destination_country: str) -> dict:
         """
-        Screen product based on GTIP code and destination.
+        Screen product based on CN code and destination.
 
         Returns:
             Restriction status and applicable regulations

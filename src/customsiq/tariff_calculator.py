@@ -15,17 +15,18 @@ class TariffCalculator:
 
     def _load_tariff_data(self) -> None:
         """Load tariff rates and duty regulations."""
-        # TODO: Load from data/tariffs/
+        # TODO: Load from data/tariffs/ (source: EU TARIC database,
+        # https://ec.europa.eu/taxation_customs/dds2/taric)
         pass
 
     def calculate_duty(
-        self, gtip_code: str, value: Decimal, origin_country: str, destination_country: str
+        self, cn_code: str, value: Decimal, origin_country: str, destination_country: str
     ) -> dict:
         """
         Calculate customs duty for a product.
 
         Args:
-            gtip_code: Gümrük Tarife İstatistik Pozisyonları code
+            cn_code: EU Combined Nomenclature (CN/TARIC) code
             value: Product value (CIF)
             origin_country: Country of origin
             destination_country: Destination country
@@ -35,15 +36,15 @@ class TariffCalculator:
         """
         raise NotImplementedError
 
-    def get_tariff_rate(self, gtip_code: str, origin_country: str) -> Optional[dict]:
-        """Get tariff rate for GTIP code from specific country."""
+    def get_tariff_rate(self, cn_code: str, origin_country: str) -> Optional[dict]:
+        """Get tariff rate for a CN code from a specific country."""
         pass
 
     def apply_trade_agreement(
-        self, gtip_code: str, origin_country: str, agreement_type: str
+        self, cn_code: str, origin_country: str, agreement_type: str
     ) -> Optional[Decimal]:
         """
-        Apply trade agreement benefits (like customs union rates).
+        Apply EU preferential trade agreement benefits.
 
         Returns:
             Preferential tariff rate if applicable

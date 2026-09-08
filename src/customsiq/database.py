@@ -1,4 +1,4 @@
-"""SQLite persistence layer for HS (GTİP) code records."""
+"""SQLite persistence layer for HS/CN code records."""
 
 import logging
 import sqlite3
@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS hs_codes (
 );
 """
 
-# Sample/demo data spanning several trade categories.
+# Sample/demo data spanning several trade categories. Codes follow the EU
+# Combined Nomenclature (TARIC-10) format; production data comes from the EU
+# TARIC database (https://ec.europa.eu/taxation_customs/dds2/taric).
 SAMPLE_DATA: list[HSCode] = [
     HSCode("8517120000", "Mobile phones and smartphones", "Electronics"),
     HSCode("8471300000", "Portable automatic data processing machines (laptops)", "Electronics"),
@@ -95,7 +97,7 @@ def get_by_code(conn: sqlite3.Connection, code: str) -> HSCode:
 
     Args:
         conn: An open database connection.
-        code: The exact HS/GTİP code to look up.
+        code: The exact CN/TARIC code to look up.
 
     Returns:
         The matching HSCode record.

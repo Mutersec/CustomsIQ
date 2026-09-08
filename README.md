@@ -3,7 +3,7 @@
 # 🛃 CustomsIQ
 
 ### Trade compliance toolkit for customs & foreign trade operations
-**Turn a plain-language product description into the right HS / GTİP tariff code.**
+**Turn a plain-language product description into the right HS / CN tariff code.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
@@ -34,9 +34,10 @@
 
 ## 🎯 Problem
 
-Assigning the correct **HS code** (Turkish: *GTİP — Gümrük Tarife İstatistik Pozisyonu*) is one of
-the slowest and most error-prone steps in a customs declaration. Today it is done by hand, against a
-tariff schedule with tens of thousands of lines.
+Assigning the correct **CN code** (the EU *Combined Nomenclature*, which extends the international
+HS code to 8 digits, and to 10 in TARIC) is one of the slowest and most error-prone steps in a
+customs declaration. Today it is done by hand, against a tariff schedule with tens of thousands of
+lines.
 
 | Pain point | Business consequence |
 |---|---|
@@ -54,7 +55,7 @@ not a black box that decides alone.
 
 | | Feature | Description |
 |---|---|---|
-| 🔍 | **Fuzzy search** | Free-text description → HS codes ranked by similarity score |
+| 🔍 | **Fuzzy search** | Free-text description → CN/TARIC codes ranked by similarity score |
 | 💻 | **Interactive CLI** | Type a description, get instant ranked results in the terminal |
 | 🌐 | **REST API** | `GET /search` served by FastAPI, with auto-generated `/docs` |
 | 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 demo codes |
@@ -149,6 +150,19 @@ Swap `_similarity()` in `search.py` for `rapidfuzz.fuzz.WRatio` as soon as **any
 | **One shared connection** with `check_same_thread=False` | Simple, works with FastAPI's threadpool | Connection pool once concurrent writes appear |
 | **Logging, not `print()`** | Same output path for CLI and API; level controlled by config | — |
 | **Validation inside `search()`** | Both CLI and API inherit it; impossible to bypass by adding a new caller | — |
+
+### 🇪🇺 EU alignment
+
+> Data model and terminology align with EU Combined Nomenclature and EU trade compliance
+> frameworks, reflecting the target market (EU-based trade compliance roles).
+
+Concretely, this means:
+
+| Concern | Source of truth |
+|---|---|
+| Tariff codes & nomenclature | [EU TARIC database](https://ec.europa.eu/taxation_customs/dds2/taric) — CN-8 codes, TARIC-10 with EU subheadings |
+| Sanctions & embargo screening | EU Consolidated Financial Sanctions List |
+| Preferential duty rates | EU trade agreements |
 
 ---
 
@@ -250,7 +264,7 @@ for result in search(conn, "lithium battery", limit=3):
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/` | Service info — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
-| `GET` | `/search` | Ranked HS code matches for a product description |
+| `GET` | `/search` | Ranked CN code matches for a product description |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
 **`GET /search` parameters**
@@ -311,7 +325,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 
 ## 📦 Sample data
 
-The database is seeded with **20 representative HS codes across 8 categories**:
+The database is seeded with **20 representative CN/TARIC codes across 8 categories**, written in
+EU Combined Nomenclature style:
 
 | Category | Codes |
 |---|---|
@@ -323,7 +338,7 @@ The database is seeded with **20 representative HS codes across 8 categories**:
 <details>
 <summary><b>Show all 20 seeded codes</b></summary>
 
-| HS code | Description | Category |
+| CN/TARIC code | Description | Category |
 |---|---|---|
 | `8517120000` | Mobile phones and smartphones | Electronics |
 | `8471300000` | Portable automatic data processing machines (laptops) | Electronics |
@@ -349,21 +364,21 @@ The database is seeded with **20 representative HS codes across 8 categories**:
 </details>
 
 > ⚠️ This is **demo data** for development and testing. Production use requires the official
-> tariff schedule published by the Turkish Ministry of Trade.
+> nomenclature from the [EU TARIC database](https://ec.europa.eu/taxation_customs/dds2/taric).
 
 ---
 
 ## 🗺️ Roadmap
 
-The HS code module ships today. Three further compliance modules are scaffolded and awaiting
+The CN code module ships today. Three further compliance modules are scaffolded and awaiting
 implementation — they are excluded from the coverage gate until they have real logic:
 
 | Module | Status | Planned scope |
 |---|---|---|
-| `search.py` + `api.py` | ✅ **Shipped** | Fuzzy HS code search via CLI and REST |
-| `gtip_classifier.py` | 🚧 Scaffolded | Rule- and confidence-based classification, JSON-backed dataset |
-| `tariff_calculator.py` | 🚧 Scaffolded | Duty calculation, origin rules, preferential trade agreement rates |
-| `embargo_screener.py` | 🚧 Scaffolded | Sanctions list screening for entities, countries and products |
+| `search.py` + `api.py` | ✅ **Shipped** | Fuzzy CN code search via CLI and REST |
+| `cn_classifier.py` | 🚧 Scaffolded | Rule- and confidence-based classification against the EU TARIC dataset |
+| `tariff_calculator.py` | 🚧 Scaffolded | Duty calculation, origin rules, EU preferential trade agreement rates |
+| `embargo_screener.py` | 🚧 Scaffolded | Screening against the EU Consolidated Financial Sanctions List |
 
 ---
 
@@ -382,10 +397,10 @@ CustomsIQ/
 │   │   ├── logging_config.py    # shared logging setup
 │   │   ├── main.py              # CLI entry point
 │   │   ├── api.py               # FastAPI app
-│   │   ├── gtip_classifier.py   # 🚧 scaffolded
+│   │   ├── cn_classifier.py     # 🚧 scaffolded
 │   │   ├── tariff_calculator.py # 🚧 scaffolded
 │   │   └── embargo_screener.py  # 🚧 scaffolded
-│   └── utils/validators.py      # GTİP format & country code validation
+│   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── tests/                       # 20 tests — unit, API, CLI, edge cases
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

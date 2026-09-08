@@ -1,1 +1,1 @@
-"""CustomsIQ: HS (GTİP) code classification and search."""
+"""CustomsIQ: HS/CN code classification and search."""

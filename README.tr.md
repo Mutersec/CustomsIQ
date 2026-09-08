@@ -3,7 +3,7 @@
 # 🛃 CustomsIQ
 
 ### Gümrük ve dış ticaret operasyonları için uyum araç seti
-**Sade bir ürün açıklamasını doğru GTİP / HS koduna dönüştürün.**
+**Sade bir ürün açıklamasını doğru HS / CN tarife koduna dönüştürün.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
@@ -34,9 +34,10 @@
 
 ## 🎯 Problem
 
-Doğru **GTİP kodunu** (Gümrük Tarife İstatistik Pozisyonu; uluslararası karşılığı *HS code*)
-belirlemek, gümrük beyannamesi sürecinin en yavaş ve hataya en açık adımlarından biridir. Bugün bu
-işlem, on binlerce satırlık gümrük tarife cetveli üzerinde elle yapılmaktadır.
+Doğru **CN kodunu** (AB *Kombine Nomanklatür*'ü; uluslararası HS kodunu 8 haneye, TARIC'te ise
+10 haneye genişletir) belirlemek, gümrük beyannamesi sürecinin en yavaş ve hataya en açık
+adımlarından biridir. Bugün bu işlem, on binlerce satırlık tarife cetveli üzerinde elle
+yapılmaktadır.
 
 | Sorun | Ticari sonucu |
 |---|---|
@@ -54,7 +55,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 
 | | Özellik | Açıklama |
 |---|---|---|
-| 🔍 | **Bulanık arama** | Serbest metin açıklama → benzerlik skoruna göre sıralanmış GTİP kodları |
+| 🔍 | **Bulanık arama** | Serbest metin açıklama → benzerlik skoruna göre sıralanmış CN/TARIC kodları |
 | 💻 | **Etkileşimli CLI** | Açıklamayı yazın, terminalde anında sıralı sonuç alın |
 | 🌐 | **REST API** | FastAPI ile sunulan `GET /search` ve otomatik üretilen `/docs` arayüzü |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 demo koduyla hazır gelir |
@@ -151,6 +152,19 @@ Aşağıdakilerden **herhangi biri** gerçekleştiğinde `search.py` içindeki `
 | **`check_same_thread=False` ile tek paylaşımlı bağlantı** | Basit; FastAPI'nin thread havuzuyla çalışır | Eşzamanlı yazmalar ortaya çıktığında bağlantı havuzu |
 | **`print()` değil loglama** | CLI ve API için aynı çıktı yolu; seviye yapılandırmayla kontrol edilir | — |
 | **Doğrulamanın `search()` içinde olması** | Hem CLI hem API bunu devralır; yeni bir çağıran eklenerek atlanması imkânsızdır | — |
+
+### 🇪🇺 AB uyumu
+
+> Veri modeli ve terminoloji, hedef pazarı (AB merkezli ticaret uyum rolleri) yansıtacak şekilde AB
+> Kombine Nomanklatürü ve AB ticaret uyum çerçeveleriyle hizalanmıştır.
+
+Somut olarak bu şu anlama gelir:
+
+| Konu | Doğruluk kaynağı |
+|---|---|
+| Tarife kodları ve nomanklatür | [AB TARIC veritabanı](https://ec.europa.eu/taxation_customs/dds2/taric) — CN-8 kodları, AB alt açılımlarıyla TARIC-10 |
+| Yaptırım ve ambargo taraması | AB Konsolide Mali Yaptırımlar Listesi |
+| Tercihli vergi oranları | AB ticaret anlaşmaları |
 
 ---
 
@@ -252,7 +266,7 @@ for result in search(conn, "lithium battery", limit=3):
 | Metot | Uç nokta | Açıklama |
 |---|---|---|
 | `GET` | `/` | Servis bilgisi — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
-| `GET` | `/search` | Ürün açıklaması için sıralanmış GTİP kodu eşleşmeleri |
+| `GET` | `/search` | Ürün açıklaması için sıralanmış CN kodu eşleşmeleri |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -313,7 +327,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 
 ## 📦 Örnek veri
 
-Veritabanı, **8 kategoriye yayılmış 20 temsili GTİP koduyla** doldurulur:
+Veritabanı, AB Kombine Nomanklatür biçiminde yazılmış **8 kategoriye yayılmış 20 temsili CN/TARIC
+koduyla** doldurulur:
 
 | Kategori | Kod sayısı |
 |---|---|
@@ -325,7 +340,7 @@ Veritabanı, **8 kategoriye yayılmış 20 temsili GTİP koduyla** doldurulur:
 <details>
 <summary><b>20 kaydın tamamını göster</b></summary>
 
-| GTİP kodu | Açıklama | Kategori |
+| CN/TARIC kodu | Açıklama | Kategori |
 |---|---|---|
 | `8517120000` | Cep telefonları ve akıllı telefonlar | Elektronik |
 | `8471300000` | Taşınabilir otomatik bilgi işlem makineleri (dizüstü) | Elektronik |
@@ -350,22 +365,23 @@ Veritabanı, **8 kategoriye yayılmış 20 temsili GTİP koduyla** doldurulur:
 
 </details>
 
-> ⚠️ Bu veriler geliştirme ve test amaçlı **demo verilerdir**. Üretim kullanımı için T.C. Ticaret
-> Bakanlığı'nın yayımladığı resmî gümrük tarife cetveli gereklidir.
+> ⚠️ Bu veriler geliştirme ve test amaçlı **demo verilerdir**. Üretim kullanımı için
+> [AB TARIC veritabanındaki](https://ec.europa.eu/taxation_customs/dds2/taric) resmî nomanklatür
+> gereklidir.
 
 ---
 
 ## 🗺️ Yol haritası
 
-GTİP arama modülü bugün kullanıma hazırdır. Üç uyum modülü daha iskelet hâlinde yer alıyor ve
+CN arama modülü bugün kullanıma hazırdır. Üç uyum modülü daha iskelet hâlinde yer alıyor ve
 uygulanmayı bekliyor — gerçek bir mantık içermedikleri sürece kapsam eşiğinin dışında tutulurlar:
 
 | Modül | Durum | Planlanan kapsam |
 |---|---|---|
-| `search.py` + `api.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden bulanık GTİP araması |
-| `gtip_classifier.py` | 🚧 İskelet | Kural ve güven skoru tabanlı sınıflandırma, JSON destekli veri kümesi |
-| `tariff_calculator.py` | 🚧 İskelet | Vergi hesaplama, menşe kuralları, tercihli ticaret anlaşması oranları |
-| `embargo_screener.py` | 🚧 İskelet | Kuruluş, ülke ve ürünler için yaptırım listesi taraması |
+| `search.py` + `api.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden bulanık CN kodu araması |
+| `cn_classifier.py` | 🚧 İskelet | AB TARIC veri kümesine karşı kural ve güven skoru tabanlı sınıflandırma |
+| `tariff_calculator.py` | 🚧 İskelet | Vergi hesaplama, menşe kuralları, AB tercihli ticaret anlaşması oranları |
+| `embargo_screener.py` | 🚧 İskelet | AB Konsolide Mali Yaptırımlar Listesi'ne karşı tarama |
 
 ---
 
@@ -384,10 +400,10 @@ CustomsIQ/
 │   │   ├── logging_config.py    # ortak loglama kurulumu
 │   │   ├── main.py              # CLI giriş noktası
 │   │   ├── api.py               # FastAPI uygulaması
-│   │   ├── gtip_classifier.py   # 🚧 iskelet
+│   │   ├── cn_classifier.py     # 🚧 iskelet
 │   │   ├── tariff_calculator.py # 🚧 iskelet
 │   │   └── embargo_screener.py  # 🚧 iskelet
-│   └── utils/validators.py      # GTİP format ve ülke kodu doğrulaması
+│   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── tests/                       # 20 test — birim, API, CLI, uç durumlar
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
