@@ -8,13 +8,17 @@ sanctions lists.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-37%20passing-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-40%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
 ![Mypy](https://img.shields.io/badge/typed-mypy-2A6DB2)
 ![License](https://img.shields.io/badge/license-MIT-green)
+
+**[🌐 Live demo](https://customsiq-gs0u.onrender.com/)** · [📖 API reference](https://customsiq-gs0u.onrender.com/docs)
+
+<sub>Hosted on a free Render instance that sleeps when idle — the first request may take ~30 s to wake.</sub>
 
 **🇬🇧 English** · [🇹🇷 Türkçe](README.tr.md) · [🇩🇪 Deutsch](README.de.md)
 
@@ -58,6 +62,7 @@ not a black box that decides alone.
 |---|---|---|
 | 🔍 | **Fuzzy search** | Free-text description → CN/TARIC codes ranked by similarity score |
 | 🚫 | **Sanctions screening** | Name → denied-party hits, tolerant of word order and partial names |
+| 🖥️ | **Web UI** | Single-page frontend served at `/` — no build step, no framework, no CDN |
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
 | 🌐 | **REST API** | `GET /search` and `GET /screen` on FastAPI, with auto-generated `/docs` |
 | 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 codes + 18 mock entities |
@@ -115,7 +120,8 @@ flowchart LR
 | `config.py` | `pydantic-settings`; reads `CUSTOMSIQ_*` env vars and `.env` |
 | `logging_config.py` | Shared logging setup — plain formatter to stdout, no `print()` anywhere |
 | `main.py` | Interactive CLI entry point (search + `screen <name>`) |
-| `api.py` | FastAPI app: `GET /`, `GET /search`, `GET /screen` |
+| `api.py` | FastAPI app: serves the frontend at `/`, plus `/search`, `/screen`, `/health` |
+| `static/index.html` | The whole web frontend — inline CSS, vanilla `fetch()`, zero dependencies |
 
 ### Data model
 
@@ -271,11 +277,18 @@ or 'screen <name>' to run a sanctions check.
 No sanctions match for 'Quokka Beachwear'.
 ```
 
-### 🌐 REST API
+### 🖥️ Web interface
 
 ```bash
 uvicorn src.customsiq.api:app --reload
 ```
+
+Open **http://localhost:8000/** for the web UI — both features in one page, or try it on the
+[live demo](https://customsiq-gs0u.onrender.com/).
+
+### 🌐 REST API
+
+The same server exposes the JSON API:
 
 Then open **http://localhost:8000/docs** for the interactive Swagger UI.
 
@@ -319,7 +332,8 @@ for result in search(conn, "lithium battery", limit=3):
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/` | Service info — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
+| `GET` | `/` | **Web frontend** (HTML page) |
+| `GET` | `/health` | Liveness check — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Ranked CN code matches for a product description |
 | `GET` | `/screen` | Sanctions-list hits for a person or organisation name |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
@@ -387,11 +401,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 
 | Module | Coverage |
 |---|---|
-| `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
+| `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
 | `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 100% |
-| `api.py` | 🟢 96% |
 | `main.py` | 🟢 93% |
-| **Total** | **🟢 98%** (37 tests, gate at 80%) |
+| **Total** | **🟢 99%** (40 tests, gate at 80%) |
 
 ### Edge cases under test
 
@@ -504,11 +517,12 @@ CustomsIQ/
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # shared logging setup
 │   │   ├── main.py              # CLI entry point
-│   │   ├── api.py               # FastAPI app
+│   │   ├── api.py               # FastAPI app (also serves the frontend)
+│   │   ├── static/index.html    # web frontend — single file, no build step
 │   │   ├── cn_classifier.py     # 🚧 scaffolded
 │   │   └── tariff_calculator.py # 🚧 scaffolded
 │   └── utils/validators.py      # CN/TARIC format & country code validation
-├── tests/                       # 37 tests — unit, API, CLI, screening, edge cases
+├── tests/                       # 40 tests — unit, API, CLI, screening, edge cases
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
 └── .env.example

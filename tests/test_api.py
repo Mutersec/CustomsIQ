@@ -8,6 +8,26 @@ from src.customsiq.api import app
 client = TestClient(app)
 
 
+def test_root_serves_the_web_frontend() -> None:
+    """The root URL returns the HTML page, not JSON."""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "CustomsIQ" in response.text
+
+
+def test_health_endpoint_returns_service_info() -> None:
+    """Service info moved off the root and lives at /health."""
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+
+
+def test_api_docs_are_not_shadowed_by_the_root_route() -> None:
+    """Serving a page at '/' must not swallow the API docs."""
+    assert client.get("/docs").status_code == 200
+
+
 def test_search_endpoint_happy_path() -> None:
     """A close query should return the matching HS code first."""
     response = client.get("/search", params={"q": "cotton t-shirt"})

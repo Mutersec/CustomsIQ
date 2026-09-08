@@ -8,13 +8,17 @@ listelerine karşı tarayın.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Kapsam](https://img.shields.io/badge/kapsam-%9825-brightgreen)
-![Testler](https://img.shields.io/badge/testler-37%20ge%C3%A7ti-brightgreen)
+![Kapsam](https://img.shields.io/badge/kapsam-%9925-brightgreen)
+![Testler](https://img.shields.io/badge/testler-40%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
 ![Mypy](https://img.shields.io/badge/tip%20denetimi-mypy-2A6DB2)
 ![Lisans](https://img.shields.io/badge/lisans-MIT-green)
+
+**[🌐 Canlı demo](https://customsiq-gs0u.onrender.com/)** · [📖 API referansı](https://customsiq-gs0u.onrender.com/docs)
+
+<sub>Boştayken uykuya geçen ücretsiz bir Render örneğinde barındırılıyor — ilk istek ~30 sn sürebilir.</sub>
 
 [🇬🇧 English](README.md) · **🇹🇷 Türkçe** · [🇩🇪 Deutsch](README.de.md)
 
@@ -58,6 +62,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 |---|---|---|
 | 🔍 | **Bulanık arama** | Serbest metin açıklama → benzerlik skoruna göre sıralanmış CN/TARIC kodları |
 | 🚫 | **Yaptırım taraması** | İsim → kelime sırasına ve kısmi isimlere toleranslı yasaklı taraf eşleşmeleri |
+| 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
 | 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
@@ -115,7 +120,8 @@ flowchart LR
 | `config.py` | `pydantic-settings`; `CUSTOMSIQ_*` ortam değişkenlerini ve `.env` dosyasını okur |
 | `logging_config.py` | Ortak loglama kurulumu — stdout'a sade format, hiçbir yerde `print()` yok |
 | `main.py` | Etkileşimli CLI giriş noktası (arama + `screen <isim>`) |
-| `api.py` | FastAPI uygulaması: `GET /`, `GET /search`, `GET /screen` |
+| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/screen`, `/health` |
+| `static/index.html` | Web arayüzünün tamamı — satır içi CSS, saf `fetch()`, sıfır bağımlılık |
 
 ### Veri modeli
 
@@ -273,11 +279,18 @@ or 'screen <name>' to run a sanctions check.
 No sanctions match for 'Quokka Beachwear'.
 ```
 
-### 🌐 REST API
+### 🖥️ Web arayüzü
 
 ```bash
 uvicorn src.customsiq.api:app --reload
 ```
+
+Web arayüzü için **http://localhost:8000/** adresini açın — her iki yetenek tek sayfada; ya da
+[canlı demoyu](https://customsiq-gs0u.onrender.com/) deneyin.
+
+### 🌐 REST API
+
+Aynı sunucu JSON API'yi de sunar:
 
 Ardından etkileşimli Swagger arayüzü için **http://localhost:8000/docs** adresini açın.
 
@@ -321,7 +334,8 @@ for result in search(conn, "lithium battery", limit=3):
 
 | Metot | Uç nokta | Açıklama |
 |---|---|---|
-| `GET` | `/` | Servis bilgisi — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
+| `GET` | `/` | **Web arayüzü** (HTML sayfa) |
+| `GET` | `/health` | Canlılık kontrolü — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Ürün açıklaması için sıralanmış CN kodu eşleşmeleri |
 | `GET` | `/screen` | Kişi veya kuruluş ismi için yaptırım listesi eşleşmeleri |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
@@ -389,11 +403,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 
 | Modül | Kapsam |
 |---|---|
-| `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
+| `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
 | `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 %100 |
-| `api.py` | 🟢 %96 |
 | `main.py` | 🟢 %93 |
-| **Toplam** | **🟢 %98** (37 test, eşik %80) |
+| **Toplam** | **🟢 %99** (40 test, eşik %80) |
 
 ### Test edilen uç durumlar
 
@@ -507,11 +520,12 @@ CustomsIQ/
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # ortak loglama kurulumu
 │   │   ├── main.py              # CLI giriş noktası
-│   │   ├── api.py               # FastAPI uygulaması
+│   │   ├── api.py               # FastAPI uygulaması (arayüzü de sunar)
+│   │   ├── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   │   ├── cn_classifier.py     # 🚧 iskelet
 │   │   └── tariff_calculator.py # 🚧 iskelet
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
-├── tests/                       # 37 test — birim, API, CLI, tarama, uç durumlar
+├── tests/                       # 40 test — birim, API, CLI, tarama, uç durumlar
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
 └── .env.example

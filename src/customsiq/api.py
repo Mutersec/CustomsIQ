@@ -1,8 +1,11 @@
 """FastAPI HTTP surface for HS code search and sanctions screening."""
 
 import sqlite3
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from src.customsiq.config import settings
 from src.customsiq.database import get_connection, seed
@@ -12,13 +15,29 @@ from src.customsiq.search import search
 
 app = FastAPI(title="CustomsIQ")
 
+# Resolved from this module, not the working directory: the deployed process
+# may be started from anywhere, and a missing directory would raise on import.
+_STATIC_DIR = Path(__file__).parent / "static"
+
 _conn: sqlite3.Connection = get_connection(settings.database_path)
 seed(_conn)
 
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
-@app.get("/")
-def root() -> dict:
-    """Basic service info, pointing to the interactive API docs."""
+
+@app.get("/", response_class=FileResponse, include_in_schema=False)
+def index() -> FileResponse:
+    """Serve the single-page web frontend.
+
+    An explicit route rather than mounting StaticFiles at "/", which would be
+    greedy enough to shadow /docs and the API routes.
+    """
+    return FileResponse(_STATIC_DIR / "index.html")
+
+
+@app.get("/health")
+def health() -> dict:
+    """Liveness check and basic service info."""
     return {"service": "CustomsIQ API", "docs": "/docs", "status": "running"}
 
 

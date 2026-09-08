@@ -8,13 +8,17 @@ Sanktionslisten prüfen.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Testabdeckung](https://img.shields.io/badge/Testabdeckung-98%25-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-37%20bestanden-brightgreen)
+![Testabdeckung](https://img.shields.io/badge/Testabdeckung-99%25-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-40%20bestanden-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/Linting-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/Stil-black-000000)
 ![Mypy](https://img.shields.io/badge/typisiert-mypy-2A6DB2)
 ![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green)
+
+**[🌐 Live-Demo](https://customsiq-gs0u.onrender.com/)** · [📖 API-Referenz](https://customsiq-gs0u.onrender.com/docs)
+
+<sub>Läuft auf einer kostenlosen Render-Instanz, die im Leerlauf schläft — die erste Anfrage kann ~30 s dauern.</sub>
 
 [🇬🇧 English](README.md) · [🇹🇷 Türkçe](README.tr.md) · **🇩🇪 Deutsch**
 
@@ -59,6 +63,7 @@ entscheidet.
 |---|---|---|
 | 🔍 | **Unscharfe Suche** | Freitextbeschreibung → nach Ähnlichkeitswert sortierte KN-/TARIC-Codes |
 | 🚫 | **Sanktionsprüfung** | Name → Treffer auf Verbotslisten, tolerant gegenüber Wortstellung und Teilnamen |
+| 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
 | 🌐 | **REST-API** | `GET /search` und `GET /screen` über FastAPI, mit erzeugter `/docs`-Oberfläche |
 | 🗄️ | **Speicherung ohne Einrichtungsaufwand** | SQLite aus der Standardbibliothek, vorbefüllt mit 20 Codes + 18 fiktiven Einträgen |
@@ -116,7 +121,8 @@ flowchart LR
 | `config.py` | `pydantic-settings`; liest `CUSTOMSIQ_*`-Umgebungsvariablen und `.env` |
 | `logging_config.py` | Gemeinsames Logging — schlichtes Format nach stdout, nirgends ein `print()` |
 | `main.py` | Einstiegspunkt der interaktiven CLI (Suche + `screen <Name>`) |
-| `api.py` | FastAPI-Anwendung: `GET /`, `GET /search`, `GET /screen` |
+| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/screen`, `/health` |
+| `static/index.html` | Das gesamte Frontend — Inline-CSS, reines `fetch()`, keine Abhängigkeiten |
 
 ### Datenmodell
 
@@ -277,11 +283,18 @@ or 'screen <name>' to run a sanctions check.
 No sanctions match for 'Quokka Beachwear'.
 ```
 
-### 🌐 REST-API
+### 🖥️ Weboberfläche
 
 ```bash
 uvicorn src.customsiq.api:app --reload
 ```
+
+Öffnen Sie **http://localhost:8000/** für die Weboberfläche — beide Funktionen auf einer Seite,
+oder probieren Sie die [Live-Demo](https://customsiq-gs0u.onrender.com/).
+
+### 🌐 REST-API
+
+Derselbe Server stellt die JSON-API bereit:
 
 Öffnen Sie anschließend **http://localhost:8000/docs** für die interaktive Swagger-Oberfläche.
 
@@ -325,7 +338,8 @@ for result in search(conn, "lithium battery", limit=3):
 
 | Methode | Endpunkt | Beschreibung |
 |---|---|---|
-| `GET` | `/` | Dienstinformationen — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
+| `GET` | `/` | **Weboberfläche** (HTML-Seite) |
+| `GET` | `/health` | Liveness-Prüfung — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Sortierte KN-Code-Treffer zu einer Produktbeschreibung |
 | `GET` | `/screen` | Sanktionslistentreffer zu einem Personen- oder Firmennamen |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
@@ -394,11 +408,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 
 | Modul | Abdeckung |
 |---|---|
-| `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
+| `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
 | `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 100 % |
-| `api.py` | 🟢 96 % |
 | `main.py` | 🟢 93 % |
-| **Gesamt** | **🟢 98 %** (37 Tests, Schwelle bei 80 %) |
+| **Gesamt** | **🟢 99 %** (40 Tests, Schwelle bei 80 %) |
 
 ### Getestete Grenzfälle
 
@@ -512,11 +525,12 @@ CustomsIQ/
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # gemeinsames Logging-Setup
 │   │   ├── main.py              # CLI-Einstiegspunkt
-│   │   ├── api.py               # FastAPI-Anwendung
+│   │   ├── api.py               # FastAPI-Anwendung (liefert auch das Frontend)
+│   │   ├── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
 │   │   ├── cn_classifier.py     # 🚧 Gerüst
 │   │   └── tariff_calculator.py # 🚧 Gerüst
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
-├── tests/                       # 37 Tests — Unit, API, CLI, Prüfung, Grenzfälle
+├── tests/                       # 40 Tests — Unit, API, CLI, Prüfung, Grenzfälle
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
 └── .env.example
