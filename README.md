@@ -26,6 +26,15 @@ sanctions lists.**
 
 ---
 
+> **ℹ️ About the demo dataset.** The live demo runs on a small curated dataset (20 HS codes) for
+> fast cold starts on Render's free tier, where the filesystem resets on inactivity. The import
+> pipeline has been verified end-to-end against realistic CN-format data (see
+> [Importing the real CN nomenclature](#importing-the-real-cn-nomenclature) below) — running it
+> against the full EU dataset locally, or on a persistent-disk deployment, populates the same
+> schema the live demo uses.
+
+---
+
 ## 📑 Table of contents
 
 | | | |

@@ -26,6 +26,16 @@ listelerine karşı tarayın.**
 
 ---
 
+> **ℹ️ Demo veri kümesi hakkında.** Canlı demo, Render'ın ücretsiz katmanında hızlı soğuk başlangıç
+> için küçük ve seçilmiş bir veri kümesiyle (20 HS kodu) çalışır; o katmanda dosya sistemi
+> hareketsizlikte sıfırlanır. İçe aktarma hattı, gerçekçi CN formatındaki veriye karşı uçtan uca
+> doğrulanmıştır (aşağıdaki
+> [Gerçek CN nomanklatürünü içe aktarma](#gerçek-cn-nomanklatürünü-içe-aktarma) bölümüne bakın) —
+> hattı yerelde tam AB veri kümesiyle ya da kalıcı diskli bir dağıtımda çalıştırmak, canlı demonun
+> kullandığı şemanın aynısını doldurur.
+
+---
+
 ## 📑 İçindekiler
 
 | | | |

@@ -26,6 +26,16 @@ Sanktionslisten prüfen.**
 
 ---
 
+> **ℹ️ Zum Demo-Datenbestand.** Die Live-Demo läuft auf einem kleinen, kuratierten Datenbestand
+> (20 HS-Codes), damit die Kaltstarts auf Renders kostenloser Stufe kurz bleiben — dort wird das
+> Dateisystem bei Inaktivität zurückgesetzt. Die Importstrecke ist end-to-end gegen realistische
+> Daten im KN-Format verifiziert (siehe
+> [Import der echten KN-Nomenklatur](#import-der-echten-kn-nomenklatur) weiter unten) — führt man
+> sie lokal gegen den vollständigen EU-Datenbestand oder auf einem Deployment mit persistenter
+> Platte aus, füllt sie dasselbe Schema, das auch die Live-Demo nutzt.
+
+---
+
 ## 📑 Inhaltsverzeichnis
 
 | | | |
