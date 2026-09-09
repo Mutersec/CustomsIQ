@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.database import get_connection, seed
 from src.customsiq.embargo_screener import screen_entity
@@ -62,6 +63,33 @@ def search_hs_codes(
             "description": r.hs_code.description,
             "category": r.hs_code.category,
             "score": r.score,
+        }
+        for r in results
+    ]
+
+
+@app.get("/classify")
+def classify_description(
+    description: str = Query(..., description="Free-text description of the goods"),
+    top_n: int = Query(5, ge=1, le=50),
+) -> list[dict]:
+    """Suggest the CN codes a description most likely belongs to, with reasoning.
+
+    Complements `/search`: that ranks by character overlap for a quick lookup,
+    while this weighs how rare each term is across the corpus and reports which
+    terms drove each suggestion.
+    """
+    try:
+        results = classify(_conn, description, top_n=top_n)
+    except InvalidQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return [
+        {
+            "code": r.hs_code.code,
+            "description": r.hs_code.description,
+            "category": r.hs_code.category,
+            "score": r.score,
+            "matched_terms": r.matched_terms,
         }
         for r in results
     ]

@@ -49,6 +49,35 @@ def test_search_endpoint_no_match_returns_empty_list() -> None:
     assert len(response.json()) == 1
 
 
+def test_classify_endpoint_ranks_with_reasoning() -> None:
+    """Suggestions come back scored and carry the terms that drove them."""
+    response = client.get("/classify", params={"description": "knitted cotton shirt"})
+    assert response.status_code == 200
+    top = response.json()[0]
+    assert top["code"] == "6109100000"
+    assert top["matched_terms"]
+    assert 0 < top["score"] <= 1
+
+
+def test_classify_endpoint_respects_top_n() -> None:
+    """The result count is bounded by top_n."""
+    response = client.get("/classify", params={"description": "cotton", "top_n": 2})
+    assert response.status_code == 200
+    assert len(response.json()) <= 2
+
+
+def test_classify_endpoint_returns_empty_for_unrelated_input() -> None:
+    """No shared term means an empty list, not zero-confidence noise."""
+    response = client.get("/classify", params={"description": "zephyr quokka bagpipes"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_classify_endpoint_rejects_blank_input() -> None:
+    """A blank description surfaces as HTTP 400."""
+    assert client.get("/classify", params={"description": "   "}).status_code == 400
+
+
 def test_screen_endpoint_returns_match() -> None:
     """A listed name is returned with its list metadata and score."""
     response = client.get("/screen", params={"name": "Northwind Maritime Holdings Ltd"})

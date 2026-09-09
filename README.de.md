@@ -9,7 +9,7 @@ prüfen und den fälligen Zoll berechnen.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Testabdeckung](https://img.shields.io/badge/Testabdeckung-97%25-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-86%20bestanden-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-115%20bestanden-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/Linting-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/Stil-black-000000)
@@ -72,6 +72,7 @@ entscheidet.
 | | Funktion | Beschreibung |
 |---|---|---|
 | 🔍 | **Unscharfe Suche** | Freitextbeschreibung → nach Ähnlichkeitswert sortierte KN-/TARIC-Codes |
+| 🧠 | **Code-Einreihung** | TF-IDF-Vorschläge mit Konfidenzwert und den ausschlaggebenden Begriffen |
 | 🚫 | **Sanktionsprüfung** | Name → Treffer auf Verbotslisten, tolerant gegenüber Wortstellung und Teilnamen |
 | 💶 | **Zollberechnung** | Code + Ursprung + Wert → fälliger Zoll, mit Satz und Begründung |
 | 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
@@ -95,10 +96,11 @@ Scoring- und Validierungslogik existiert an genau einer Stelle und wird nie dupl
 flowchart LR
     subgraph Schnittstellen
         CLI["💻 main.py<br/>Interaktive CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /screen"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty"]
     end
 
     SEARCH["🔍 search.py<br/>KN-Codes ranken"]
+    CLS["🧠 cn_classifier.py<br/>TF-IDF + Begründung"]
     SCREEN["🚫 embargo_screener.py<br/>Sanktionstreffer ranken"]
     DUTY["💶 tariff_calculator.py<br/>Satzwahl + Berechnung"]
     MATCH["🧩 matching.py<br/>Validierung + Ähnlichkeit"]
@@ -107,14 +109,18 @@ flowchart LR
     CFG["⚙️ config.py<br/>.env"]
 
     CLI --> SEARCH
+    CLI --> CLS
     CLI --> SCREEN
     CLI --> DUTY
     API --> SEARCH
+    API --> CLS
     API --> SCREEN
     API --> DUTY
     SEARCH --> MATCH
+    CLS --> MATCH
     SCREEN --> MATCH
     SEARCH --> DB
+    CLS --> DB
     SCREEN --> DB
     DUTY --> DB
     DUTY -. löst aus .-> EXC
@@ -133,13 +139,14 @@ flowchart LR
 | `database.py` | SQLite-Schema, Verbindung, Beispieldaten, `fetch_all*()`, `get_by_code()` |
 | `matching.py` | Eingabevalidierung + Ähnlichkeitsbewertung (**von beiden Funktionen genutzt**) |
 | `search.py` | Rankt KN-Codes nach Beschreibungsähnlichkeit |
+| `cn_classifier.py` | Schlägt Codes über TF-IDF-Gewichtung vor und nennt die passenden Begriffe |
 | `embargo_screener.py` | Rankt Sanktionslistentreffer nach Namensähnlichkeit |
 | `tariff_calculator.py` | Wählt den anwendbaren Zollsatz und berechnet den fälligen Betrag |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; liest `CUSTOMSIQ_*`-Umgebungsvariablen und `.env` |
 | `logging_config.py` | Gemeinsames Logging — schlichtes Format nach stdout, nirgends ein `print()` |
 | `main.py` | Einstiegspunkt der interaktiven CLI (Suche + `screen <Name>`) |
-| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/screen`, `/calculate-duty`, `/health` |
+| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/classify`, `/screen`, `/calculate-duty`, `/health` |
 | `static/index.html` | Das gesamte Frontend — Inline-CSS, reines `fetch()`, keine Abhängigkeiten |
 
 ### Datenmodell
@@ -208,6 +215,46 @@ Punkte zutrifft:
 | **Logging statt `print()`** | Derselbe Ausgabeweg für CLI und API; Level über die Konfiguration steuerbar | — |
 | **Validierung in `matching.py`** | Suche, Prüfung, CLI und API erben sie; ein neuer Aufrufer kann sie nicht versehentlich umgehen | — |
 | **Kein `EmbargoScreeningError`** | Die Eingabevalidierung der Prüfung ist identisch mit der der Suche, daher wird `InvalidQueryError` wiederverwendet statt eine Klasse zu duplizieren | Ergänzen, sobald die Prüfung einen wirklich eigenen Fehlerfall bekommt |
+
+### 🧠 `/search` vs. `/classify` — ein Datenbestand, zwei Algorithmen
+
+Beide ranken dieselbe `hs_codes`-Tabelle, beantworten aber verschiedene Fragen und scheitern
+verschieden. `/search` ist ein **Nachschlagen**: schneller Zeichenabgleich, gut wenn man die
+Formulierung ungefähr kennt. `/classify` ist eine **Vorschlagsmaschine**: sie gewichtet, wie
+*selten* jedes Wort im Datenbestand ist, sodass ein kennzeichnender Begriff mehr zählt als ein
+häufiger — und sie nennt, welche Ihrer Begriffe den Treffer bewirkt haben.
+
+Am Beispieldatenbestand gemessen:
+
+| Abfrage | `/search` (difflib) | `/classify` (TF-IDF) | |
+|---|---|---|---|
+| `knitted cotton shirt` | `6203420000` Herren**hosen** aus Baumwolle | `6109100000` **T-Shirts aus Baumwolle, gewirkt** | ✅ classify richtig |
+| `lithium battery` | `8507600000` Lithium-Ionen-Akkus | dasselbe | unentschieden |
+| `laptop` | `3926909700` Haushaltsartikel aus Kunststoff | `8471300000` Notebooks | ✅ classify richtig |
+
+Zeile 1 ist der Fall, der dieses Modul rechtfertigt: `knitted` kommt in nur einer Beschreibung vor,
+also lässt die Begriffsgewichtung es dominieren, während der Zeichenabgleich von der Masse der mit
+"cotton trousers" geteilten Buchstaben in die Irre geführt wird. Zeile 3 zeigt den umgekehrten
+Fehler: difflib liefert immer *irgendetwas*, `/classify` dagegen nichts, wenn kein Begriff geteilt
+wird — statt Rauschen als Vorschlag auszugeben.
+
+**Warum handgeschriebenes TF-IDF und nicht scikit-learn.** Implementiert ist sklearns eigene Formel
+(geglättetes IDF `log((N+1)/(df+1))+1`, L2-normalisierte Vektoren, Kosinus über das Skalarprodukt)
+in ~40 Zeilen Standardbibliothek-Arithmetik; `TfidfVectorizer` würde diese Daten also nahezu
+identisch ranken — es gibt keine Genauigkeitslücke zu schließen. Dagegen zieht scikit-learn numpy
+und scipy (~100 MB) ins Produktions-Image, um eine 20-zeilige Tabelle zu ranken. Und entscheidend:
+**Erklärbarkeit würde mit sklearn mehr Code kosten, nicht weniger** — hier ist der Beitrag jedes
+Begriffs `Abfragegewicht × Dokumentgewicht`, ohnehin auf dem Weg zum Score berechnet; mit sklearn
+müsste man in `vectorizer.vocabulary_` greifen und in eine dünnbesetzte Matrix zurückindizieren.
+
+Zu scikit-learn wechseln, sobald der Bestand ~10⁵ Zeilen übersteigt oder n-Gramme bzw. sublineare
+Termfrequenz nötig werden. Davor wird der Index pro Aufruf neu aufgebaut — 0,1 ms bei 20 Codes,
+~68 ms bei 10 000 — die erste Optimierung ist also Zwischenspeichern, keine neue Abhängigkeit.
+
+**Ein gemessenes Detail:** KN-Beschreibungen stehen im Plural ("cables", "batteries"), Nutzer tippen
+den Singular. Ohne Pluralfaltung erzielten `cable`, `biscuit`, `laptop` und `battery` jeweils **null
+gegen jeden Code**. Der Tokenizer faltet daher `-ies → y`, das sibilantische `-es` und `-s`. Kein
+Stemmer — nur die englische Pluralregel, die der Datenbestand verlangt.
 
 ### 🚫 Namensabgleich ist kein Produktabgleich
 
@@ -294,6 +341,7 @@ seeded 20 rows into hs_codes
 seeded 18 rows into sanctioned_entities
 CustomsIQ (type 'quit' to exit)
 Enter a product description to search CN codes,
+'classify <description>' for ranked suggestions with reasoning,
 'screen <name>' to run a sanctions check,
 or 'duty <hs_code> <country> <value>' to calculate customs duty.
 
@@ -307,6 +355,10 @@ or 'duty <hs_code> <country> <value>' to calculate customs duty.
 > screen Northwind Maritime
 1 potential sanctions match(es) for 'Northwind Maritime':
 1. Northwind Maritime Holdings Ltd  (100%)  [CY]  EU Consolidated Financial Sanctions List  listed 2023-04-12
+
+> classify knitted cotton shirt
+1. 6109100000  (85% confidence)  Cotton T-shirts, knitted  [Textile]  via: shirt, knitted, cotton
+2. 6203420000  (19% confidence)  Men's cotton trousers  [Textile]  via: cotton
 
 > screen Quokka Beachwear
 No sanctions match for 'Quokka Beachwear'.
@@ -375,6 +427,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/` | **Weboberfläche** (HTML-Seite) |
 | `GET` | `/health` | Liveness-Prüfung — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Sortierte KN-Code-Treffer zu einer Produktbeschreibung |
+| `GET` | `/classify` | Sortierte Code-Vorschläge mit Konfidenz und passenden Begriffen |
 | `GET` | `/screen` | Sanktionslistentreffer zu einem Personen- oder Firmennamen |
 | `GET` | `/calculate-duty` | Fälliger Zoll für eine Sendung, mit Begründung des Satzes |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
@@ -385,6 +438,16 @@ for result in search(conn, "lithium battery", limit=3):
 |---|---|---|---|---|
 | `q` | `str` | *erforderlich* | 1–500 Zeichen, nicht leer | Freitext-Produktbeschreibung |
 | `limit` | `int` | `5` | 1–50 | Maximale Anzahl an Treffern |
+
+**Parameter von `GET /classify`**
+
+| Parameter | Typ | Standard | Einschränkungen | Beschreibung |
+|---|---|---|---|---|
+| `description` | `str` | *erforderlich* | 1–500 Zeichen, nicht leer | Freitextbeschreibung der Ware |
+| `top_n` | `int` | `5` | 1–50 | Maximale Anzahl an Vorschlägen |
+
+Der Zweitplatzierte liegt deutlich niedriger, weil er nur das *häufige* Wort `cotton` teilt, während
+der Sieger auch das seltene `knitted` trifft — `matched_terms` macht das sichtbar statt implizit.
 
 **Parameter von `GET /screen`**
 
@@ -457,11 +520,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Modul | Abdeckung |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
-| `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 100 % |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 100 % |
 | `scripts/import_cn_codes.py` | 🟢 91 % |
 | `logging_config.py` | 🟢 100 % |
 | `main.py` | 🟢 95 % |
-| **Gesamt** | **🟢 97 %** (86 Tests, Schwelle bei 80 %) |
+| **Gesamt** | **🟢 97 %** (115 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
 
 ### Getestete Grenzfälle
 
@@ -475,6 +538,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Unvollständiger Firmenname (`Northwind Maritime`) | Trifft den vollständig gelisteten Namen |
 | Name ohne Entsprechung auf der Liste | Leeres Ergebnis, kein Fehler |
 | Exakte Suche nach unbekanntem Code | `HSCodeNotFoundError` |
+| Beschreibung ohne gemeinsamen Begriff | Leere Liste, nie ein Vorschlag mit Konfidenz null |
+| Singular-Anfrage auf Plural-Beschreibung (`cable`, `battery`) | Wird gefaltet und trifft |
 | Präferenzsatz für den Ursprung vorhanden | Setzt sich gegen den Regelsatz durch |
 | Noch nicht in Kraft (`valid_from` in der Zukunft) | Wird ignoriert; es gilt der geltende Satz |
 | HS-Code ohne hinterlegten Satz | `RateNotFoundError` → HTTP `404`, niemals null Zoll |
@@ -612,19 +677,20 @@ da nur dieses Werkzeug sie je bräuchte. Ein CSV-Export erübrigt sie vollständ
 
 ## 🗺️ Roadmap
 
-Alle drei Kernfunktionen sind einsatzbereit. Ein Gerüst bleibt übrig; bis es echte Logik enthält,
-bleibt es von der Abdeckungsschwelle ausgenommen:
+**Alle vier Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
+von der Abdeckungsschwelle gemessen:
 
 | Modul | Status | Funktionsumfang |
 |---|---|---|
-| `search.py` + `api.py` | ✅ **Ausgeliefert** | Unscharfe KN-Code-Suche über CLI und REST |
+| `search.py` | ✅ **Ausgeliefert** | Unscharfe KN-Code-Suche über CLI und REST |
+| `cn_classifier.py` | ✅ **Ausgeliefert** | TF-IDF-Einreihung mit Konfidenz und passenden Begriffen |
 | `embargo_screener.py` | ✅ **Ausgeliefert** | Namensprüfung gegen Verbotslisten über CLI und REST |
 | `tariff_calculator.py` | ✅ **Ausgeliefert** | Zollberechnung mit Auswahl des Präferenzsatzes |
-| `cn_classifier.py` | 🚧 Gerüst | Regel- und konfidenzbasierte Tarifierung gegen den EU-TARIC-Datenbestand |
 
 Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
-Alias- und Transliterationsbehandlung für Entitätsnamen sowie Kontingent- und
-Antidumping-Komponenten auf der Zollberechnung.
+Alias- und Transliterationsbehandlung für Entitätsnamen, Kontingent- und Antidumping-Komponenten
+auf der Zollberechnung sowie das Zwischenspeichern des Klassifikator-Index, sobald ein vollständiger
+KN-Import den Neuaufbau pro Aufruf spürbar macht.
 
 ---
 
@@ -639,6 +705,7 @@ CustomsIQ/
 │   │   ├── database.py          # SQLite-Schicht + Beispieldaten (beide Tabellen)
 │   │   ├── matching.py          # gemeinsame Validierung + Ähnlichkeitsbewertung
 │   │   ├── search.py            # KN-Code-Ranking
+│   │   ├── cn_classifier.py     # TF-IDF-Einreihung + Begründung
 │   │   ├── embargo_screener.py  # Namensprüfung gegen Sanktionslisten
 │   │   ├── tariff_calculator.py # Zollsatzwahl + Berechnung
 │   │   ├── exceptions.py        # typisierte Fehlerhierarchie
@@ -646,11 +713,10 @@ CustomsIQ/
 │   │   ├── logging_config.py    # gemeinsames Logging-Setup
 │   │   ├── main.py              # CLI-Einstiegspunkt
 │   │   ├── api.py               # FastAPI-Anwendung (liefert auch das Frontend)
-│   │   ├── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
-│   │   └── cn_classifier.py     # 🚧 Gerüst
+│   │   └── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
 ├── scripts/import_cn_codes.py   # einmaliges Werkzeug: offizielle KN-Datei → hs_codes
-├── tests/                       # 86 Tests — Unit, API, CLI, Prüfung, Zoll, Import, Grenzfälle
+├── tests/                       # 115 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Import
 │   └── fixtures/                # Beispiel-KN-Export für die Importer-Tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

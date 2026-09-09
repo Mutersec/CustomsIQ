@@ -126,6 +126,14 @@
 
   .panel-head.alt .rule { background: var(--amber); }
   .panel-head.calc .rule { background: #60a5fa; }
+  .panel-head.cls .rule { background: #a78bfa; }
+
+  .card.cls { border-left-color: #a78bfa; }
+  .card.cls .bar span { background: #a78bfa; }
+
+  .terms { margin-top: 8px; }
+  .terms .label { color: var(--text-dim); font-size: 11.5px; margin-right: 6px; }
+  .chip.term { border-color: #4c3f80; color: #cfc4f5; }
 
   /* The duty panel has three fields, so it takes a full-width row of its own. */
   .panel.wide { grid-column: 1 / -1; }
@@ -315,7 +323,7 @@
 <header>
   <div class="header-inner">
     <h1>Customs<span class="accent">IQ</span></h1>
-    <span class="tagline">EU trade compliance toolkit — classification, screening &amp; duty calculation</span>
+    <span class="tagline">EU trade compliance toolkit — search, classification, screening &amp; duty</span>
     <span class="header-links"><a href="/docs">API reference →</a></span>
   </div>
 </header>
@@ -364,6 +372,29 @@
       <div class="results" id="screen-results" aria-live="polite"></div>
     </div>
   </section>
+  <!-- ============ Classification ============ -->
+  <section class="panel wide">
+    <div class="panel-head cls">
+      <span class="rule"></span>
+      <h2>Code Classification</h2>
+    </div>
+    <div class="panel-body">
+      <p class="hint">
+        Describe the goods and get ranked code suggestions with a confidence score. Unlike the
+        search above, this weighs how <em>rare</em> each word is across the nomenclature, and shows
+        which of your terms drove each suggestion.
+      </p>
+      <form id="classify-form">
+        <div class="field">
+          <label for="classify-input">Product description</label>
+          <input type="text" id="classify-input" placeholder="e.g. knitted cotton shirt" autocomplete="off">
+        </div>
+        <button type="submit" id="classify-btn">Classify</button>
+      </form>
+      <div class="results" id="classify-results" aria-live="polite"></div>
+    </div>
+  </section>
+
   <!-- ============ Duty calculation ============ -->
   <section class="panel wide">
     <div class="panel-head calc">
@@ -515,6 +546,42 @@
             </p>
             <span class="chip">${escapeHtml(row.country)}</span>
             <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
+          </article>
+        `).join("");
+      },
+    });
+  });
+
+  // ---------- Classification ----------
+  const classifyBox = document.getElementById("classify-results");
+
+  document.getElementById("classify-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    submit({
+      url: (v) => `/classify?description=${encodeURIComponent(v)}&top_n=5`,
+      input: document.getElementById("classify-input"),
+      button: document.getElementById("classify-btn"),
+      box: classifyBox,
+      busyLabel: "Classifying…",
+      idleLabel: "Classify",
+      render: (rows) => {
+        if (!rows.length) {
+          setState(classifyBox, "", "No code shares a term with that description — try different wording.");
+          return;
+        }
+        classifyBox.innerHTML = rows.map((row) => `
+          <article class="card cls">
+            <div class="card-top">
+              <span class="card-title mono">${escapeHtml(row.code)}</span>
+              <span class="score">${pct(row.score)}% confidence</span>
+            </div>
+            <p class="card-desc">${escapeHtml(row.description)}</p>
+            <span class="chip">${escapeHtml(row.category)}</span>
+            <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
+            <div class="terms">
+              <span class="label">matched on</span>
+              ${row.matched_terms.map((t) => `<span class="chip term">${escapeHtml(t)}</span>`).join("")}
+            </div>
           </article>
         `).join("");
       },

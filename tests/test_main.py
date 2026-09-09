@@ -44,6 +44,23 @@ def test_run_screens_a_clean_name(monkeypatch: pytest.MonkeyPatch, capsys) -> No
     assert "No sanctions match" in capsys.readouterr().out
 
 
+def test_run_classifies_a_description(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """'classify <description>' prints ranked codes and the terms behind them."""
+    monkeypatch.setattr("builtins.input", _fake_input(["classify knitted cotton shirt", "quit"]))
+    run(":memory:")
+    out = capsys.readouterr().out
+    assert "6109100000" in out
+    assert "via:" in out
+    assert "confidence" in out
+
+
+def test_run_reports_an_unclassifiable_description(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """A description sharing no term reports that, rather than listing noise."""
+    monkeypatch.setattr("builtins.input", _fake_input(["classify zephyr quokka", "quit"]))
+    run(":memory:")
+    assert "No code shares a term" in capsys.readouterr().out
+
+
 def test_run_calculates_duty(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     """'duty <code> <country> <value>' prints the amount and the reasoning."""
     monkeypatch.setattr("builtins.input", _fake_input(["duty 6109100000 CN 1000", "quit"]))

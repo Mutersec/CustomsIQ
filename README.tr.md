@@ -9,7 +9,7 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Kapsam](https://img.shields.io/badge/kapsam-%9725-brightgreen)
-![Testler](https://img.shields.io/badge/testler-86%20ge%C3%A7ti-brightgreen)
+![Testler](https://img.shields.io/badge/testler-115%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
@@ -71,6 +71,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | | Özellik | Açıklama |
 |---|---|---|
 | 🔍 | **Bulanık arama** | Serbest metin açıklama → benzerlik skoruna göre sıralanmış CN/TARIC kodları |
+| 🧠 | **Kod sınıflandırma** | Güven skoru ve her öneriyi getiren terimlerle TF-IDF önerileri |
 | 🚫 | **Yaptırım taraması** | İsim → kelime sırasına ve kısmi isimlere toleranslı yasaklı taraf eşleşmeleri |
 | 💶 | **Vergi hesaplama** | Kod + menşe + kıymet → ödenecek vergi, uygulanan oran ve gerekçesiyle |
 | 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
@@ -94,10 +95,11 @@ adaptörüdür; skorlama ve doğrulama mantığı tam olarak tek bir yerde bulun
 flowchart LR
     subgraph Arayuzler["Arayüzler"]
         CLI["💻 main.py<br/>Etkileşimli CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /screen"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty"]
     end
 
     SEARCH["🔍 search.py<br/>CN kodu sıralama"]
+    CLS["🧠 cn_classifier.py<br/>TF-IDF + gerekçe"]
     SCREEN["🚫 embargo_screener.py<br/>yaptırım eşleşmeleri"]
     DUTY["💶 tariff_calculator.py<br/>oran seçimi + hesap"]
     MATCH["🧩 matching.py<br/>doğrulama + benzerlik"]
@@ -106,14 +108,18 @@ flowchart LR
     CFG["⚙️ config.py<br/>.env"]
 
     CLI --> SEARCH
+    CLI --> CLS
     CLI --> SCREEN
     CLI --> DUTY
     API --> SEARCH
+    API --> CLS
     API --> SCREEN
     API --> DUTY
     SEARCH --> MATCH
+    CLS --> MATCH
     SCREEN --> MATCH
     SEARCH --> DB
+    CLS --> DB
     SCREEN --> DB
     DUTY --> DB
     DUTY -. hata fırlatır .-> EXC
@@ -132,13 +138,14 @@ flowchart LR
 | `database.py` | SQLite şeması, bağlantı, örnek veri, `fetch_all*()`, `get_by_code()` |
 | `matching.py` | Girdi doğrulama + benzerlik skorlaması (**her iki yetenek de bunu kullanır**) |
 | `search.py` | CN kodlarını açıklama benzerliğine göre sıralar |
+| `cn_classifier.py` | TF-IDF terim ağırlığıyla kod önerir ve eşleşen terimleri bildirir |
 | `embargo_screener.py` | Yaptırım listesi eşleşmelerini isim benzerliğine göre sıralar |
 | `tariff_calculator.py` | Uygulanacak vergi oranını seçer ve ödenecek tutarı hesaplar |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; `CUSTOMSIQ_*` ortam değişkenlerini ve `.env` dosyasını okur |
 | `logging_config.py` | Ortak loglama kurulumu — stdout'a sade format, hiçbir yerde `print()` yok |
 | `main.py` | Etkileşimli CLI giriş noktası (arama + `screen <isim>`) |
-| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/screen`, `/calculate-duty`, `/health` |
+| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/classify`, `/screen`, `/calculate-duty`, `/health` |
 | `static/index.html` | Web arayüzünün tamamı — satır içi CSS, saf `fetch()`, sıfır bağımlılık |
 
 ### Veri modeli
@@ -207,6 +214,47 @@ Aşağıdakilerden **herhangi biri** gerçekleştiğinde `matching.py` içindeki
 | **`print()` değil loglama** | CLI ve API için aynı çıktı yolu; seviye yapılandırmayla kontrol edilir | — |
 | **Doğrulamanın `matching.py` içinde olması** | Arama, tarama, CLI ve API bunu devralır; yeni bir çağıran eklenerek atlanması imkânsızdır | — |
 | **`EmbargoScreeningError` eklenmemesi** | Taramanın girdi doğrulaması aramanınkiyle birebir aynı; yeni sınıf yerine `InvalidQueryError` yeniden kullanılır | Tarama gerçekten farklı bir hata durumu kazanırsa eklenir |
+
+### 🧠 `/search` ile `/classify` — tek veri, iki algoritma
+
+İkisi de aynı `hs_codes` tablosunu sıralar, ama farklı sorulara yanıt verir ve farklı şekillerde
+hata yapar. `/search` bir **arama**dır: hızlı karakter örtüşmesi, ifadeyi aşağı yukarı bildiğinizde
+iyidir. `/classify` bir **öneri motorudur**: her kelimenin nomanklatür genelinde ne kadar *nadir*
+olduğunu tartar; böylece ayırt edici bir terim, yaygın olandan daha fazla ağırlık taşır ve hangi
+terimlerinizin sonucu getirdiğini bildirir.
+
+Örnek veri kümesi üzerinde ölçülen:
+
+| Sorgu | `/search` (difflib) | `/classify` (TF-IDF) | |
+|---|---|---|---|
+| `knitted cotton shirt` | `6203420000` Erkek pamuklu **pantolon** | `6109100000` **Pamuklu tişört, örme** | ✅ classify doğru |
+| `lithium battery` | `8507600000` Lityum iyon piller | aynı | berabere |
+| `laptop` | `3926909700` Plastik ev eşyaları | `8471300000` dizüstü | ✅ classify doğru |
+
+1. satır bu modülün varlık sebebidir: `knitted` yalnızca tek bir açıklamada geçer, bu yüzden terim
+ağırlıklandırması onun baskın olmasını sağlar; karakter örtüşmesi ise "cotton trousers" ile
+paylaşılan harf yığınına kanar. 3. satır ters yöndeki hatayı gösterir: difflib ne olursa olsun
+*bir şey* döndürür, classify ise hiçbir terim paylaşılmadığında gürültüyü öneri kılığına sokmak
+yerine hiçbir şey döndürmez.
+
+**Neden elle yazılmış TF-IDF, scikit-learn değil.** Uygulama, sklearn'ün kendi formülüdür
+(yumuşatılmış IDF `log((N+1)/(df+1))+1`, L2 normalize vektörler, iç çarpımla kosinüs) ve ~40 satır
+standart kütüphane aritmetiğidir; yani `TfidfVectorizer` bu veriyi neredeyse aynı sıralardı —
+kapatılacak bir doğruluk açığı yok. Buna karşılık scikit-learn, 20 satırlık bir tabloyu sıralamak
+için üretim imajına numpy ve scipy'ı (~100 MB) sokar. Ve belirleyici olan: **açıklanabilirlik
+sklearn ile daha az değil, daha çok kod isterdi** — burada her terimin katkısı zaten skora giderken
+hesaplanan `sorgu_ağırlığı × belge_ağırlığı`; sklearn ile aynı sayıları geri elde etmek için
+`vectorizer.vocabulary_` içine uzanıp seyrek matrise indekslemek gerekirdi.
+
+Veri kümesi ~10⁵ satırı aşarsa ya da n-gram veya alt-doğrusal terim frekansı gerekirse
+scikit-learn'e geçilir. Ondan önce sınıflandırıcı indeksi her çağrıda yeniden kurulur — 20 kodda
+0,1 ms, 10 000 kodda ~68 ms — yani ilk optimizasyon yeni bir bağımlılık değil, önbelleklemedir.
+
+**Ölçümden çıkan bir ayrıntı:** CN açıklamaları çoğul yazılır ("cables", "batteries"), kullanıcılar
+ise tekil yazar. Çoğul katlaması olmadan `cable`, `biscuit`, `laptop` ve `battery` sorgularının her
+biri **her koda karşı sıfır** skor aldı. Bu yüzden tokenizer `-ies → y`, ıslıklı `-es` ve `-s`
+eklerini katlar. Bu bir gövdeleyici (stemmer) değil — yalnızca korpusun gerektirdiği İngilizce
+çoğul kuralı.
 
 ### 🚫 İsim eşleştirmesi, ürün eşleştirmesi değildir
 
@@ -290,6 +338,7 @@ seeded 20 rows into hs_codes
 seeded 18 rows into sanctioned_entities
 CustomsIQ (type 'quit' to exit)
 Enter a product description to search CN codes,
+'classify <description>' for ranked suggestions with reasoning,
 'screen <name>' to run a sanctions check,
 or 'duty <hs_code> <country> <value>' to calculate customs duty.
 
@@ -303,6 +352,10 @@ or 'duty <hs_code> <country> <value>' to calculate customs duty.
 > screen Northwind Maritime
 1 potential sanctions match(es) for 'Northwind Maritime':
 1. Northwind Maritime Holdings Ltd  (100%)  [CY]  EU Consolidated Financial Sanctions List  listed 2023-04-12
+
+> classify knitted cotton shirt
+1. 6109100000  (85% confidence)  Cotton T-shirts, knitted  [Textile]  via: shirt, knitted, cotton
+2. 6203420000  (19% confidence)  Men's cotton trousers  [Textile]  via: cotton
 
 > screen Quokka Beachwear
 No sanctions match for 'Quokka Beachwear'.
@@ -371,6 +424,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/` | **Web arayüzü** (HTML sayfa) |
 | `GET` | `/health` | Canlılık kontrolü — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Ürün açıklaması için sıralanmış CN kodu eşleşmeleri |
+| `GET` | `/classify` | Güven skoru ve eşleşen terimlerle sıralanmış kod önerileri |
 | `GET` | `/screen` | Kişi veya kuruluş ismi için yaptırım listesi eşleşmeleri |
 | `GET` | `/calculate-duty` | Sevkiyat için ödenecek vergi, uygulanan oranın gerekçesiyle |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
@@ -381,6 +435,17 @@ for result in search(conn, "lithium battery", limit=3):
 |---|---|---|---|---|
 | `q` | `str` | *zorunlu* | 1–500 karakter, boş olamaz | Serbest metin ürün açıklaması |
 | `limit` | `int` | `5` | 1–50 | Azami sonuç sayısı |
+
+**`GET /classify` parametreleri**
+
+| Parametre | Tip | Varsayılan | Kısıtlar | Açıklama |
+|---|---|---|---|---|
+| `description` | `str` | *zorunlu* | 1–500 karakter, boş olamaz | Eşyanın serbest metin açıklaması |
+| `top_n` | `int` | `5` | 1–50 | Azami öneri sayısı |
+
+İkinci sıradaki önerinin skoru çok daha düşüktür; çünkü yalnızca *yaygın* olan `cotton` kelimesini
+paylaşır, kazanan ise nadir olan `knitted` ile de eşleşir — `matched_terms` bunu ima etmek yerine
+görünür kılar.
 
 **`GET /screen` parametreleri**
 
@@ -452,11 +517,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Modül | Kapsam |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
-| `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 %100 |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 %100 |
 | `scripts/import_cn_codes.py` | 🟢 %91 |
 | `logging_config.py` | 🟢 %100 |
 | `main.py` | 🟢 %95 |
-| **Toplam** | **🟢 %97** (86 test, eşik %80) |
+| **Toplam** | **🟢 %97** (115 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
 
 ### Test edilen uç durumlar
 
@@ -470,6 +535,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Kısmi şirket ismi (`Northwind Maritime`) | Listedeki tam isimle eşleşir |
 | Listede karşılığı olmayan isim | Hata değil, boş sonuç |
 | Bilinmeyen kodun birebir sorgulanması | `HSCodeNotFoundError` |
+| Hiçbir kodla terim paylaşmayan açıklama | Boş liste; asla sıfır güvenli öneri değil |
+| Çoğul açıklamaya karşı tekil sorgu (`cable`, `battery`) | Katlanır ve eşleşir |
 | Menşe için tercihli oran mevcut | Standart MFN oranını geçersiz kılar |
 | Henüz yürürlüğe girmemiş oran (`valid_from` gelecekte) | Yok sayılır; yürürlükteki orana düşülür |
 | Kayıtlı oranı olmayan HS kodu | `RateNotFoundError` → HTTP `404`, asla sıfır vergi değil |
@@ -606,19 +673,20 @@ Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje 
 
 ## 🗺️ Yol haritası
 
-Üç temel uyum yeteneği de bugün kullanıma hazırdır. Geriye tek bir iskelet kaldı; gerçek bir
-mantık içermediği sürece kapsam eşiğinin dışında tutulur:
+**Dört yeteneğin dördü de bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
+eşiğiyle ölçülüyor:
 
 | Modül | Durum | Kapsam |
 |---|---|---|
-| `search.py` + `api.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden bulanık CN kodu araması |
+| `search.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden bulanık CN kodu araması |
+| `cn_classifier.py` | ✅ **Tamamlandı** | Güven skoru ve eşleşen terimlerle TF-IDF sınıflandırma |
 | `embargo_screener.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden yasaklı taraf isim taraması |
 | `tariff_calculator.py` | ✅ **Tamamlandı** | Tercihli oran seçimiyle vergi hesaplama |
-| `cn_classifier.py` | 🚧 İskelet | AB TARIC veri kümesine karşı kural ve güven skoru tabanlı sınıflandırma |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
-isimleri için takma ad ile transliterasyon desteği, ve vergi hesabının üzerine kota/anti-damping
-bileşenleri.
+isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
+bileşenleri, ve tam CN içe aktarımı her sorgudaki yeniden kurulumu hissedilir hâle getirdiğinde
+sınıflandırıcı indeksinin önbelleğe alınması.
 
 ---
 
@@ -633,6 +701,7 @@ CustomsIQ/
 │   │   ├── database.py          # SQLite katmanı + örnek veri (iki tablo)
 │   │   ├── matching.py          # ortak doğrulama + benzerlik skorlaması
 │   │   ├── search.py            # CN kodu sıralaması
+│   │   ├── cn_classifier.py     # TF-IDF sınıflandırma + gerekçe
 │   │   ├── embargo_screener.py  # yaptırım isim taraması
 │   │   ├── tariff_calculator.py # vergi oranı seçimi + hesaplama
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
@@ -640,11 +709,10 @@ CustomsIQ/
 │   │   ├── logging_config.py    # ortak loglama kurulumu
 │   │   ├── main.py              # CLI giriş noktası
 │   │   ├── api.py               # FastAPI uygulaması (arayüzü de sunar)
-│   │   ├── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
-│   │   └── cn_classifier.py     # 🚧 iskelet
+│   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── scripts/import_cn_codes.py   # tek seferlik araç: resmî CN dosyası → hs_codes
-├── tests/                       # 86 test — birim, API, CLI, tarama, vergi, içe aktarma, uç durumlar
+├── tests/                       # 115 test — birim, API, CLI, sınıflandırma, tarama, vergi, içe aktarma
 │   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

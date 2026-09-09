@@ -9,7 +9,7 @@ lists, and calculate the duty owed.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-115%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
@@ -70,6 +70,7 @@ not a black box that decides alone.
 | | Feature | Description |
 |---|---|---|
 | 🔍 | **Fuzzy search** | Free-text description → CN/TARIC codes ranked by similarity score |
+| 🧠 | **Code classification** | TF-IDF suggestions with a confidence score and the terms behind each |
 | 🚫 | **Sanctions screening** | Name → denied-party hits, tolerant of word order and partial names |
 | 💶 | **Duty calculation** | Code + origin + value → duty owed, with the rate and reason explained |
 | 🖥️ | **Web UI** | Single-page frontend served at `/` — no build step, no framework, no CDN |
@@ -93,10 +94,11 @@ validation logic exists in exactly one place and is never duplicated.
 flowchart LR
     subgraph Interfaces
         CLI["💻 main.py<br/>Interactive CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /screen"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty"]
     end
 
     SEARCH["🔍 search.py<br/>rank CN codes"]
+    CLS["🧠 cn_classifier.py<br/>TF-IDF + explain"]
     SCREEN["🚫 embargo_screener.py<br/>rank sanctions hits"]
     DUTY["💶 tariff_calculator.py<br/>select rate + compute"]
     MATCH["🧩 matching.py<br/>validate + similarity"]
@@ -105,14 +107,18 @@ flowchart LR
     CFG["⚙️ config.py<br/>.env"]
 
     CLI --> SEARCH
+    CLI --> CLS
     CLI --> SCREEN
     CLI --> DUTY
     API --> SEARCH
+    API --> CLS
     API --> SCREEN
     API --> DUTY
     SEARCH --> MATCH
+    CLS --> MATCH
     SCREEN --> MATCH
     SEARCH --> DB
+    CLS --> DB
     SCREEN --> DB
     DUTY --> DB
     DUTY -. raises .-> EXC
@@ -131,13 +137,14 @@ flowchart LR
 | `database.py` | SQLite schema, connection, seed data, `fetch_all*()`, `get_by_code()` |
 | `matching.py` | Input validation + similarity scoring (**shared by both features**) |
 | `search.py` | Ranks CN codes by description similarity |
+| `cn_classifier.py` | Suggests codes by TF-IDF term weighting, reporting the terms that matched |
 | `embargo_screener.py` | Ranks sanctions-list hits by name similarity |
 | `tariff_calculator.py` | Selects the applicable duty rate and computes what is owed |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; reads `CUSTOMSIQ_*` env vars and `.env` |
 | `logging_config.py` | Shared logging setup — plain formatter to stdout, no `print()` anywhere |
 | `main.py` | Interactive CLI entry point (search + `screen <name>`) |
-| `api.py` | FastAPI app: serves the frontend at `/`, plus `/search`, `/screen`, `/calculate-duty`, `/health` |
+| `api.py` | FastAPI app: serves the frontend at `/`, plus `/search`, `/classify`, `/screen`, `/calculate-duty`, `/health` |
 | `static/index.html` | The whole web frontend — inline CSS, vanilla `fetch()`, zero dependencies |
 
 ### Data model
@@ -204,6 +211,45 @@ Swap `similarity()` in `matching.py` for `rapidfuzz.fuzz.WRatio` as soon as **an
 | **Logging, not `print()`** | Same output path for CLI and API; level controlled by config | — |
 | **No `EmbargoScreeningError`** | Screening's input validation is identical to search's, so it reuses `InvalidQueryError` rather than duplicating a class | Add one if screening grows a genuinely distinct failure mode |
 | **Validation inside `matching.py`** | Search, screening, CLI and API all inherit it; impossible to bypass by adding a new caller | — |
+
+### 🧠 `/search` vs `/classify` — two algorithms, one dataset
+
+Both rank the same `hs_codes` table, but they answer different questions and fail in different
+ways. `/search` is a **lookup**: fast character overlap, good when you roughly know the wording.
+`/classify` is a **suggestion engine**: it weighs how *rare* each word is across the nomenclature,
+so a distinctive term counts for more than a common one, and it reports which of your terms drove
+each hit.
+
+Measured on the sample corpus:
+
+| Query | `/search` (difflib) | `/classify` (TF-IDF) | |
+|---|---|---|---|
+| `knitted cotton shirt` | `6203420000` Men's cotton **trousers** | `6109100000` **Cotton T-shirts, knitted** | ✅ classify right |
+| `lithium battery` | `8507600000` Lithium-ion batteries | same | tie |
+| `laptop` | `3926909700` Plastic household articles | `8471300000` laptops | ✅ classify right |
+
+Row 1 is the case that justifies the module: `knitted` appears in only one description, so term
+weighting lets it dominate, while character overlap is swayed by the bulk of letters shared with
+"cotton trousers". Row 3 shows the reverse failure — difflib returns *something* regardless, where
+classify returns nothing when no term is shared rather than dressing noise up as a suggestion.
+
+**Why hand-rolled TF-IDF and not scikit-learn.** The implementation is sklearn's own formula
+(smoothed IDF `log((N+1)/(df+1))+1`, L2-normalised vectors, cosine via dot product) in ~40 lines of
+stdlib arithmetic, so `TfidfVectorizer` would rank this data near-identically — there is no
+accuracy gap to close. Against that: scikit-learn pulls numpy and scipy (~100 MB) into the
+production image to rank a 20-row table. And decisively, **explainability would cost more code with
+sklearn, not less** — here each term's contribution is `query_weight × doc_weight`, already computed
+on the way to the score; with sklearn it would mean reaching into `vectorizer.vocabulary_` and
+indexing back into a sparse matrix to recover the same numbers.
+
+Adopt scikit-learn if the corpus passes ~10⁵ rows, or if n-grams or sublinear term frequency are
+needed. Before that, the classifier index is rebuilt per call — 0.1 ms at 20 codes, ~68 ms at
+10 000 — so caching it is the first optimisation, not a new dependency.
+
+**One measured wrinkle:** CN descriptions are written in the plural ("cables", "batteries") while
+users type the singular. Without plural folding, `cable`, `biscuit`, `laptop` and `battery` each
+scored **zero against every code**. The tokenizer therefore folds `-ies → y`, sibilant `-es`, and
+`-s`. It is not a stemmer — just the English plural rule the corpus demands.
 
 ### 🚫 Name matching is not product matching
 
@@ -287,6 +333,7 @@ seeded 20 rows into hs_codes
 seeded 18 rows into sanctioned_entities
 CustomsIQ (type 'quit' to exit)
 Enter a product description to search CN codes,
+'classify <description>' for ranked suggestions with reasoning,
 'screen <name>' to run a sanctions check,
 or 'duty <hs_code> <country> <value>' to calculate customs duty.
 
@@ -300,6 +347,10 @@ or 'duty <hs_code> <country> <value>' to calculate customs duty.
 > screen Northwind Maritime
 1 potential sanctions match(es) for 'Northwind Maritime':
 1. Northwind Maritime Holdings Ltd  (100%)  [CY]  EU Consolidated Financial Sanctions List  listed 2023-04-12
+
+> classify knitted cotton shirt
+1. 6109100000  (85% confidence)  Cotton T-shirts, knitted  [Textile]  via: shirt, knitted, cotton
+2. 6203420000  (19% confidence)  Men's cotton trousers  [Textile]  via: cotton
 
 > screen Quokka Beachwear
 No sanctions match for 'Quokka Beachwear'.
@@ -368,6 +419,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/` | **Web frontend** (HTML page) |
 | `GET` | `/health` | Liveness check — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Ranked CN code matches for a product description |
+| `GET` | `/classify` | Ranked code suggestions with confidence and matched terms |
 | `GET` | `/screen` | Sanctions-list hits for a person or organisation name |
 | `GET` | `/calculate-duty` | Duty owed on a consignment, with the applied rate explained |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
@@ -378,6 +430,39 @@ for result in search(conn, "lithium battery", limit=3):
 |---|---|---|---|---|
 | `q` | `str` | *required* | 1–500 chars, not blank | Free-text product description |
 | `limit` | `int` | `5` | 1–50 | Maximum number of results |
+
+**`GET /classify` parameters**
+
+| Parameter | Type | Default | Constraints | Description |
+|---|---|---|---|---|
+| `description` | `str` | *required* | 1–500 chars, not blank | Free-text description of the goods |
+| `top_n` | `int` | `5` | 1–50 | Maximum number of suggestions |
+
+```bash
+curl "http://localhost:8000/classify?description=knitted+cotton+shirt&top_n=2"
+```
+
+```json
+[
+  {
+    "code": "6109100000",
+    "description": "Cotton T-shirts, knitted",
+    "category": "Textile",
+    "score": 0.8464917087617252,
+    "matched_terms": ["shirt", "knitted", "cotton"]
+  },
+  {
+    "code": "6203420000",
+    "description": "Men's cotton trousers",
+    "category": "Textile",
+    "score": 0.18940799593138907,
+    "matched_terms": ["cotton"]
+  }
+]
+```
+
+The runner-up scores far lower because it only shares the *common* word `cotton`, while the winner
+also matched the rare `knitted` — `matched_terms` makes that visible rather than implicit.
 
 **`GET /screen` parameters**
 
@@ -467,11 +552,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | Module | Coverage |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
-| `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 100% |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 100% |
 | `scripts/import_cn_codes.py` | 🟢 91% |
 | `logging_config.py` | 🟢 100% |
 | `main.py` | 🟢 95% |
-| **Total** | **🟢 97%** (86 tests, gate at 80%) |
+| **Total** | **🟢 97%** (115 tests, gate at 80%) — **no module is excluded from the gate** |
 
 ### Edge cases under test
 
@@ -485,6 +570,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | Partial company name (`Northwind Maritime`) | Matches the full listed name |
 | Name matching nothing on the list | Empty result, not an error |
 | Unknown exact code lookup | `HSCodeNotFoundError` |
+| Description sharing no term with any code | Empty list, never a zero-confidence suggestion |
+| Singular query against a plural description (`cable`, `battery`) | Folded and matched |
 | Preferential rate available for the origin | Beats the standard MFN rate |
 | Rate not yet in force (`valid_from` in the future) | Ignored; falls back to the rate in force |
 | HS code with no rate on record | `RateNotFoundError` → HTTP `404`, never zero duty |
@@ -620,19 +707,20 @@ dependency, since only this tool would ever use it. Exporting the sheet to CSV a
 
 ## 🗺️ Roadmap
 
-All three core compliance features ship today. One scaffold remains, excluded from the coverage
-gate until it has real logic:
+**All four features ship today — no scaffolds remain**, and every module is measured by the
+coverage gate:
 
 | Module | Status | Scope |
 |---|---|---|
-| `search.py` + `api.py` | ✅ **Shipped** | Fuzzy CN code search via CLI and REST |
+| `search.py` | ✅ **Shipped** | Fuzzy CN code search via CLI and REST |
+| `cn_classifier.py` | ✅ **Shipped** | TF-IDF classification with confidence and matched terms |
 | `embargo_screener.py` | ✅ **Shipped** | Denied-party name screening via CLI and REST |
 | `tariff_calculator.py` | ✅ **Shipped** | Duty calculation with preferential-rate selection |
-| `cn_classifier.py` | 🚧 Scaffolded | Rule- and confidence-based classification against the EU TARIC dataset |
 
 Planned extensions: country-level embargo checks and product/destination restrictions, alias and
-transliteration handling for entity names, and quota/anti-dumping components on top of the duty
-calculation.
+transliteration handling for entity names, quota/anti-dumping components on top of the duty
+calculation, and caching the classifier index once a full CN import makes the per-call rebuild
+noticeable.
 
 ---
 
@@ -647,6 +735,7 @@ CustomsIQ/
 │   │   ├── database.py          # SQLite layer + seed data (both tables)
 │   │   ├── matching.py          # shared validation + similarity scoring
 │   │   ├── search.py            # CN code ranking
+│   │   ├── cn_classifier.py     # TF-IDF classification + explanation
 │   │   ├── embargo_screener.py  # sanctions name screening
 │   │   ├── tariff_calculator.py # duty rate selection + calculation
 │   │   ├── exceptions.py        # typed error hierarchy
@@ -654,11 +743,10 @@ CustomsIQ/
 │   │   ├── logging_config.py    # shared logging setup
 │   │   ├── main.py              # CLI entry point
 │   │   ├── api.py               # FastAPI app (also serves the frontend)
-│   │   ├── static/index.html    # web frontend — single file, no build step
-│   │   └── cn_classifier.py     # 🚧 scaffolded
+│   │   └── static/index.html    # web frontend — single file, no build step
 │   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── scripts/import_cn_codes.py   # one-off tool: official CN file → hs_codes
-├── tests/                       # 86 tests — unit, API, CLI, screening, duty, import, edge cases
+├── tests/                       # 115 tests — unit, API, CLI, classification, screening, duty, import
 │   └── fixtures/                # sample CN export for the importer's tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

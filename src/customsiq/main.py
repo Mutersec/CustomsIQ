@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 
+from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.database import get_connection, seed
 from src.customsiq.embargo_screener import screen_entity
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 SCREEN_COMMAND = "screen "
 DUTY_COMMAND = "duty "
+CLASSIFY_COMMAND = "classify "
 
 
 def _run_search(conn: sqlite3.Connection, query: str) -> None:
@@ -50,6 +52,24 @@ def _run_screening(conn: sqlite3.Connection, name: str) -> None:
             match.entity.country,
             match.entity.list_source,
             match.entity.date_added,
+        )
+
+
+def _run_classification(conn: sqlite3.Connection, description: str) -> None:
+    """Suggest CN codes for a description and log the terms behind each."""
+    results = classify(conn, description)
+    if not results:
+        logger.info("No code shares a term with %r.", description)
+        return
+    for rank, result in enumerate(results, start=1):
+        logger.info(
+            "%d. %s  (%.0f%% confidence)  %s  [%s]  via: %s",
+            rank,
+            result.hs_code.code,
+            result.score * 100,
+            result.hs_code.description,
+            result.hs_code.category,
+            ", ".join(result.matched_terms),
         )
 
 
@@ -95,6 +115,7 @@ def run(db_path: str = settings.database_path) -> None:
     seed(conn)
     logger.info("CustomsIQ (type 'quit' to exit)")
     logger.info("Enter a product description to search CN codes,")
+    logger.info("'classify <description>' for ranked suggestions with reasoning,")
     logger.info("'screen <name>' to run a sanctions check,")
     logger.info("or 'duty <hs_code> <country> <value>' to calculate customs duty.")
     while True:
@@ -106,6 +127,8 @@ def run(db_path: str = settings.database_path) -> None:
         try:
             if entry.lower().startswith(SCREEN_COMMAND):
                 _run_screening(conn, entry[len(SCREEN_COMMAND) :].strip())
+            elif entry.lower().startswith(CLASSIFY_COMMAND):
+                _run_classification(conn, entry[len(CLASSIFY_COMMAND) :].strip())
             elif entry.lower().startswith(DUTY_COMMAND):
                 _run_duty(conn, entry[len(DUTY_COMMAND) :].strip())
             else:
