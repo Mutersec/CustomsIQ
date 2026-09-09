@@ -3,13 +3,13 @@
 # 🛃 CustomsIQ
 
 ### Trade compliance toolkit for customs & foreign trade operations
-**Classify goods under the right HS / CN tariff code, and screen counterparties against
-sanctions lists.**
+**Classify goods under the right HS / CN tariff code, screen counterparties against sanctions
+lists, and calculate the duty owed.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-61%20passing-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
@@ -71,6 +71,7 @@ not a black box that decides alone.
 |---|---|---|
 | 🔍 | **Fuzzy search** | Free-text description → CN/TARIC codes ranked by similarity score |
 | 🚫 | **Sanctions screening** | Name → denied-party hits, tolerant of word order and partial names |
+| 💶 | **Duty calculation** | Code + origin + value → duty owed, with the rate and reason explained |
 | 🖥️ | **Web UI** | Single-page frontend served at `/` — no build step, no framework, no CDN |
 | 📥 | **Real-data import** | Load the official EU CN nomenclature from a local file, idempotently |
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
@@ -97,19 +98,24 @@ flowchart LR
 
     SEARCH["🔍 search.py<br/>rank CN codes"]
     SCREEN["🚫 embargo_screener.py<br/>rank sanctions hits"]
+    DUTY["💶 tariff_calculator.py<br/>select rate + compute"]
     MATCH["🧩 matching.py<br/>validate + similarity"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities")]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities · tariff_rates")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
     CLI --> SEARCH
     CLI --> SCREEN
+    CLI --> DUTY
     API --> SEARCH
     API --> SCREEN
+    API --> DUTY
     SEARCH --> MATCH
     SCREEN --> MATCH
     SEARCH --> DB
     SCREEN --> DB
+    DUTY --> DB
+    DUTY -. raises .-> EXC
     MATCH -. raises .-> EXC
     DB -. raises .-> EXC
     CFG --> CLI
@@ -121,16 +127,17 @@ flowchart LR
 
 | Module | Responsibility |
 |---|---|
-| `models.py` | `HSCode` and `SanctionedEntity` — the immutable records |
+| `models.py` | `HSCode`, `SanctionedEntity` and `TariffRate` — the immutable records |
 | `database.py` | SQLite schema, connection, seed data, `fetch_all*()`, `get_by_code()` |
 | `matching.py` | Input validation + similarity scoring (**shared by both features**) |
 | `search.py` | Ranks CN codes by description similarity |
 | `embargo_screener.py` | Ranks sanctions-list hits by name similarity |
-| `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError` |
+| `tariff_calculator.py` | Selects the applicable duty rate and computes what is owed |
+| `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; reads `CUSTOMSIQ_*` env vars and `.env` |
 | `logging_config.py` | Shared logging setup — plain formatter to stdout, no `print()` anywhere |
 | `main.py` | Interactive CLI entry point (search + `screen <name>`) |
-| `api.py` | FastAPI app: serves the frontend at `/`, plus `/search`, `/screen`, `/health` |
+| `api.py` | FastAPI app: serves the frontend at `/`, plus `/search`, `/screen`, `/calculate-duty`, `/health` |
 | `static/index.html` | The whole web frontend — inline CSS, vanilla `fetch()`, zero dependencies |
 
 ### Data model
@@ -147,6 +154,16 @@ CREATE TABLE sanctioned_entities (
     country     TEXT NOT NULL,      -- ISO 3166-1 alpha-2, e.g. "CY"
     list_source TEXT NOT NULL,      -- e.g. "EU Consolidated Financial Sanctions List"
     date_added  TEXT NOT NULL       -- ISO 8601 date, e.g. "2023-04-12"
+);
+
+CREATE TABLE tariff_rates (
+    hs_code           TEXT NOT NULL,  -- e.g. "6109100000"
+    country_of_origin TEXT NOT NULL,  -- ISO alpha-2, or "ALL" for a standard MFN rate
+    rate_type         TEXT NOT NULL,  -- "standard" or "preferential"
+    rate_percent      REAL NOT NULL,  -- e.g. 12.0
+    trade_agreement   TEXT,           -- NULL for standard rates
+    valid_from        TEXT NOT NULL,  -- ISO 8601 date the rate takes effect
+    PRIMARY KEY (hs_code, country_of_origin, valid_from)
 );
 ```
 
@@ -270,7 +287,8 @@ seeded 20 rows into hs_codes
 seeded 18 rows into sanctioned_entities
 CustomsIQ (type 'quit' to exit)
 Enter a product description to search CN codes,
-or 'screen <name>' to run a sanctions check.
+'screen <name>' to run a sanctions check,
+or 'duty <hs_code> <country> <value>' to calculate customs duty.
 
 > cotton t-shirt
 1. 6109100000  (74%)  Cotton T-shirts, knitted        [Textile]
@@ -285,6 +303,11 @@ or 'screen <name>' to run a sanctions check.
 
 > screen Quokka Beachwear
 No sanctions match for 'Quokka Beachwear'.
+
+> duty 6109100000 NO 1000
+Duty on 6109100000 from NO: 0.00 (0.00% preferential)
+  Preferential rate of 0% applied under the EU-Solvia Free Trade Agreement, for which origin NO qualifies.
+  Customs value 1000.00 + duty 0.00 = 1000.00
 ```
 
 ### 🖥️ Web interface
@@ -346,6 +369,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/health` | Liveness check — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Ranked CN code matches for a product description |
 | `GET` | `/screen` | Sanctions-list hits for a person or organisation name |
+| `GET` | `/calculate-duty` | Duty owed on a consignment, with the applied rate explained |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
 **`GET /search` parameters**
@@ -363,6 +387,36 @@ for result in search(conn, "lithium battery", limit=3):
 
 Screening takes no `limit`: every hit above the threshold is returned, since a silently truncated
 hit list would be a compliance failure rather than just a worse ranking.
+
+**`GET /calculate-duty` parameters**
+
+| Parameter | Type | Default | Constraints | Description |
+|---|---|---|---|---|
+| `hs_code` | `str` | *required* | CN-8 or TARIC-10 | Code of the goods being imported |
+| `country_of_origin` | `str` | *required* | ISO 3166-1 alpha-2 | Where the goods originate |
+| `customs_value` | `float` | *required* | >= 0 | Declared customs value |
+
+A preferential rate wins whenever the origin qualifies for one; otherwise the standard MFN rate
+applies. A code with **no** rate on record returns `404` rather than zero duty — a gap in the
+tariff data is not a duty-free import.
+
+```bash
+curl "http://localhost:8000/calculate-duty?hs_code=6109100000&country_of_origin=NO&customs_value=1000"
+```
+
+```json
+{
+  "hs_code": "6109100000",
+  "country_of_origin": "NO",
+  "customs_value": 1000.0,
+  "rate_percent": 0.0,
+  "rate_type": "preferential",
+  "trade_agreement": "EU-Solvia Free Trade Agreement",
+  "duty_amount": 0.0,
+  "total_payable": 1000.0,
+  "explanation": "Preferential rate of 0% applied under the EU-Solvia Free Trade Agreement, for which origin NO qualifies."
+}
+```
 
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
@@ -385,7 +439,8 @@ curl "http://localhost:8000/screen?name=Northwind+Maritime"
 | Code | Meaning |
 |---|---|
 | `200` | Success — array of matches (may be empty) |
-| `400` | `InvalidQueryError` — blank query, or longer than 500 characters |
+| `400` | `InvalidQueryError` — blank/oversized query, malformed code, or negative value |
+| `404` | `RateNotFoundError` — no duty rate on record for that HS code |
 | `422` | Missing/invalid parameter type (FastAPI validation) |
 
 ---
@@ -412,10 +467,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | Module | Coverage |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
+| `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 100% |
 | `scripts/import_cn_codes.py` | 🟢 91% |
-| `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 100% |
-| `main.py` | 🟢 93% |
-| **Total** | **🟢 96%** (61 tests, gate at 80%) |
+| `logging_config.py` | 🟢 100% |
+| `main.py` | 🟢 95% |
+| **Total** | **🟢 97%** (86 tests, gate at 80%) |
 
 ### Edge cases under test
 
@@ -429,7 +485,12 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | Partial company name (`Northwind Maritime`) | Matches the full listed name |
 | Name matching nothing on the list | Empty result, not an error |
 | Unknown exact code lookup | `HSCodeNotFoundError` |
-| Re-seeding a populated database | Idempotent — no duplicate rows in either table |
+| Preferential rate available for the origin | Beats the standard MFN rate |
+| Rate not yet in force (`valid_from` in the future) | Ignored; falls back to the rate in force |
+| HS code with no rate on record | `RateNotFoundError` → HTTP `404`, never zero duty |
+| Negative customs value | `InvalidQueryError` → HTTP `400` |
+| Zero customs value | Valid — zero duty owed |
+| Re-seeding a populated database | Idempotent — no duplicate rows in any table |
 
 ---
 
@@ -493,6 +554,23 @@ synthetic person names, stored surname-first the way real lists publish them.
 > organisation, and the list must never be used for actual screening. Production screening
 > requires the official EU Consolidated Financial Sanctions List.
 
+### Tariff rates
+
+The `tariff_rates` table is seeded with **18 rows**: standard MFN rates for codes already in the
+sample above, plus preferential rates under two trade agreements — including a 0% preference and
+one future-dated rate that the `valid_from` filter correctly ignores.
+
+| Field | Example |
+|---|---|
+| `hs_code` | `6109100000` |
+| `country_of_origin` | `NO`, `CH`, `JP`, `KR` — or `ALL` for a standard MFN rate |
+| `rate_type` | `standard` · `preferential` |
+| `rate_percent` | `12.0` · `0.0` |
+| `trade_agreement` | `EU-Solvia Free Trade Agreement` · `EU-Meridian Economic Partnership` · `null` |
+
+> 🚨 **The rates and both trade agreements are fictional.** Real duty rates and preferential
+> origins come from the EU TARIC database; never use these figures for an actual declaration.
+
 ### Importing the real CN nomenclature
 
 The 20-row sample above is a demo dataset — **including on the [live demo](https://customsiq-gs0u.onrender.com/)**,
@@ -542,18 +620,19 @@ dependency, since only this tool would ever use it. Exporting the sheet to CSV a
 
 ## 🗺️ Roadmap
 
-CN code search and sanctions screening both ship today. Two compliance modules remain scaffolded
-and awaiting implementation — they are excluded from the coverage gate until they have real logic:
+All three core compliance features ship today. One scaffold remains, excluded from the coverage
+gate until it has real logic:
 
 | Module | Status | Scope |
 |---|---|---|
 | `search.py` + `api.py` | ✅ **Shipped** | Fuzzy CN code search via CLI and REST |
 | `embargo_screener.py` | ✅ **Shipped** | Denied-party name screening via CLI and REST |
+| `tariff_calculator.py` | ✅ **Shipped** | Duty calculation with preferential-rate selection |
 | `cn_classifier.py` | 🚧 Scaffolded | Rule- and confidence-based classification against the EU TARIC dataset |
-| `tariff_calculator.py` | 🚧 Scaffolded | Duty calculation, origin rules, EU preferential trade agreement rates |
 
-Planned extensions to screening: country-level embargo checks and product/destination
-restrictions, plus alias and transliteration handling for entity names.
+Planned extensions: country-level embargo checks and product/destination restrictions, alias and
+transliteration handling for entity names, and quota/anti-dumping components on top of the duty
+calculation.
 
 ---
 
@@ -569,17 +648,17 @@ CustomsIQ/
 │   │   ├── matching.py          # shared validation + similarity scoring
 │   │   ├── search.py            # CN code ranking
 │   │   ├── embargo_screener.py  # sanctions name screening
+│   │   ├── tariff_calculator.py # duty rate selection + calculation
 │   │   ├── exceptions.py        # typed error hierarchy
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # shared logging setup
 │   │   ├── main.py              # CLI entry point
 │   │   ├── api.py               # FastAPI app (also serves the frontend)
 │   │   ├── static/index.html    # web frontend — single file, no build step
-│   │   ├── cn_classifier.py     # 🚧 scaffolded
-│   │   └── tariff_calculator.py # 🚧 scaffolded
+│   │   └── cn_classifier.py     # 🚧 scaffolded
 │   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── scripts/import_cn_codes.py   # one-off tool: official CN file → hs_codes
-├── tests/                       # 61 tests — unit, API, CLI, screening, import, edge cases
+├── tests/                       # 86 tests — unit, API, CLI, screening, duty, import, edge cases
 │   └── fixtures/                # sample CN export for the importer's tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

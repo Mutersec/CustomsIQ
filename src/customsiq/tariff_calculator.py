@@ -1,52 +1,159 @@
-"""Tariff and Customs Duty Calculation Module"""
+"""Customs duty calculation against the stored tariff rates."""
 
-from decimal import Decimal
-from typing import Optional
+import logging
+import sqlite3
+from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
+from typing import NamedTuple, Optional
+
+from src.customsiq.database import ALL_ORIGINS, fetch_rates_for_code
+from src.customsiq.exceptions import InvalidQueryError, RateNotFoundError
+from src.customsiq.models import TariffRate
+from src.utils.validators import validate_cn_code, validate_country_code
+
+logger = logging.getLogger(__name__)
+
+PREFERENTIAL = "preferential"
+STANDARD = "standard"
+
+_CENTS = Decimal("0.01")
 
 
-class TariffCalculator:
-    """Calculate customs duties and tariffs."""
+class DutyCalculation(NamedTuple):
+    """The duty owed on a consignment, and the reasoning behind the rate."""
 
-    def __init__(self) -> None:
-        """Initialize tariff calculator."""
-        self.tariff_rates: dict = {}
-        self.duty_regulations: dict = {}
-        self._load_tariff_data()
+    hs_code: str
+    country_of_origin: str
+    customs_value: Decimal
+    rate_percent: float
+    rate_type: str
+    trade_agreement: Optional[str]
+    duty_amount: Decimal
+    total_payable: Decimal
+    explanation: str
 
-    def _load_tariff_data(self) -> None:
-        """Load tariff rates and duty regulations."""
-        # TODO: Load from data/tariffs/ (source: EU TARIC database,
-        # https://ec.europa.eu/taxation_customs/dds2/taric)
-        pass
 
-    def calculate_duty(
-        self, cn_code: str, value: Decimal, origin_country: str, destination_country: str
-    ) -> dict:
-        """
-        Calculate customs duty for a product.
+def _applicable(rates: list[TariffRate], as_of: date) -> list[TariffRate]:
+    """Drop rates that have not entered into force yet, newest first."""
+    in_force = [rate for rate in rates if rate.valid_from <= as_of.isoformat()]
+    return sorted(in_force, key=lambda rate: rate.valid_from, reverse=True)
 
-        Args:
-            cn_code: EU Combined Nomenclature (CN/TARIC) code
-            value: Product value (CIF)
-            origin_country: Country of origin
-            destination_country: Destination country
 
-        Returns:
-            Dictionary with duty amount, rate, and additional fees
-        """
-        raise NotImplementedError
+def select_rate(
+    rates: list[TariffRate], country_of_origin: str, as_of: Optional[date] = None
+) -> Optional[TariffRate]:
+    """Pick the rate that applies to an origin: preferential first, else standard.
 
-    def get_tariff_rate(self, cn_code: str, origin_country: str) -> Optional[dict]:
-        """Get tariff rate for a CN code from a specific country."""
-        pass
+    Args:
+        rates: Every stored rate for one HS code.
+        country_of_origin: ISO 3166-1 alpha-2 origin code.
+        as_of: Date to judge `valid_from` against. Defaults to today.
 
-    def apply_trade_agreement(
-        self, cn_code: str, origin_country: str, agreement_type: str
-    ) -> Optional[Decimal]:
-        """
-        Apply EU preferential trade agreement benefits.
+    Returns:
+        The applicable rate, or None if the code has no rate in force.
+    """
+    in_force = _applicable(rates, as_of or date.today())
+    origin = country_of_origin.upper()
 
-        Returns:
-            Preferential tariff rate if applicable
-        """
-        pass
+    preferential = [
+        rate
+        for rate in in_force
+        if rate.rate_type == PREFERENTIAL and rate.country_of_origin.upper() == origin
+    ]
+    if preferential:
+        return preferential[0]
+
+    standard = [
+        rate
+        for rate in in_force
+        if rate.rate_type == STANDARD and rate.country_of_origin.upper() == ALL_ORIGINS
+    ]
+    return standard[0] if standard else None
+
+
+def _explain(rate: TariffRate, origin: str) -> str:
+    """Describe in words why this rate was applied, for an auditable result."""
+    if rate.rate_type == PREFERENTIAL:
+        return (
+            f"Preferential rate of {rate.rate_percent:g}% applied under the "
+            f"{rate.trade_agreement}, for which origin {origin} qualifies."
+        )
+    return (
+        f"Standard MFN rate of {rate.rate_percent:g}% applied — no preferential "
+        f"agreement covers origin {origin} for this code."
+    )
+
+
+def calculate_duty(
+    conn: sqlite3.Connection,
+    hs_code: str,
+    country_of_origin: str,
+    customs_value: float,
+    as_of: Optional[date] = None,
+) -> DutyCalculation:
+    """Work out the customs duty owed on a consignment.
+
+    A preferential rate wins whenever the origin qualifies for one; otherwise
+    the standard MFN rate applies. The result carries the reasoning, so the
+    figure can be shown to an auditor rather than taken on trust.
+
+    Money is handled in `Decimal` internally and rounded to two decimal places,
+    since binary floats are the wrong tool for a legally consequential amount.
+
+    Args:
+        conn: An open database connection.
+        hs_code: CN-8 or TARIC-10 code of the goods.
+        country_of_origin: ISO 3166-1 alpha-2 origin code.
+        customs_value: Declared customs value; zero is valid, negative is not.
+        as_of: Date to judge rate validity against. Defaults to today.
+
+    Returns:
+        The duty owed, the rate applied, and why it applied.
+
+    Raises:
+        InvalidQueryError: If the code, origin or value is unusable.
+        RateNotFoundError: If no rate is on record for the code.
+    """
+    if not validate_cn_code(hs_code):
+        raise InvalidQueryError(f"{hs_code!r} is not a valid CN-8 or TARIC-10 code.")
+    if not validate_country_code(country_of_origin):
+        raise InvalidQueryError(
+            f"{country_of_origin!r} is not a valid ISO 3166-1 alpha-2 country code."
+        )
+    if customs_value < 0:
+        raise InvalidQueryError("Customs value must not be negative.")
+
+    rates = fetch_rates_for_code(conn, hs_code)
+    if not rates:
+        raise RateNotFoundError(f"No tariff rate on record for HS code {hs_code}.")
+
+    rate = select_rate(rates, country_of_origin, as_of)
+    if rate is None:
+        raise RateNotFoundError(f"No tariff rate in force for HS code {hs_code}.")
+
+    origin = country_of_origin.upper()
+    value = Decimal(str(customs_value))
+    duty = (value * Decimal(str(rate.rate_percent)) / Decimal(100)).quantize(
+        _CENTS, rounding=ROUND_HALF_UP
+    )
+
+    logger.info(
+        "duty for %s from %s: %s%% (%s) on %s = %s",
+        hs_code,
+        origin,
+        rate.rate_percent,
+        rate.rate_type,
+        value,
+        duty,
+    )
+    return DutyCalculation(
+        hs_code=hs_code,
+        country_of_origin=origin,
+        customs_value=value.quantize(_CENTS, rounding=ROUND_HALF_UP),
+        rate_percent=rate.rate_percent,
+        rate_type=rate.rate_type,
+        trade_agreement=rate.trade_agreement,
+        duty_amount=duty,
+        total_payable=(value + duty).quantize(_CENTS, rounding=ROUND_HALF_UP),
+        explanation=_explain(rate, origin),
+    )

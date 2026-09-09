@@ -1,4 +1,4 @@
-"""SQLite persistence layer for HS/CN code and sanctions records."""
+"""SQLite persistence layer for HS/CN codes, sanctions records and tariff rates."""
 
 import logging
 import sqlite3
@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Union
 
 from src.customsiq.exceptions import HSCodeNotFoundError
-from src.customsiq.models import HSCode, SanctionedEntity
+from src.customsiq.models import HSCode, SanctionedEntity, TariffRate
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,20 @@ CREATE TABLE IF NOT EXISTS sanctioned_entities (
     list_source TEXT NOT NULL,
     date_added TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tariff_rates (
+    hs_code TEXT NOT NULL,
+    country_of_origin TEXT NOT NULL,
+    rate_type TEXT NOT NULL,
+    rate_percent REAL NOT NULL,
+    trade_agreement TEXT,
+    valid_from TEXT NOT NULL,
+    PRIMARY KEY (hs_code, country_of_origin, valid_from)
+);
 """
+
+# Sentinel origin for a standard (MFN) rate, which applies whatever the origin.
+ALL_ORIGINS = "ALL"
 
 # Sample/demo data spanning several trade categories. Codes follow the EU
 # Combined Nomenclature (TARIC-10) format; production data comes from the EU
@@ -85,6 +98,38 @@ SANCTIONED_ENTITIES: list[SanctionedEntity] = [
 ]
 
 
+_SOLVIA = "EU-Solvia Free Trade Agreement"
+_MERIDIAN = "EU-Meridian Economic Partnership"
+
+# ---------------------------------------------------------------------------
+# FICTIONAL DEMO DATA — the duty rates below are illustrative and the two trade
+# agreements are invented. Real duty rates and preferential origins come from
+# the EU TARIC database; never use these figures for an actual declaration.
+# Standard (MFN) rates use ALL_ORIGINS, since they apply whatever the origin.
+# ---------------------------------------------------------------------------
+TARIFF_RATES: list[TariffRate] = [
+    TariffRate("8517120000", ALL_ORIGINS, "standard", 0.0, None, "2024-01-01"),
+    TariffRate("8528721000", ALL_ORIGINS, "standard", 14.0, None, "2024-01-01"),
+    TariffRate("8544421000", ALL_ORIGINS, "standard", 3.3, None, "2024-01-01"),
+    TariffRate("8507600000", ALL_ORIGINS, "standard", 2.7, None, "2024-01-01"),
+    TariffRate("6109100000", ALL_ORIGINS, "standard", 12.0, None, "2024-01-01"),
+    TariffRate("6203420000", ALL_ORIGINS, "standard", 12.0, None, "2024-01-01"),
+    TariffRate("6402990000", ALL_ORIGINS, "standard", 16.9, None, "2024-01-01"),
+    TariffRate("0901210000", ALL_ORIGINS, "standard", 7.5, None, "2024-01-01"),
+    TariffRate("1806320000", ALL_ORIGINS, "standard", 8.3, None, "2024-01-01"),
+    TariffRate("4011100000", ALL_ORIGINS, "standard", 4.5, None, "2024-01-01"),
+    TariffRate("9403300000", ALL_ORIGINS, "standard", 0.0, None, "2024-01-01"),
+    TariffRate("7326909800", ALL_ORIGINS, "standard", 2.7, None, "2024-01-01"),
+    TariffRate("6109100000", "NO", "preferential", 0.0, _SOLVIA, "2024-01-01"),
+    TariffRate("6203420000", "NO", "preferential", 4.0, _SOLVIA, "2024-01-01"),
+    TariffRate("8528721000", "CH", "preferential", 7.0, _SOLVIA, "2024-01-01"),
+    TariffRate("8544421000", "JP", "preferential", 0.0, _MERIDIAN, "2024-01-01"),
+    TariffRate("4011100000", "KR", "preferential", 2.0, _MERIDIAN, "2024-01-01"),
+    # Not yet in force: exercises the valid_from filter, which must ignore it.
+    TariffRate("6402990000", "JP", "preferential", 8.5, _MERIDIAN, "2030-01-01"),
+]
+
+
 def get_connection(db_path: Union[str, Path] = ":memory:") -> sqlite3.Connection:
     """Open a SQLite connection and ensure the schema exists.
 
@@ -92,7 +137,7 @@ def get_connection(db_path: Union[str, Path] = ":memory:") -> sqlite3.Connection
         db_path: Path to the SQLite file, or ":memory:" for an in-memory database.
 
     Returns:
-        An open connection with the hs_codes and sanctioned_entities tables ready.
+        An open connection with all three tables ready.
     """
     # ponytail: single shared connection, check_same_thread=False so FastAPI's
     # threadpool can use it; move to a connection pool if concurrent writes appear.
@@ -123,6 +168,7 @@ def seed(
     conn: sqlite3.Connection,
     records: Iterable[HSCode] = SAMPLE_DATA,
     entities: Iterable[SanctionedEntity] = SANCTIONED_ENTITIES,
+    rates: Iterable[TariffRate] = TARIFF_RATES,
 ) -> None:
     """Insert sample data into any of the tables that are currently empty.
 
@@ -130,6 +176,7 @@ def seed(
         conn: An open database connection.
         records: HS code records to insert.
         entities: Sanctioned entity records to insert.
+        rates: Tariff rate records to insert.
     """
     _seed_if_empty(
         conn,
@@ -142,6 +189,29 @@ def seed(
         "sanctioned_entities",
         ("name", "country", "list_source", "date_added"),
         [(e.name, e.country, e.list_source, e.date_added) for e in entities],
+    )
+    _seed_if_empty(
+        conn,
+        "tariff_rates",
+        (
+            "hs_code",
+            "country_of_origin",
+            "rate_type",
+            "rate_percent",
+            "trade_agreement",
+            "valid_from",
+        ),
+        [
+            (
+                t.hs_code,
+                t.country_of_origin,
+                t.rate_type,
+                t.rate_percent,
+                t.trade_agreement,
+                t.valid_from,
+            )
+            for t in rates
+        ],
     )
 
 
@@ -195,6 +265,24 @@ def fetch_all_entities(conn: sqlite3.Connection) -> list[SanctionedEntity]:
         "SELECT name, country, list_source, date_added FROM sanctioned_entities"
     ).fetchall()
     return [SanctionedEntity(*row) for row in rows]
+
+
+def fetch_rates_for_code(conn: sqlite3.Connection, hs_code: str) -> list[TariffRate]:
+    """Return every stored tariff rate for one HS code.
+
+    Args:
+        conn: An open database connection.
+        hs_code: The CN/TARIC code to look up rates for.
+
+    Returns:
+        All matching TariffRate records, in no particular order.
+    """
+    rows = conn.execute(
+        "SELECT hs_code, country_of_origin, rate_type, rate_percent, trade_agreement, valid_from "
+        "FROM tariff_rates WHERE hs_code = ?",
+        (hs_code,),
+    ).fetchall()
+    return [TariffRate(*row) for row in rows]
 
 
 def get_by_code(conn: sqlite3.Connection, code: str) -> HSCode:

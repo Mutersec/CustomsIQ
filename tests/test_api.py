@@ -71,3 +71,48 @@ def test_screen_endpoint_rejects_empty_name() -> None:
     """A blank name should surface as HTTP 400, not a 500."""
     response = client.get("/screen", params={"name": "   "})
     assert response.status_code == 400
+
+
+def test_duty_endpoint_applies_the_standard_rate() -> None:
+    """An uncovered origin is charged the MFN rate, with an explanation."""
+    response = client.get(
+        "/calculate-duty",
+        params={"hs_code": "6109100000", "country_of_origin": "CN", "customs_value": 1000},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rate_type"] == "standard"
+    assert body["duty_amount"] == pytest.approx(120.0)
+    assert body["trade_agreement"] is None
+    assert "MFN" in body["explanation"]
+
+
+def test_duty_endpoint_applies_a_preferential_rate() -> None:
+    """A covered origin gets the agreement rate and the agreement is named."""
+    response = client.get(
+        "/calculate-duty",
+        params={"hs_code": "6109100000", "country_of_origin": "NO", "customs_value": 1000},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rate_type"] == "preferential"
+    assert body["duty_amount"] == pytest.approx(0.0)
+    assert body["trade_agreement"] == "EU-Solvia Free Trade Agreement"
+
+
+def test_duty_endpoint_returns_404_when_no_rate_exists() -> None:
+    """A missing rate is a data gap, reported as 404 rather than zero duty."""
+    response = client.get(
+        "/calculate-duty",
+        params={"hs_code": "99999999", "country_of_origin": "CN", "customs_value": 100},
+    )
+    assert response.status_code == 404
+
+
+def test_duty_endpoint_rejects_a_negative_value() -> None:
+    """A negative customs value surfaces as HTTP 400."""
+    response = client.get(
+        "/calculate-duty",
+        params={"hs_code": "6109100000", "country_of_origin": "CN", "customs_value": -5},
+    )
+    assert response.status_code == 400

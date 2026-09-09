@@ -28,10 +28,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["src/customsiq", "scripts"]
-omit = [
-    "src/customsiq/cn_classifier.py",
-    "src/customsiq/tariff_calculator.py",
-]
+omit = ["src/customsiq/cn_classifier.py"]
 
 [tool.coverage.report]
 fail_under = 80

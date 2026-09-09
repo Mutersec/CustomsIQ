@@ -125,6 +125,29 @@
   }
 
   .panel-head.alt .rule { background: var(--amber); }
+  .panel-head.calc .rule { background: #60a5fa; }
+
+  /* The duty panel has three fields, so it takes a full-width row of its own. */
+  .panel.wide { grid-column: 1 / -1; }
+
+  .card.calc { border-left-color: #60a5fa; }
+
+  .amount {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+
+  .breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    margin: 10px 0 8px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  .breakdown b { color: var(--text); font-weight: 600; }
 
   .panel-body { padding: 18px; }
 
@@ -292,7 +315,7 @@
 <header>
   <div class="header-inner">
     <h1>Customs<span class="accent">IQ</span></h1>
-    <span class="tagline">EU trade compliance toolkit — CN classification &amp; sanctions screening</span>
+    <span class="tagline">EU trade compliance toolkit — classification, screening &amp; duty calculation</span>
     <span class="header-links"><a href="/docs">API reference →</a></span>
   </div>
 </header>
@@ -341,15 +364,45 @@
       <div class="results" id="screen-results" aria-live="polite"></div>
     </div>
   </section>
+  <!-- ============ Duty calculation ============ -->
+  <section class="panel wide">
+    <div class="panel-head calc">
+      <span class="rule"></span>
+      <h2>Customs Duty Calculation</h2>
+    </div>
+    <div class="panel-body">
+      <p class="hint">
+        Work out the duty owed on a consignment. A preferential rate is applied automatically
+        when the origin qualifies for one; otherwise the standard MFN rate applies.
+      </p>
+      <form id="duty-form">
+        <div class="field">
+          <label for="duty-code">HS / CN code</label>
+          <input type="text" id="duty-code" placeholder="e.g. 6109100000" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="duty-origin">Country of origin</label>
+          <input type="text" id="duty-origin" placeholder="e.g. NO" maxlength="2" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="duty-value">Customs value</label>
+          <input type="text" id="duty-value" placeholder="e.g. 1000" inputmode="decimal" autocomplete="off">
+        </div>
+        <button type="submit" id="duty-btn">Calculate</button>
+      </form>
+      <div class="results" id="duty-results" aria-live="polite"></div>
+    </div>
+  </section>
 </main>
 
 <footer>
   <p class="disclaimer">
-    <strong>Demo project.</strong> Tariff codes and the sanctions list are
-    <strong>fictional mock data</strong> in EU Combined Nomenclature / EU Consolidated
-    Financial Sanctions List style. No entity listed here is real, and this tool must never
-    be used for actual customs classification or sanctions screening. Production use requires
-    the official <a href="https://ec.europa.eu/taxation_customs/dds2/taric">EU TARIC database</a>
+    <strong>Demo project.</strong> The tariff codes, duty rates, trade agreements and sanctions
+    list are all <strong>fictional mock data</strong> in EU Combined Nomenclature / EU Consolidated
+    Financial Sanctions List style. No entity or agreement listed here is real, and this tool must
+    never be used for actual customs classification, duty calculation or sanctions screening.
+    Production use requires the official
+    <a href="https://ec.europa.eu/taxation_customs/dds2/taric">EU TARIC database</a>
     and the official EU Consolidated Financial Sanctions List.
   </p>
 </footer>
@@ -464,6 +517,63 @@
             <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
           </article>
         `).join("");
+      },
+    });
+  });
+
+  // ---------- Duty calculation ----------
+  const dutyBox = document.getElementById("duty-results");
+  const dutyCode = document.getElementById("duty-code");
+  const dutyOrigin = document.getElementById("duty-origin");
+  const dutyValue = document.getElementById("duty-value");
+
+  const money = (n) =>
+    Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  document.getElementById("duty-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    // Three fields feed one request, so validate them here rather than in submit().
+    if (!dutyCode.value.trim() || !dutyOrigin.value.trim() || !dutyValue.value.trim()) {
+      setState(dutyBox, "error", "Enter an HS code, a country of origin and a customs value.");
+      return;
+    }
+    if (isNaN(Number(dutyValue.value.trim()))) {
+      setState(dutyBox, "error", "Customs value must be a number.");
+      return;
+    }
+
+    submit({
+      url: () =>
+        `/calculate-duty?hs_code=${encodeURIComponent(dutyCode.value.trim())}` +
+        `&country_of_origin=${encodeURIComponent(dutyOrigin.value.trim())}` +
+        `&customs_value=${encodeURIComponent(dutyValue.value.trim())}`,
+      input: dutyCode,
+      button: document.getElementById("duty-btn"),
+      box: dutyBox,
+      busyLabel: "Calculating…",
+      idleLabel: "Calculate",
+      render: (r) => {
+        const agreement = r.trade_agreement
+          ? `<span class="chip">${escapeHtml(r.trade_agreement)}</span>`
+          : "";
+        dutyBox.innerHTML = `
+          <article class="card calc">
+            <div class="card-top">
+              <span class="amount">${money(r.duty_amount)}</span>
+              <span class="score">${r.rate_percent}% · ${escapeHtml(r.rate_type)}</span>
+            </div>
+            <div class="breakdown">
+              <span>Customs value <b>${money(r.customs_value)}</b></span>
+              <span>Duty <b>${money(r.duty_amount)}</b></span>
+              <span>Total payable <b>${money(r.total_payable)}</b></span>
+            </div>
+            <p class="card-desc">${escapeHtml(r.explanation)}</p>
+            <span class="chip">${escapeHtml(r.hs_code)}</span>
+            <span class="chip">${escapeHtml(r.country_of_origin)}</span>
+            ${agreement}
+          </article>
+        `;
       },
     });
   });

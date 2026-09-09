@@ -3,13 +3,13 @@
 # 🛃 CustomsIQ
 
 ### Gümrük ve dış ticaret operasyonları için uyum araç seti
-**Eşyayı doğru HS / CN tarife kodunda sınıflandırın ve karşı tarafları yaptırım
-listelerine karşı tarayın.**
+**Eşyayı doğru HS / CN tarife kodunda sınıflandırın, karşı tarafları yaptırım listelerine karşı
+tarayın ve ödenecek vergiyi hesaplayın.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Kapsam](https://img.shields.io/badge/kapsam-%9625-brightgreen)
-![Testler](https://img.shields.io/badge/testler-61%20ge%C3%A7ti-brightgreen)
+![Kapsam](https://img.shields.io/badge/kapsam-%9725-brightgreen)
+![Testler](https://img.shields.io/badge/testler-86%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
@@ -72,6 +72,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 |---|---|---|
 | 🔍 | **Bulanık arama** | Serbest metin açıklama → benzerlik skoruna göre sıralanmış CN/TARIC kodları |
 | 🚫 | **Yaptırım taraması** | İsim → kelime sırasına ve kısmi isimlere toleranslı yasaklı taraf eşleşmeleri |
+| 💶 | **Vergi hesaplama** | Kod + menşe + kıymet → ödenecek vergi, uygulanan oran ve gerekçesiyle |
 | 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
 | 📥 | **Gerçek veri içe aktarma** | Resmî AB CN nomanklatürünü yerel dosyadan idempotent biçimde yükler |
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
@@ -98,19 +99,24 @@ flowchart LR
 
     SEARCH["🔍 search.py<br/>CN kodu sıralama"]
     SCREEN["🚫 embargo_screener.py<br/>yaptırım eşleşmeleri"]
+    DUTY["💶 tariff_calculator.py<br/>oran seçimi + hesap"]
     MATCH["🧩 matching.py<br/>doğrulama + benzerlik"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities")]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities · tariff_rates")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
     CLI --> SEARCH
     CLI --> SCREEN
+    CLI --> DUTY
     API --> SEARCH
     API --> SCREEN
+    API --> DUTY
     SEARCH --> MATCH
     SCREEN --> MATCH
     SEARCH --> DB
     SCREEN --> DB
+    DUTY --> DB
+    DUTY -. hata fırlatır .-> EXC
     MATCH -. hata fırlatır .-> EXC
     DB -. hata fırlatır .-> EXC
     CFG --> CLI
@@ -122,16 +128,17 @@ flowchart LR
 
 | Modül | Sorumluluk |
 |---|---|
-| `models.py` | `HSCode` ve `SanctionedEntity` — değişmez kayıtlar |
+| `models.py` | `HSCode`, `SanctionedEntity` ve `TariffRate` — değişmez kayıtlar |
 | `database.py` | SQLite şeması, bağlantı, örnek veri, `fetch_all*()`, `get_by_code()` |
 | `matching.py` | Girdi doğrulama + benzerlik skorlaması (**her iki yetenek de bunu kullanır**) |
 | `search.py` | CN kodlarını açıklama benzerliğine göre sıralar |
 | `embargo_screener.py` | Yaptırım listesi eşleşmelerini isim benzerliğine göre sıralar |
-| `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError` |
+| `tariff_calculator.py` | Uygulanacak vergi oranını seçer ve ödenecek tutarı hesaplar |
+| `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; `CUSTOMSIQ_*` ortam değişkenlerini ve `.env` dosyasını okur |
 | `logging_config.py` | Ortak loglama kurulumu — stdout'a sade format, hiçbir yerde `print()` yok |
 | `main.py` | Etkileşimli CLI giriş noktası (arama + `screen <isim>`) |
-| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/screen`, `/health` |
+| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/screen`, `/calculate-duty`, `/health` |
 | `static/index.html` | Web arayüzünün tamamı — satır içi CSS, saf `fetch()`, sıfır bağımlılık |
 
 ### Veri modeli
@@ -148,6 +155,16 @@ CREATE TABLE sanctioned_entities (
     country     TEXT NOT NULL,      -- ISO 3166-1 alpha-2, örn. "CY"
     list_source TEXT NOT NULL,      -- örn. "EU Consolidated Financial Sanctions List"
     date_added  TEXT NOT NULL       -- ISO 8601 tarih, örn. "2023-04-12"
+);
+
+CREATE TABLE tariff_rates (
+    hs_code           TEXT NOT NULL,  -- örn. "6109100000"
+    country_of_origin TEXT NOT NULL,  -- ISO alpha-2 ya da standart MFN için "ALL"
+    rate_type         TEXT NOT NULL,  -- "standard" veya "preferential"
+    rate_percent      REAL NOT NULL,  -- örn. 12.0
+    trade_agreement   TEXT,           -- standart oranlarda NULL
+    valid_from        TEXT NOT NULL,  -- oranın yürürlüğe girdiği ISO 8601 tarih
+    PRIMARY KEY (hs_code, country_of_origin, valid_from)
 );
 ```
 
@@ -273,7 +290,8 @@ seeded 20 rows into hs_codes
 seeded 18 rows into sanctioned_entities
 CustomsIQ (type 'quit' to exit)
 Enter a product description to search CN codes,
-or 'screen <name>' to run a sanctions check.
+'screen <name>' to run a sanctions check,
+or 'duty <hs_code> <country> <value>' to calculate customs duty.
 
 > cotton t-shirt
 1. 6109100000  (74%)  Cotton T-shirts, knitted        [Textile]
@@ -288,6 +306,11 @@ or 'screen <name>' to run a sanctions check.
 
 > screen Quokka Beachwear
 No sanctions match for 'Quokka Beachwear'.
+
+> duty 6109100000 NO 1000
+Duty on 6109100000 from NO: 0.00 (0.00% preferential)
+  Preferential rate of 0% applied under the EU-Solvia Free Trade Agreement, for which origin NO qualifies.
+  Customs value 1000.00 + duty 0.00 = 1000.00
 ```
 
 ### 🖥️ Web arayüzü
@@ -349,6 +372,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/health` | Canlılık kontrolü — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Ürün açıklaması için sıralanmış CN kodu eşleşmeleri |
 | `GET` | `/screen` | Kişi veya kuruluş ismi için yaptırım listesi eşleşmeleri |
+| `GET` | `/calculate-duty` | Sevkiyat için ödenecek vergi, uygulanan oranın gerekçesiyle |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -366,6 +390,18 @@ for result in search(conn, "lithium battery", limit=3):
 
 Tarama `limit` almaz: eşiğin üzerindeki her eşleşme döndürülür; sessizce kırpılmış bir eşleşme
 listesi, kötü bir sıralamadan öte bir uyum ihlali olurdu.
+
+**`GET /calculate-duty` parametreleri**
+
+| Parametre | Tip | Varsayılan | Kısıtlar | Açıklama |
+|---|---|---|---|---|
+| `hs_code` | `str` | *zorunlu* | CN-8 veya TARIC-10 | İthal edilen eşyanın kodu |
+| `country_of_origin` | `str` | *zorunlu* | ISO 3166-1 alpha-2 | Eşyanın menşei |
+| `customs_value` | `float` | *zorunlu* | >= 0 | Beyan edilen gümrük kıymeti |
+
+Menşe bir tercihli orana hak kazanıyorsa o oran uygulanır; aksi hâlde standart MFN oranı geçerlidir.
+Kayıtta **hiç** oranı olmayan bir kod sıfır vergi değil `404` döndürür — tarife verisindeki bir
+boşluk, vergisiz ithalat anlamına gelmez.
 
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
@@ -388,7 +424,8 @@ curl "http://localhost:8000/screen?name=Northwind+Maritime"
 | Kod | Anlamı |
 |---|---|
 | `200` | Başarılı — eşleşme dizisi (boş olabilir) |
-| `400` | `InvalidQueryError` — boş sorgu veya 500 karakterden uzun |
+| `400` | `InvalidQueryError` — boş/çok uzun sorgu, hatalı kod veya negatif kıymet |
+| `404` | `RateNotFoundError` — o HS kodu için kayıtlı vergi oranı yok |
 | `422` | Eksik/geçersiz parametre tipi (FastAPI doğrulaması) |
 
 ---
@@ -415,10 +452,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Modül | Kapsam |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
+| `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 %100 |
 | `scripts/import_cn_codes.py` | 🟢 %91 |
-| `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 %100 |
-| `main.py` | 🟢 %93 |
-| **Toplam** | **🟢 %96** (61 test, eşik %80) |
+| `logging_config.py` | 🟢 %100 |
+| `main.py` | 🟢 %95 |
+| **Toplam** | **🟢 %97** (86 test, eşik %80) |
 
 ### Test edilen uç durumlar
 
@@ -432,7 +470,12 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Kısmi şirket ismi (`Northwind Maritime`) | Listedeki tam isimle eşleşir |
 | Listede karşılığı olmayan isim | Hata değil, boş sonuç |
 | Bilinmeyen kodun birebir sorgulanması | `HSCodeNotFoundError` |
-| Dolu veritabanının yeniden doldurulması | Idempotent — iki tabloda da mükerrer kayıt oluşmaz |
+| Menşe için tercihli oran mevcut | Standart MFN oranını geçersiz kılar |
+| Henüz yürürlüğe girmemiş oran (`valid_from` gelecekte) | Yok sayılır; yürürlükteki orana düşülür |
+| Kayıtlı oranı olmayan HS kodu | `RateNotFoundError` → HTTP `404`, asla sıfır vergi değil |
+| Negatif gümrük kıymeti | `InvalidQueryError` → HTTP `400` |
+| Sıfır gümrük kıymeti | Geçerli — sıfır vergi |
+| Dolu veritabanının yeniden doldurulması | Idempotent — hiçbir tabloda mükerrer kayıt oluşmaz |
 
 ---
 
@@ -497,6 +540,23 @@ biçimine uygun olarak soyadı önce yazılmış birkaç sentetik kişi ismi.
 > gelmez ve liste asla gerçek tarama için kullanılmamalıdır. Üretim taraması, resmî AB Konsolide Mali
 > Yaptırımlar Listesi'ni gerektirir.
 
+### Vergi oranları
+
+`tariff_rates` tablosu **18 satırla** doldurulur: yukarıdaki örnekte zaten yer alan kodlar için
+standart MFN oranları ve iki ticaret anlaşması kapsamındaki tercihli oranlar — bir %0 tercih ve
+`valid_from` filtresinin doğru şekilde yok saydığı gelecek tarihli bir oran dahil.
+
+| Alan | Örnek |
+|---|---|
+| `hs_code` | `6109100000` |
+| `country_of_origin` | `NO`, `CH`, `JP`, `KR` — ya da standart MFN oranı için `ALL` |
+| `rate_type` | `standard` · `preferential` |
+| `rate_percent` | `12.0` · `0.0` |
+| `trade_agreement` | `EU-Solvia Free Trade Agreement` · `EU-Meridian Economic Partnership` · `null` |
+
+> 🚨 **Oranlar ve her iki ticaret anlaşması da kurgusaldır.** Gerçek vergi oranları ve tercihli
+> menşeler AB TARIC veritabanından gelir; bu rakamları asla gerçek bir beyanda kullanmayın.
+
 ### Gerçek CN nomanklatürünü içe aktarma
 
 Yukarıdaki 20 satırlık örnek bir demo veri kümesidir — **[canlı demo](https://customsiq-gs0u.onrender.com/) dahil**, orası da
@@ -546,18 +606,19 @@ Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje 
 
 ## 🗺️ Yol haritası
 
-CN kodu araması ve yaptırım taraması bugün kullanıma hazırdır. İki uyum modülü iskelet hâlinde
-kalmaya devam ediyor — gerçek bir mantık içermedikleri sürece kapsam eşiğinin dışında tutulurlar:
+Üç temel uyum yeteneği de bugün kullanıma hazırdır. Geriye tek bir iskelet kaldı; gerçek bir
+mantık içermediği sürece kapsam eşiğinin dışında tutulur:
 
 | Modül | Durum | Kapsam |
 |---|---|---|
 | `search.py` + `api.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden bulanık CN kodu araması |
 | `embargo_screener.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden yasaklı taraf isim taraması |
+| `tariff_calculator.py` | ✅ **Tamamlandı** | Tercihli oran seçimiyle vergi hesaplama |
 | `cn_classifier.py` | 🚧 İskelet | AB TARIC veri kümesine karşı kural ve güven skoru tabanlı sınıflandırma |
-| `tariff_calculator.py` | 🚧 İskelet | Vergi hesaplama, menşe kuralları, AB tercihli ticaret anlaşması oranları |
 
-Tarama için planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri, ürün/varış yeri kısıtları ve
-kuruluş isimleri için takma ad ile transliterasyon desteği.
+Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
+isimleri için takma ad ile transliterasyon desteği, ve vergi hesabının üzerine kota/anti-damping
+bileşenleri.
 
 ---
 
@@ -573,17 +634,17 @@ CustomsIQ/
 │   │   ├── matching.py          # ortak doğrulama + benzerlik skorlaması
 │   │   ├── search.py            # CN kodu sıralaması
 │   │   ├── embargo_screener.py  # yaptırım isim taraması
+│   │   ├── tariff_calculator.py # vergi oranı seçimi + hesaplama
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # ortak loglama kurulumu
 │   │   ├── main.py              # CLI giriş noktası
 │   │   ├── api.py               # FastAPI uygulaması (arayüzü de sunar)
 │   │   ├── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
-│   │   ├── cn_classifier.py     # 🚧 iskelet
-│   │   └── tariff_calculator.py # 🚧 iskelet
+│   │   └── cn_classifier.py     # 🚧 iskelet
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── scripts/import_cn_codes.py   # tek seferlik araç: resmî CN dosyası → hs_codes
-├── tests/                       # 61 test — birim, API, CLI, tarama, içe aktarma, uç durumlar
+├── tests/                       # 86 test — birim, API, CLI, tarama, vergi, içe aktarma, uç durumlar
 │   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

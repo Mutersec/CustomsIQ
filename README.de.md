@@ -3,13 +3,13 @@
 # 🛃 CustomsIQ
 
 ### Compliance-Toolkit für Zoll- und Außenhandelsprozesse
-**Waren unter der richtigen HS-/KN-Codenummer einreihen und Geschäftspartner gegen
-Sanktionslisten prüfen.**
+**Waren unter der richtigen HS-/KN-Codenummer einreihen, Geschäftspartner gegen Sanktionslisten
+prüfen und den fälligen Zoll berechnen.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Testabdeckung](https://img.shields.io/badge/Testabdeckung-96%25-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-61%20bestanden-brightgreen)
+![Testabdeckung](https://img.shields.io/badge/Testabdeckung-97%25-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-86%20bestanden-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/Linting-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/Stil-black-000000)
@@ -73,6 +73,7 @@ entscheidet.
 |---|---|---|
 | 🔍 | **Unscharfe Suche** | Freitextbeschreibung → nach Ähnlichkeitswert sortierte KN-/TARIC-Codes |
 | 🚫 | **Sanktionsprüfung** | Name → Treffer auf Verbotslisten, tolerant gegenüber Wortstellung und Teilnamen |
+| 💶 | **Zollberechnung** | Code + Ursprung + Wert → fälliger Zoll, mit Satz und Begründung |
 | 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
 | 📥 | **Import echter Daten** | Lädt die offizielle EU-KN-Nomenklatur idempotent aus einer lokalen Datei |
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
@@ -99,19 +100,24 @@ flowchart LR
 
     SEARCH["🔍 search.py<br/>KN-Codes ranken"]
     SCREEN["🚫 embargo_screener.py<br/>Sanktionstreffer ranken"]
+    DUTY["💶 tariff_calculator.py<br/>Satzwahl + Berechnung"]
     MATCH["🧩 matching.py<br/>Validierung + Ähnlichkeit"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities")]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities · tariff_rates")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
     CLI --> SEARCH
     CLI --> SCREEN
+    CLI --> DUTY
     API --> SEARCH
     API --> SCREEN
+    API --> DUTY
     SEARCH --> MATCH
     SCREEN --> MATCH
     SEARCH --> DB
     SCREEN --> DB
+    DUTY --> DB
+    DUTY -. löst aus .-> EXC
     MATCH -. löst aus .-> EXC
     DB -. löst aus .-> EXC
     CFG --> CLI
@@ -123,16 +129,17 @@ flowchart LR
 
 | Modul | Zuständigkeit |
 |---|---|
-| `models.py` | `HSCode` und `SanctionedEntity` — die unveränderlichen Datensätze |
+| `models.py` | `HSCode`, `SanctionedEntity` und `TariffRate` — die unveränderlichen Datensätze |
 | `database.py` | SQLite-Schema, Verbindung, Beispieldaten, `fetch_all*()`, `get_by_code()` |
 | `matching.py` | Eingabevalidierung + Ähnlichkeitsbewertung (**von beiden Funktionen genutzt**) |
 | `search.py` | Rankt KN-Codes nach Beschreibungsähnlichkeit |
 | `embargo_screener.py` | Rankt Sanktionslistentreffer nach Namensähnlichkeit |
-| `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError` |
+| `tariff_calculator.py` | Wählt den anwendbaren Zollsatz und berechnet den fälligen Betrag |
+| `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; liest `CUSTOMSIQ_*`-Umgebungsvariablen und `.env` |
 | `logging_config.py` | Gemeinsames Logging — schlichtes Format nach stdout, nirgends ein `print()` |
 | `main.py` | Einstiegspunkt der interaktiven CLI (Suche + `screen <Name>`) |
-| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/screen`, `/health` |
+| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/screen`, `/calculate-duty`, `/health` |
 | `static/index.html` | Das gesamte Frontend — Inline-CSS, reines `fetch()`, keine Abhängigkeiten |
 
 ### Datenmodell
@@ -149,6 +156,16 @@ CREATE TABLE sanctioned_entities (
     country     TEXT NOT NULL,      -- ISO 3166-1 alpha-2, z. B. "CY"
     list_source TEXT NOT NULL,      -- z. B. "EU Consolidated Financial Sanctions List"
     date_added  TEXT NOT NULL       -- ISO-8601-Datum, z. B. "2023-04-12"
+);
+
+CREATE TABLE tariff_rates (
+    hs_code           TEXT NOT NULL,  -- z. B. "6109100000"
+    country_of_origin TEXT NOT NULL,  -- ISO alpha-2, oder "ALL" für den Regelsatz (MFN)
+    rate_type         TEXT NOT NULL,  -- "standard" oder "preferential"
+    rate_percent      REAL NOT NULL,  -- z. B. 12.0
+    trade_agreement   TEXT,           -- NULL bei Regelsätzen
+    valid_from        TEXT NOT NULL,  -- ISO-8601-Datum des Inkrafttretens
+    PRIMARY KEY (hs_code, country_of_origin, valid_from)
 );
 ```
 
@@ -277,7 +294,8 @@ seeded 20 rows into hs_codes
 seeded 18 rows into sanctioned_entities
 CustomsIQ (type 'quit' to exit)
 Enter a product description to search CN codes,
-or 'screen <name>' to run a sanctions check.
+'screen <name>' to run a sanctions check,
+or 'duty <hs_code> <country> <value>' to calculate customs duty.
 
 > cotton t-shirt
 1. 6109100000  (74%)  Cotton T-shirts, knitted        [Textile]
@@ -292,6 +310,11 @@ or 'screen <name>' to run a sanctions check.
 
 > screen Quokka Beachwear
 No sanctions match for 'Quokka Beachwear'.
+
+> duty 6109100000 NO 1000
+Duty on 6109100000 from NO: 0.00 (0.00% preferential)
+  Preferential rate of 0% applied under the EU-Solvia Free Trade Agreement, for which origin NO qualifies.
+  Customs value 1000.00 + duty 0.00 = 1000.00
 ```
 
 ### 🖥️ Weboberfläche
@@ -353,6 +376,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/health` | Liveness-Prüfung — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
 | `GET` | `/search` | Sortierte KN-Code-Treffer zu einer Produktbeschreibung |
 | `GET` | `/screen` | Sanktionslistentreffer zu einem Personen- oder Firmennamen |
+| `GET` | `/calculate-duty` | Fälliger Zoll für eine Sendung, mit Begründung des Satzes |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
 **Parameter von `GET /search`**
@@ -370,6 +394,18 @@ for result in search(conn, "lithium battery", limit=3):
 
 Die Prüfung kennt kein `limit`: Jeder Treffer oberhalb des Schwellenwerts wird zurückgegeben — eine
 still gekürzte Trefferliste wäre ein Compliance-Verstoß und nicht bloß ein schlechteres Ranking.
+
+**Parameter von `GET /calculate-duty`**
+
+| Parameter | Typ | Standard | Einschränkungen | Beschreibung |
+|---|---|---|---|---|
+| `hs_code` | `str` | *erforderlich* | KN-8 oder TARIC-10 | Code der eingeführten Ware |
+| `country_of_origin` | `str` | *erforderlich* | ISO 3166-1 alpha-2 | Ursprung der Ware |
+| `customs_value` | `float` | *erforderlich* | >= 0 | Angemeldeter Zollwert |
+
+Qualifiziert der Ursprung für einen Präferenzsatz, gilt dieser; sonst der Regelsatz (MFN). Ein Code
+**ohne** hinterlegten Satz liefert `404` statt null Zoll — eine Lücke im Datenbestand ist keine
+zollfreie Einfuhr.
 
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
@@ -392,7 +428,8 @@ curl "http://localhost:8000/screen?name=Northwind+Maritime"
 | Code | Bedeutung |
 |---|---|
 | `200` | Erfolg — Liste der Treffer (kann leer sein) |
-| `400` | `InvalidQueryError` — leere Abfrage oder länger als 500 Zeichen |
+| `400` | `InvalidQueryError` — leere/zu lange Abfrage, fehlerhafter Code oder negativer Wert |
+| `404` | `RateNotFoundError` — kein Zollsatz für diesen HS-Code hinterlegt |
 | `422` | Fehlender/ungültiger Parametertyp (FastAPI-Validierung) |
 
 ---
@@ -420,10 +457,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Modul | Abdeckung |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
+| `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 100 % |
 | `scripts/import_cn_codes.py` | 🟢 91 % |
-| `exceptions.py` · `logging_config.py` · `models.py` · `search.py` | 🟢 100 % |
-| `main.py` | 🟢 93 % |
-| **Gesamt** | **🟢 96 %** (61 Tests, Schwelle bei 80 %) |
+| `logging_config.py` | 🟢 100 % |
+| `main.py` | 🟢 95 % |
+| **Gesamt** | **🟢 97 %** (86 Tests, Schwelle bei 80 %) |
 
 ### Getestete Grenzfälle
 
@@ -437,7 +475,12 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Unvollständiger Firmenname (`Northwind Maritime`) | Trifft den vollständig gelisteten Namen |
 | Name ohne Entsprechung auf der Liste | Leeres Ergebnis, kein Fehler |
 | Exakte Suche nach unbekanntem Code | `HSCodeNotFoundError` |
-| Erneutes Befüllen einer gefüllten Datenbank | Idempotent — keine doppelten Datensätze in beiden Tabellen |
+| Präferenzsatz für den Ursprung vorhanden | Setzt sich gegen den Regelsatz durch |
+| Noch nicht in Kraft (`valid_from` in der Zukunft) | Wird ignoriert; es gilt der geltende Satz |
+| HS-Code ohne hinterlegten Satz | `RateNotFoundError` → HTTP `404`, niemals null Zoll |
+| Negativer Zollwert | `InvalidQueryError` → HTTP `400` |
+| Zollwert null | Gültig — kein Zoll fällig |
+| Erneutes Befüllen einer gefüllten Datenbank | Idempotent — keine doppelten Datensätze in allen Tabellen |
 
 ---
 
@@ -502,6 +545,23 @@ einige synthetische Personennamen, nachnamenzuerst gespeichert, wie es echte Lis
 > oder Organisation, und die Liste darf niemals für eine echte Prüfung verwendet werden. Der
 > Produktivbetrieb erfordert die offizielle konsolidierte EU-Finanzsanktionsliste.
 
+### Zollsätze
+
+Die Tabelle `tariff_rates` wird mit **18 Zeilen** vorbefüllt: Regelsätze (MFN) für Codes aus dem
+Beispiel oben sowie Präferenzsätze aus zwei Handelsabkommen — darunter eine 0-%-Präferenz und ein
+zukünftig datierter Satz, den der `valid_from`-Filter korrekt ignoriert.
+
+| Feld | Beispiel |
+|---|---|
+| `hs_code` | `6109100000` |
+| `country_of_origin` | `NO`, `CH`, `JP`, `KR` — oder `ALL` für den Regelsatz |
+| `rate_type` | `standard` · `preferential` |
+| `rate_percent` | `12.0` · `0.0` |
+| `trade_agreement` | `EU-Solvia Free Trade Agreement` · `EU-Meridian Economic Partnership` · `null` |
+
+> 🚨 **Die Sätze und beide Handelsabkommen sind fiktiv.** Echte Zollsätze und Präferenzursprünge
+> stammen aus der EU-TARIC-Datenbank; verwenden Sie diese Zahlen niemals für eine echte Anmeldung.
+
 ### Import der echten KN-Nomenklatur
 
 Die 20 Zeilen oben sind ein Demo-Datenbestand — **auch auf der [Live-Demo](https://customsiq-gs0u.onrender.com/)**, die bewusst
@@ -552,18 +612,19 @@ da nur dieses Werkzeug sie je bräuchte. Ein CSV-Export erübrigt sie vollständ
 
 ## 🗺️ Roadmap
 
-KN-Code-Suche und Sanktionsprüfung sind beide einsatzbereit. Zwei Compliance-Module bleiben als
-Gerüst angelegt — bis sie echte Logik enthalten, bleiben sie von der Abdeckungsschwelle ausgenommen:
+Alle drei Kernfunktionen sind einsatzbereit. Ein Gerüst bleibt übrig; bis es echte Logik enthält,
+bleibt es von der Abdeckungsschwelle ausgenommen:
 
 | Modul | Status | Funktionsumfang |
 |---|---|---|
 | `search.py` + `api.py` | ✅ **Ausgeliefert** | Unscharfe KN-Code-Suche über CLI und REST |
 | `embargo_screener.py` | ✅ **Ausgeliefert** | Namensprüfung gegen Verbotslisten über CLI und REST |
+| `tariff_calculator.py` | ✅ **Ausgeliefert** | Zollberechnung mit Auswahl des Präferenzsatzes |
 | `cn_classifier.py` | 🚧 Gerüst | Regel- und konfidenzbasierte Tarifierung gegen den EU-TARIC-Datenbestand |
-| `tariff_calculator.py` | 🚧 Gerüst | Zollberechnung, Ursprungsregeln, Präferenzzollsätze aus EU-Handelsabkommen |
 
-Geplante Erweiterungen der Prüfung: länderbezogene Embargokontrollen, Waren-/Bestimmungsbeschränkungen
-sowie Alias- und Transliterationsbehandlung für Entitätsnamen.
+Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
+Alias- und Transliterationsbehandlung für Entitätsnamen sowie Kontingent- und
+Antidumping-Komponenten auf der Zollberechnung.
 
 ---
 
@@ -579,17 +640,17 @@ CustomsIQ/
 │   │   ├── matching.py          # gemeinsame Validierung + Ähnlichkeitsbewertung
 │   │   ├── search.py            # KN-Code-Ranking
 │   │   ├── embargo_screener.py  # Namensprüfung gegen Sanktionslisten
+│   │   ├── tariff_calculator.py # Zollsatzwahl + Berechnung
 │   │   ├── exceptions.py        # typisierte Fehlerhierarchie
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # gemeinsames Logging-Setup
 │   │   ├── main.py              # CLI-Einstiegspunkt
 │   │   ├── api.py               # FastAPI-Anwendung (liefert auch das Frontend)
 │   │   ├── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
-│   │   ├── cn_classifier.py     # 🚧 Gerüst
-│   │   └── tariff_calculator.py # 🚧 Gerüst
+│   │   └── cn_classifier.py     # 🚧 Gerüst
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
 ├── scripts/import_cn_codes.py   # einmaliges Werkzeug: offizielle KN-Datei → hs_codes
-├── tests/                       # 61 Tests — Unit, API, CLI, Prüfung, Import, Grenzfälle
+├── tests/                       # 86 Tests — Unit, API, CLI, Prüfung, Zoll, Import, Grenzfälle
 │   └── fixtures/                # Beispiel-KN-Export für die Importer-Tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

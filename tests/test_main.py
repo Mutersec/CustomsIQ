@@ -42,3 +42,28 @@ def test_run_screens_a_clean_name(monkeypatch: pytest.MonkeyPatch, capsys) -> No
     monkeypatch.setattr("builtins.input", _fake_input(["screen Quokka Beachwear", "quit"]))
     run(":memory:")
     assert "No sanctions match" in capsys.readouterr().out
+
+
+def test_run_calculates_duty(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """'duty <code> <country> <value>' prints the amount and the reasoning."""
+    monkeypatch.setattr("builtins.input", _fake_input(["duty 6109100000 CN 1000", "quit"]))
+    run(":memory:")
+    out = capsys.readouterr().out
+    assert "120.00" in out
+    assert "Standard MFN rate" in out
+
+
+def test_run_reports_a_missing_duty_rate(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """A code with no rate warns instead of crashing the loop."""
+    monkeypatch.setattr("builtins.input", _fake_input(["duty 99999999 CN 100", "quit"]))
+    run(":memory:")
+    assert "No tariff rate" in capsys.readouterr().out
+
+
+def test_run_rejects_a_malformed_duty_command(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Wrong argument count and a non-numeric value both explain themselves."""
+    monkeypatch.setattr("builtins.input", _fake_input(["duty 6109100000", "duty a b c", "quit"]))
+    run(":memory:")
+    out = capsys.readouterr().out
+    assert "Usage: duty" in out
+    assert "not a number" in out
