@@ -6,17 +6,21 @@
 <title>CustomsIQ — Trade Compliance Toolkit</title>
 <style>
   :root {
-    --bg: #0b1622;
-    --surface: #0f1e2e;
-    --surface-2: #16293d;
-    --border: #23405c;
-    --text: #e8eef5;
-    --text-dim: #93a8bf;
-    --teal: #14b8a6;
-    --teal-dim: #0d9488;
-    --amber: #f59e0b;
-    --red: #ef4444;
-    --green: #22c55e;
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --surface-2: #f1f3f6;
+    --border: #dee1e7;
+    --text: #161a22;
+    --text-dim: #5b6472;
+    --primary: #1d3557;
+    --primary-dim: #14273f;
+    --primary-soft: #e9edf3;
+    --accent-screen: #b45309;
+    --accent-classify: #3a6ea5;
+    --accent-duty: #2f6f4f;
+    --amber: #b45309;
+    --red: #b3261e;
+    --green: #1e7a3d;
   }
 
   * { box-sizing: border-box; }
@@ -53,11 +57,12 @@
   h1 {
     margin: 0;
     font-size: 21px;
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.2px;
+    color: var(--primary-dim);
   }
 
-  h1 .accent { color: var(--teal); }
+  h1 .accent { color: var(--primary); font-weight: 700; }
 
   .tagline {
     color: var(--text-dim);
@@ -80,7 +85,33 @@
   }
 
   .header-links a:hover,
-  .header-links a:focus-visible { color: var(--teal); border-bottom-color: var(--teal); }
+  .header-links a:focus-visible { color: var(--primary); border-bottom-color: var(--primary); }
+
+  /* ---------- language switcher ---------- */
+  .lang-switch {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .lang-btn {
+    padding: 5px 10px;
+    background: var(--surface);
+    color: var(--text-dim);
+    border: none;
+    border-right: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .lang-btn:last-child { border-right: none; }
+  .lang-btn:hover:not(.active) { background: var(--primary-soft); color: var(--text); }
+  .lang-btn.active { background: var(--primary); color: #ffffff; }
+  .lang-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 
   /* ---------- layout ---------- */
   main {
@@ -102,7 +133,8 @@
   .panel {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
   }
 
   .panel-head {
@@ -115,39 +147,41 @@
 
   .panel-head h2 {
     margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
     text-transform: uppercase;
+    color: var(--primary-dim);
   }
 
   .panel-head .rule {
     width: 3px;
     height: 17px;
-    background: var(--teal);
+    background: var(--primary);
     border-radius: 2px;
   }
 
-  .panel-head.alt .rule { background: var(--amber); }
-  .panel-head.calc .rule { background: #60a5fa; }
-  .panel-head.cls .rule { background: #a78bfa; }
+  .panel-head.alt .rule { background: var(--accent-screen); }
+  .panel-head.calc .rule { background: var(--accent-duty); }
+  .panel-head.cls .rule { background: var(--accent-classify); }
 
-  .card.cls { border-left-color: #a78bfa; }
-  .card.cls .bar span { background: #a78bfa; }
+  .card.cls { border-left-color: var(--accent-classify); }
+  .card.cls .bar span { background: var(--accent-classify); }
 
   .terms { margin-top: 8px; }
   .terms .label { color: var(--text-dim); font-size: 11.5px; margin-right: 6px; }
-  .chip.term { border-color: #4c3f80; color: #cfc4f5; }
+  .chip.term { border-color: #c3d3e3; color: var(--accent-classify); }
 
   /* The duty panel has three fields, so it takes a full-width row of its own. */
   .panel.wide { grid-column: 1 / -1; }
 
-  .card.calc { border-left-color: #60a5fa; }
+  .card.calc { border-left-color: var(--accent-duty); }
 
   .amount {
     font-size: 26px;
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.3px;
+    color: var(--primary-dim);
   }
 
   .breakdown {
@@ -186,35 +220,35 @@
   input[type="text"] {
     width: 100%;
     padding: 10px 12px;
-    background: var(--bg);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: 4px;
     color: var(--text);
     font-size: 14.5px;
     font-family: inherit;
   }
 
   input[type="text"]:focus {
-    outline: 2px solid var(--teal);
+    outline: 2px solid var(--primary);
     outline-offset: -1px;
-    border-color: var(--teal);
+    border-color: var(--primary);
   }
 
   button {
     align-self: flex-end;
     padding: 10px 20px;
-    background: var(--teal-dim);
-    color: #04231f;
-    border: 1px solid var(--teal);
-    border-radius: 3px;
+    background: var(--primary);
+    color: #ffffff;
+    border: 1px solid var(--primary);
+    border-radius: 4px;
     font-size: 14px;
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
   }
 
-  button:hover:not(:disabled) { background: var(--teal); }
-  button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  button:hover:not(:disabled) { background: var(--primary-dim); border-color: var(--primary-dim); }
+  button:focus-visible { outline: 2px solid var(--primary-dim); outline-offset: 2px; }
   button:disabled { opacity: 0.55; cursor: default; }
 
   /* ---------- results ---------- */
@@ -223,8 +257,8 @@
   .card {
     background: var(--surface-2);
     border: 1px solid var(--border);
-    border-left: 3px solid var(--teal);
-    border-radius: 3px;
+    border-left: 3px solid var(--primary);
+    border-radius: 4px;
     padding: 12px 14px;
   }
 
@@ -238,7 +272,7 @@
     flex-wrap: wrap;
   }
 
-  .card-title { font-weight: 600; font-size: 15px; }
+  .card-title { font-weight: 700; font-size: 15px; color: var(--text); }
   .card-title.mono { letter-spacing: 0.4px; }
 
   .score {
@@ -259,11 +293,12 @@
     font-size: 11.5px;
     color: var(--text-dim);
     margin-right: 6px;
+    background: var(--surface);
   }
 
   .bar {
     height: 4px;
-    background: var(--bg);
+    background: var(--border);
     border-radius: 2px;
     overflow: hidden;
   }
@@ -271,7 +306,7 @@
   .bar span {
     display: block;
     height: 100%;
-    background: var(--teal);
+    background: var(--primary);
   }
 
   .card.hit .bar span { background: var(--red); }
@@ -279,7 +314,7 @@
   /* ---------- states ---------- */
   .state {
     padding: 12px 14px;
-    border-radius: 3px;
+    border-radius: 4px;
     font-size: 14px;
     border: 1px solid var(--border);
     background: var(--surface-2);
@@ -293,15 +328,15 @@
 
   .state.warn {
     border-left: 3px solid var(--amber);
-    background: #2a1f0d;
-    color: #fcd9a0;
+    background: #fdf3e6;
+    color: #7a4a08;
     font-weight: 600;
   }
 
   .state.error {
     border-left: 3px solid var(--red);
-    background: #2a1214;
-    color: #fca5a5;
+    background: #fbeceb;
+    color: #8c2018;
   }
 
   /* ---------- footer ---------- */
@@ -318,8 +353,8 @@
     padding-top: 14px;
   }
 
-  footer strong { color: #fcd9a0; }
-  footer a { color: var(--text-dim); }
+  footer strong { color: #8a5a05; }
+  footer a { color: var(--primary); }
 
   /* ---------- reviewer field ---------- */
   .reviewer-field {
@@ -333,9 +368,9 @@
   .reviewer-field input {
     width: 140px;
     padding: 5px 8px;
-    background: var(--surface-2);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: 4px;
     color: var(--text);
     font-size: 12.5px;
     font-family: inherit;
@@ -354,7 +389,7 @@
     padding: 4px 10px;
     font-size: 12.5px;
     font-weight: 600;
-    border-radius: 3px;
+    border-radius: 4px;
     cursor: pointer;
     background: transparent;
     font-family: inherit;
@@ -370,9 +405,9 @@
     width: 100%;
     padding: 6px 8px;
     margin-bottom: 6px;
-    background: var(--bg);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: 4px;
     color: var(--text);
     font-size: 12.5px;
     font-family: inherit;
@@ -388,13 +423,18 @@
 <header>
   <div class="header-inner">
     <h1>Customs<span class="accent">IQ</span></h1>
-    <span class="tagline">EU trade compliance toolkit — search, classification, screening &amp; duty</span>
+    <span class="tagline" data-i18n="tagline"></span>
     <span class="header-links">
       <span class="reviewer-field">
-        <label for="reviewer-name">Reviewer</label>
-        <input type="text" id="reviewer-name" placeholder="your name" autocomplete="off">
+        <label for="reviewer-name" data-i18n="reviewerLabel"></label>
+        <input type="text" id="reviewer-name" data-i18n-placeholder="reviewerPlaceholder" autocomplete="off">
       </span>
-      <a href="/docs">API reference →</a>
+      <span class="lang-switch" role="group" aria-label="Language">
+        <button type="button" class="lang-btn" data-lang="en">EN</button>
+        <button type="button" class="lang-btn" data-lang="tr">TR</button>
+        <button type="button" class="lang-btn" data-lang="de">DE</button>
+      </span>
+      <a href="/docs" data-i18n="apiReference"></a>
     </span>
   </div>
 </header>
@@ -404,19 +444,16 @@
   <section class="panel">
     <div class="panel-head">
       <span class="rule"></span>
-      <h2>HS / CN Code Search</h2>
+      <h2 data-i18n="search.title"></h2>
     </div>
     <div class="panel-body">
-      <p class="hint">
-        Describe the goods in plain language. Results are ranked by similarity against the
-        EU Combined Nomenclature sample data.
-      </p>
+      <p class="hint" data-i18n="search.hint"></p>
       <form id="search-form">
         <div class="field">
-          <label for="search-input">Product description</label>
-          <input type="text" id="search-input" placeholder="e.g. cotton t-shirt" autocomplete="off">
+          <label for="search-input" data-i18n="search.label"></label>
+          <input type="text" id="search-input" data-i18n-placeholder="search.placeholder" autocomplete="off">
         </div>
-        <button type="submit" id="search-btn">Search</button>
+        <button type="submit" id="search-btn" data-i18n="search.button"></button>
       </form>
       <div class="results" id="search-results" aria-live="polite"></div>
     </div>
@@ -426,19 +463,16 @@
   <section class="panel">
     <div class="panel-head alt">
       <span class="rule"></span>
-      <h2>Sanctions Screening</h2>
+      <h2 data-i18n="screen.title"></h2>
     </div>
     <div class="panel-body">
-      <p class="hint">
-        Screen a person or organisation against the denied-party list. Matching tolerates
-        word order and partial names.
-      </p>
+      <p class="hint" data-i18n="screen.hint"></p>
       <form id="screen-form">
         <div class="field">
-          <label for="screen-input">Person or organisation</label>
-          <input type="text" id="screen-input" placeholder="e.g. Northwind Maritime" autocomplete="off">
+          <label for="screen-input" data-i18n="screen.label"></label>
+          <input type="text" id="screen-input" data-i18n-placeholder="screen.placeholder" autocomplete="off">
         </div>
-        <button type="submit" id="screen-btn">Screen</button>
+        <button type="submit" id="screen-btn" data-i18n="screen.button"></button>
       </form>
       <div class="results" id="screen-results" aria-live="polite"></div>
     </div>
@@ -447,20 +481,16 @@
   <section class="panel wide">
     <div class="panel-head cls">
       <span class="rule"></span>
-      <h2>Code Classification</h2>
+      <h2 data-i18n="classify.title"></h2>
     </div>
     <div class="panel-body">
-      <p class="hint">
-        Describe the goods and get ranked code suggestions with a confidence score. Unlike the
-        search above, this weighs how <em>rare</em> each word is across the nomenclature, and shows
-        which of your terms drove each suggestion.
-      </p>
+      <p class="hint" data-i18n-html="classify.hint"></p>
       <form id="classify-form">
         <div class="field">
-          <label for="classify-input">Product description</label>
-          <input type="text" id="classify-input" placeholder="e.g. knitted cotton shirt" autocomplete="off">
+          <label for="classify-input" data-i18n="classify.label"></label>
+          <input type="text" id="classify-input" data-i18n-placeholder="classify.placeholder" autocomplete="off">
         </div>
-        <button type="submit" id="classify-btn">Classify</button>
+        <button type="submit" id="classify-btn" data-i18n="classify.button"></button>
       </form>
       <div class="results" id="classify-results" aria-live="polite"></div>
     </div>
@@ -470,27 +500,24 @@
   <section class="panel wide">
     <div class="panel-head calc">
       <span class="rule"></span>
-      <h2>Customs Duty Calculation</h2>
+      <h2 data-i18n="duty.title"></h2>
     </div>
     <div class="panel-body">
-      <p class="hint">
-        Work out the duty owed on a consignment. A preferential rate is applied automatically
-        when the origin qualifies for one; otherwise the standard MFN rate applies.
-      </p>
+      <p class="hint" data-i18n="duty.hint"></p>
       <form id="duty-form">
         <div class="field">
-          <label for="duty-code">HS / CN code</label>
-          <input type="text" id="duty-code" placeholder="e.g. 6109100000" autocomplete="off">
+          <label for="duty-code" data-i18n="duty.codeLabel"></label>
+          <input type="text" id="duty-code" data-i18n-placeholder="duty.codePlaceholder" autocomplete="off">
         </div>
         <div class="field">
-          <label for="duty-origin">Country of origin</label>
-          <input type="text" id="duty-origin" placeholder="e.g. NO" maxlength="2" autocomplete="off">
+          <label for="duty-origin" data-i18n="duty.originLabel"></label>
+          <input type="text" id="duty-origin" data-i18n-placeholder="duty.originPlaceholder" maxlength="2" autocomplete="off">
         </div>
         <div class="field">
-          <label for="duty-value">Customs value</label>
-          <input type="text" id="duty-value" placeholder="e.g. 1000" inputmode="decimal" autocomplete="off">
+          <label for="duty-value" data-i18n="duty.valueLabel"></label>
+          <input type="text" id="duty-value" data-i18n-placeholder="duty.valuePlaceholder" inputmode="decimal" autocomplete="off">
         </div>
-        <button type="submit" id="duty-btn">Calculate</button>
+        <button type="submit" id="duty-btn" data-i18n="duty.button"></button>
       </form>
       <div class="results" id="duty-results" aria-live="polite"></div>
     </div>
@@ -500,31 +527,336 @@
   <section class="panel wide">
     <div class="panel-head">
       <span class="rule"></span>
-      <h2>Review History</h2>
+      <h2 data-i18n="reviewHistory.title"></h2>
     </div>
     <div class="panel-body">
-      <p class="hint">
-        Sign-offs recorded against classification, screening and duty results — append-only,
-        most recent first.
-      </p>
+      <p class="hint" data-i18n="reviewHistory.hint"></p>
       <div class="results" id="review-history-results" aria-live="polite"></div>
     </div>
   </section>
 </main>
 
 <footer>
-  <p class="disclaimer">
-    <strong>Demo project.</strong> The tariff codes, duty rates, trade agreements and sanctions
-    list are all <strong>fictional mock data</strong> in EU Combined Nomenclature / EU Consolidated
-    Financial Sanctions List style. No entity or agreement listed here is real, and this tool must
-    never be used for actual customs classification, duty calculation or sanctions screening.
-    Production use requires the official
-    <a href="https://ec.europa.eu/taxation_customs/dds2/taric">EU TARIC database</a>
-    and the official EU Consolidated Financial Sanctions List.
-  </p>
+  <p class="disclaimer" data-i18n-html="footer.disclaimer"></p>
 </footer>
 
 <script>
+  // ---------- i18n ----------
+  const STRINGS = {
+    en: {
+      tagline: "EU trade compliance toolkit — search, classification, screening & duty",
+      reviewerLabel: "Reviewer",
+      reviewerPlaceholder: "your name",
+      apiReference: "API reference →",
+      search: {
+        title: "HS / CN Code Search",
+        hint: "Describe the goods in plain language. Results are ranked by similarity against the EU Combined Nomenclature sample data.",
+        label: "Product description",
+        placeholder: "e.g. cotton t-shirt",
+        button: "Search",
+        busy: "Searching…",
+        noMatches: "No codes matched that description.",
+        matchSuffix: "match",
+      },
+      screen: {
+        title: "Sanctions Screening",
+        hint: "Screen a person or organisation against the denied-party list. Matching tolerates word order and partial names.",
+        label: "Person or organisation",
+        placeholder: "e.g. Northwind Maritime",
+        button: "Screen",
+        busy: "Screening…",
+        clean: "✓ No matches found — screened clean against the list.",
+        warn: (n) => `⚠ ${n} potential match${n === 1 ? "" : "es"} — review required`,
+        listed: "listed",
+      },
+      classify: {
+        title: "Code Classification",
+        hint: "Describe the goods and get ranked code suggestions with a confidence score. Unlike the search above, this weighs how <em>rare</em> each word is across the nomenclature, and shows which of your terms drove each suggestion.",
+        label: "Product description",
+        placeholder: "e.g. knitted cotton shirt",
+        button: "Classify",
+        busy: "Classifying…",
+        noMatches: "No code shares a term with that description — try different wording.",
+        matchedOn: "matched on",
+        confidenceSuffix: "confidence",
+      },
+      duty: {
+        title: "Customs Duty Calculation",
+        hint: "Work out the duty owed on a consignment. A preferential rate is applied automatically when the origin qualifies for one; otherwise the standard MFN rate applies.",
+        codeLabel: "HS / CN code",
+        codePlaceholder: "e.g. 6109100000",
+        originLabel: "Country of origin",
+        originPlaceholder: "e.g. NO",
+        valueLabel: "Customs value",
+        valuePlaceholder: "e.g. 1000",
+        button: "Calculate",
+        busy: "Calculating…",
+        validationRequired: "Enter an HS code, a country of origin and a customs value.",
+        valueMustBeNumber: "Customs value must be a number.",
+        customsValue: "Customs value",
+        dutyLabel: "Duty",
+        totalPayable: "Total payable",
+        rateType: { standard: "standard", preferential: "preferential" },
+      },
+      reviewHistory: {
+        title: "Review History",
+        hint: "Sign-offs recorded against classification, screening and duty results — append-only, most recent first.",
+        empty: "No review decisions recorded yet.",
+        couldNotLoad: "Could not load review history.",
+      },
+      review: {
+        approve: "Approve",
+        reject: "Reject",
+        flag: "Flag",
+        commentPlaceholder: "Optional comment",
+        enterName: "Enter your name in the Reviewer field first.",
+        submitting: "Submitting…",
+        recorded: (decision) => `Recorded: ${decision}`,
+        couldNotRecord: "Could not record review.",
+      },
+      common: {
+        enterValue: "Please enter a value first.",
+        working: "Working…",
+        requestFailed: (status) => `Request failed (HTTP ${status}).`,
+        couldNotReach: "Could not reach the API. Check your connection and try again.",
+      },
+      footer: {
+        disclaimer:
+          '<strong>Demo project.</strong> The tariff codes, duty rates, trade agreements and sanctions ' +
+          "list are all <strong>fictional mock data</strong> in EU Combined Nomenclature / EU Consolidated " +
+          "Financial Sanctions List style. No entity or agreement listed here is real, and this tool must " +
+          "never be used for actual customs classification, duty calculation or sanctions screening. " +
+          "Production use requires the official " +
+          '<a href="https://ec.europa.eu/taxation_customs/dds2/taric">EU TARIC database</a> ' +
+          "and the official EU Consolidated Financial Sanctions List.",
+      },
+    },
+    tr: {
+      tagline: "AB dış ticaret uyum araç seti — arama, sınıflandırma, yaptırım taraması ve vergi",
+      reviewerLabel: "İnceleyici",
+      reviewerPlaceholder: "adınız",
+      apiReference: "API referansı →",
+      search: {
+        title: "HS / CN Kodu Arama",
+        hint: "Eşyayı sade bir dille tarif edin. Sonuçlar, AB Kombine Nomanklatürü örnek verisiyle benzerliğe göre sıralanır.",
+        label: "Ürün açıklaması",
+        placeholder: "örn. pamuklu tişört",
+        button: "Ara",
+        busy: "Aranıyor…",
+        noMatches: "Bu açıklamayla eşleşen kod bulunamadı.",
+        matchSuffix: "eşleşme",
+      },
+      screen: {
+        title: "Yaptırım Taraması",
+        hint: "Bir kişi veya kuruluşu yasaklı taraf listesine karşı tarayın. Eşleştirme kelime sırasına ve kısmi isimlere toleranslıdır.",
+        label: "Kişi veya kuruluş",
+        placeholder: "örn. Northwind Maritime",
+        button: "Tara",
+        busy: "Taranıyor…",
+        clean: "✓ Eşleşme bulunamadı — liste taraması temiz.",
+        warn: (n) => `⚠ ${n} olası eşleşme — inceleme gerekli`,
+        listed: "liste tarihi",
+      },
+      classify: {
+        title: "Kod Sınıflandırma",
+        hint: "Eşyayı tarif edin ve güven skoruyla sıralanmış kod önerileri alın. Yukarıdaki aramanın aksine, her kelimenin nomanklatür genelinde ne kadar <em>nadir</em> olduğunu tartar ve hangi terimlerinizin sonucu getirdiğini gösterir.",
+        label: "Ürün açıklaması",
+        placeholder: "örn. örgü pamuklu gömlek",
+        button: "Sınıflandır",
+        busy: "Sınıflandırılıyor…",
+        noMatches: "Bu açıklamayla hiçbir kod terim paylaşmıyor — farklı bir ifade deneyin.",
+        matchedOn: "eşleşen terim",
+        confidenceSuffix: "güven",
+      },
+      duty: {
+        title: "Gümrük Vergisi Hesaplama",
+        hint: "Bir sevkiyat için ödenecek vergiyi hesaplayın. Menşe bir tercihli orana hak kazanıyorsa otomatik uygulanır; aksi hâlde standart MFN oranı geçerlidir.",
+        codeLabel: "HS / CN kodu",
+        codePlaceholder: "örn. 6109100000",
+        originLabel: "Menşe ülke",
+        originPlaceholder: "örn. NO",
+        valueLabel: "Gümrük kıymeti",
+        valuePlaceholder: "örn. 1000",
+        button: "Hesapla",
+        busy: "Hesaplanıyor…",
+        validationRequired: "Bir HS kodu, menşe ülke ve gümrük kıymeti girin.",
+        valueMustBeNumber: "Gümrük kıymeti sayısal olmalı.",
+        customsValue: "Gümrük kıymeti",
+        dutyLabel: "Vergi",
+        totalPayable: "Ödenecek toplam",
+        rateType: { standard: "standart", preferential: "tercihli" },
+      },
+      reviewHistory: {
+        title: "İnceleme Geçmişi",
+        hint: "Sınıflandırma, tarama ve vergi sonuçlarına ilişkin onaylar — yalnızca eklenir, en yeni önce.",
+        empty: "Henüz kayıtlı bir inceleme kararı yok.",
+        couldNotLoad: "İnceleme geçmişi yüklenemedi.",
+      },
+      review: {
+        approve: "Onayla",
+        reject: "Reddet",
+        flag: "İşaretle",
+        commentPlaceholder: "İsteğe bağlı not",
+        enterName: "Önce İnceleyici alanına adınızı girin.",
+        submitting: "Gönderiliyor…",
+        recorded: (decision) => `Kaydedildi: ${decision}`,
+        couldNotRecord: "İnceleme kaydedilemedi.",
+      },
+      common: {
+        enterValue: "Lütfen önce bir değer girin.",
+        working: "İşleniyor…",
+        requestFailed: (status) => `İstek başarısız oldu (HTTP ${status}).`,
+        couldNotReach: "API'ye ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.",
+      },
+      footer: {
+        disclaimer:
+          "<strong>Demo proje.</strong> Tarife kodları, vergi oranları, ticaret anlaşmaları ve yaptırım " +
+          "listesi, AB Kombine Nomanklatürü / AB Konsolide Mali Yaptırımlar Listesi tarzında " +
+          "<strong>kurgusal örnek verilerdir</strong>. Burada listelenen hiçbir kuruluş veya anlaşma gerçek " +
+          "değildir ve bu araç gerçek gümrük sınıflandırması, vergi hesabı veya yaptırım taraması için " +
+          "asla kullanılmamalıdır. Üretim kullanımı resmî " +
+          '<a href="https://ec.europa.eu/taxation_customs/dds2/taric">AB TARIC veritabanını</a> ' +
+          "ve resmî AB Konsolide Mali Yaptırımlar Listesi'ni gerektirir.",
+      },
+    },
+    de: {
+      tagline: "EU-Compliance-Toolkit für den Außenhandel — Suche, Einreihung, Sanktionsprüfung & Zoll",
+      reviewerLabel: "Prüfer",
+      reviewerPlaceholder: "Ihr Name",
+      apiReference: "API-Referenz →",
+      search: {
+        title: "KN-/HS-Code-Suche",
+        hint: "Beschreiben Sie die Ware in einfachen Worten. Die Treffer werden nach Ähnlichkeit zu den EU-KN-Beispieldaten sortiert.",
+        label: "Warenbeschreibung",
+        placeholder: "z. B. Baumwoll-T-Shirt",
+        button: "Suchen",
+        busy: "Suche läuft…",
+        noMatches: "Kein Code passt zu dieser Beschreibung.",
+        matchSuffix: "Übereinstimmung",
+      },
+      screen: {
+        title: "Sanktionsprüfung",
+        hint: "Prüfen Sie eine Person oder Organisation gegen die Verbotsliste. Der Abgleich toleriert Wortstellung und Teilnamen.",
+        label: "Person oder Organisation",
+        placeholder: "z. B. Northwind Maritime",
+        button: "Prüfen",
+        busy: "Wird geprüft…",
+        clean: "✓ Keine Treffer — Prüfung gegen die Liste war sauber.",
+        warn: (n) => `⚠ ${n} möglicher Treffer${n === 1 ? "" : "e"} — Prüfung erforderlich`,
+        listed: "gelistet am",
+      },
+      classify: {
+        title: "Code-Einreihung",
+        hint: "Beschreiben Sie die Ware und erhalten Sie sortierte Codevorschläge mit Konfidenzwert. Anders als die Suche oben gewichtet dies, wie <em>selten</em> jedes Wort im Datenbestand ist, und zeigt, welche Begriffe den Treffer bewirkt haben.",
+        label: "Warenbeschreibung",
+        placeholder: "z. B. gestricktes Baumwollhemd",
+        button: "Einreihen",
+        busy: "Wird eingereiht…",
+        noMatches: "Kein Code teilt einen Begriff mit dieser Beschreibung — versuchen Sie eine andere Formulierung.",
+        matchedOn: "Treffer bei",
+        confidenceSuffix: "Konfidenz",
+      },
+      duty: {
+        title: "Zollberechnung",
+        hint: "Berechnen Sie den fälligen Zoll für eine Sendung. Qualifiziert der Ursprung für einen Präferenzsatz, wird dieser automatisch angewendet; andernfalls gilt der Regelsatz (MFN).",
+        codeLabel: "KN-/HS-Code",
+        codePlaceholder: "z. B. 6109100000",
+        originLabel: "Ursprungsland",
+        originPlaceholder: "z. B. NO",
+        valueLabel: "Zollwert",
+        valuePlaceholder: "z. B. 1000",
+        button: "Berechnen",
+        busy: "Wird berechnet…",
+        validationRequired: "Geben Sie einen HS-Code, ein Ursprungsland und einen Zollwert ein.",
+        valueMustBeNumber: "Der Zollwert muss eine Zahl sein.",
+        customsValue: "Zollwert",
+        dutyLabel: "Zoll",
+        totalPayable: "Gesamtbetrag",
+        rateType: { standard: "Regelsatz", preferential: "Präferenzsatz" },
+      },
+      reviewHistory: {
+        title: "Prüfprotokoll",
+        hint: "Freigaben zu Einreihungs-, Prüf- und Zollergebnissen — nur anhängend, neueste zuerst.",
+        empty: "Noch keine Prüfentscheidungen erfasst.",
+        couldNotLoad: "Prüfprotokoll konnte nicht geladen werden.",
+      },
+      review: {
+        approve: "Freigeben",
+        reject: "Ablehnen",
+        flag: "Markieren",
+        commentPlaceholder: "Optionale Notiz",
+        enterName: "Bitte zuerst Ihren Namen im Feld Prüfer eintragen.",
+        submitting: "Wird gesendet…",
+        recorded: (decision) => `Erfasst: ${decision}`,
+        couldNotRecord: "Prüfung konnte nicht gespeichert werden.",
+      },
+      common: {
+        enterValue: "Bitte zuerst einen Wert eingeben.",
+        working: "Wird verarbeitet…",
+        requestFailed: (status) => `Anfrage fehlgeschlagen (HTTP ${status}).`,
+        couldNotReach: "Die API konnte nicht erreicht werden. Verbindung prüfen und erneut versuchen.",
+      },
+      footer: {
+        disclaimer:
+          "<strong>Demoprojekt.</strong> Zolltarifnummern, Zollsätze, Handelsabkommen und die Sanktionsliste " +
+          "sind allesamt <strong>fiktive Testdaten</strong> im Stil der EU-Kombinierten Nomenklatur / der EU-" +
+          "Sanktionsliste. Keine hier aufgeführte Organisation oder Vereinbarung ist real, und dieses Werkzeug " +
+          "darf niemals für echte Zolleinreihung, Zollberechnung oder Sanktionsprüfung verwendet werden. Der " +
+          "produktive Einsatz erfordert die offizielle " +
+          '<a href="https://ec.europa.eu/taxation_customs/dds2/taric">EU-TARIC-Datenbank</a> ' +
+          "und die offizielle konsolidierte EU-Sanktionsliste.",
+      },
+    },
+  };
+
+  function detectLang() {
+    const stored = localStorage.getItem("customsiq_lang");
+    if (stored && STRINGS[stored]) return stored;
+    const browser = (navigator.language || "en").slice(0, 2);
+    return STRINGS[browser] ? browser : "en";
+  }
+
+  let lang = detectLang();
+
+  function t(key) {
+    const parts = key.split(".");
+    let value = STRINGS[lang];
+    for (const part of parts) value = value ? value[part] : undefined;
+    if (value === undefined) {
+      value = STRINGS.en;
+      for (const part of parts) value = value ? value[part] : undefined;
+    }
+    return value;
+  }
+
+  function applyStaticTranslations() {
+    document.documentElement.lang = lang;
+    document.querySelectorAll("[data-i18n]").forEach((el) => {
+      el.textContent = t(el.dataset.i18n);
+    });
+    document.querySelectorAll("[data-i18n-html]").forEach((el) => {
+      el.innerHTML = t(el.dataset.i18nHtml);
+    });
+    document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+      el.placeholder = t(el.dataset.i18nPlaceholder);
+    });
+    document.querySelectorAll(".lang-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.lang === lang);
+    });
+  }
+
+  document.querySelectorAll(".lang-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      lang = btn.dataset.lang;
+      localStorage.setItem("customsiq_lang", lang);
+      applyStaticTranslations();
+      loadReviewHistory();
+    });
+  });
+
+  applyStaticTranslations();
+
+  // ---------- shared helpers ----------
   const pct = (score) => Math.round(score * 100);
 
   const escapeHtml = (value) =>
@@ -546,11 +878,11 @@
     return `
       <div class="review" data-subject-type="${escapeHtml(subjectType)}" data-subject-reference="${escapeHtml(subjectReference)}">
         <div class="review-btns">
-          <button type="button" class="review-btn" data-decision="approved">Approve</button>
-          <button type="button" class="review-btn" data-decision="rejected">Reject</button>
-          <button type="button" class="review-btn" data-decision="flagged">Flag</button>
+          <button type="button" class="review-btn" data-decision="approved">${escapeHtml(t("review.approve"))}</button>
+          <button type="button" class="review-btn" data-decision="rejected">${escapeHtml(t("review.reject"))}</button>
+          <button type="button" class="review-btn" data-decision="flagged">${escapeHtml(t("review.flag"))}</button>
         </div>
-        <input type="text" class="review-comment" placeholder="Optional comment">
+        <input type="text" class="review-comment" placeholder="${escapeHtml(t("review.commentPlaceholder"))}">
         <div class="review-status"></div>
       </div>
     `;
@@ -564,25 +896,25 @@
   async function submit({ url, input, button, box, busyLabel, idleLabel, render }) {
     const value = input.value.trim();
     if (!value) {
-      setState(box, "error", "Please enter a value first.");
+      setState(box, "error", t("common.enterValue"));
       input.focus();
       return;
     }
 
     button.disabled = true;
     button.textContent = busyLabel;
-    setState(box, "", "Working…");
+    setState(box, "", t("common.working"));
 
     try {
       const response = await fetch(url(value));
       const payload = await response.json();
       if (!response.ok) {
-        setState(box, "error", payload.detail || `Request failed (HTTP ${response.status}).`);
+        setState(box, "error", payload.detail || t("common.requestFailed")(response.status));
         return;
       }
       render(payload);
     } catch (err) {
-      setState(box, "error", "Could not reach the API. Check your connection and try again.");
+      setState(box, "error", t("common.couldNotReach"));
     } finally {
       button.disabled = false;
       button.textContent = idleLabel;
@@ -599,18 +931,18 @@
       input: document.getElementById("search-input"),
       button: document.getElementById("search-btn"),
       box: searchBox,
-      busyLabel: "Searching…",
-      idleLabel: "Search",
+      busyLabel: t("search.busy"),
+      idleLabel: t("search.button"),
       render: (rows) => {
         if (!rows.length) {
-          setState(searchBox, "", "No codes matched that description.");
+          setState(searchBox, "", t("search.noMatches"));
           return;
         }
         searchBox.innerHTML = rows.map((row) => `
           <article class="card">
             <div class="card-top">
               <span class="card-title mono">${escapeHtml(row.code)}</span>
-              <span class="score">${pct(row.score)}% match</span>
+              <span class="score">${pct(row.score)}% ${escapeHtml(t("search.matchSuffix"))}</span>
             </div>
             <p class="card-desc">${escapeHtml(row.description)}</p>
             <span class="chip">${escapeHtml(row.category)}</span>
@@ -631,24 +963,22 @@
       input: document.getElementById("screen-input"),
       button: document.getElementById("screen-btn"),
       box: screenBox,
-      busyLabel: "Screening…",
-      idleLabel: "Screen",
+      busyLabel: t("screen.busy"),
+      idleLabel: t("screen.button"),
       render: (rows) => {
         if (!rows.length) {
-          setState(screenBox, "clean", "✓ No matches found — screened clean against the list.");
+          setState(screenBox, "clean", t("screen.clean"));
           return;
         }
-        const heading = `<div class="state warn">⚠ ${rows.length} potential match${
-          rows.length === 1 ? "" : "es"
-        } — review required</div>`;
+        const heading = `<div class="state warn">${t("screen.warn")(rows.length)}</div>`;
         screenBox.innerHTML = heading + rows.map((row) => `
           <article class="card hit">
             <div class="card-top">
               <span class="card-title">${escapeHtml(row.name)}</span>
-              <span class="score">${pct(row.score)}% match</span>
+              <span class="score">${pct(row.score)}% ${escapeHtml(t("search.matchSuffix"))}</span>
             </div>
             <p class="meta">
-              ${escapeHtml(row.list_source)} · listed ${escapeHtml(row.date_added)}
+              ${escapeHtml(row.list_source)} · ${escapeHtml(t("screen.listed"))} ${escapeHtml(row.date_added)}
             </p>
             <span class="chip">${escapeHtml(row.country)}</span>
             <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
@@ -669,25 +999,25 @@
       input: document.getElementById("classify-input"),
       button: document.getElementById("classify-btn"),
       box: classifyBox,
-      busyLabel: "Classifying…",
-      idleLabel: "Classify",
+      busyLabel: t("classify.busy"),
+      idleLabel: t("classify.button"),
       render: (rows) => {
         if (!rows.length) {
-          setState(classifyBox, "", "No code shares a term with that description — try different wording.");
+          setState(classifyBox, "", t("classify.noMatches"));
           return;
         }
         classifyBox.innerHTML = rows.map((row) => `
           <article class="card cls">
             <div class="card-top">
               <span class="card-title mono">${escapeHtml(row.code)}</span>
-              <span class="score">${pct(row.score)}% confidence</span>
+              <span class="score">${pct(row.score)}% ${escapeHtml(t("classify.confidenceSuffix"))}</span>
             </div>
             <p class="card-desc">${escapeHtml(row.description)}</p>
             <span class="chip">${escapeHtml(row.category)}</span>
             <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
             <div class="terms">
-              <span class="label">matched on</span>
-              ${row.matched_terms.map((t) => `<span class="chip term">${escapeHtml(t)}</span>`).join("")}
+              <span class="label">${escapeHtml(t("classify.matchedOn"))}</span>
+              ${row.matched_terms.map((term) => `<span class="chip term">${escapeHtml(term)}</span>`).join("")}
             </div>
             ${reviewControlsHtml("classification", row.subject_reference)}
           </article>
@@ -710,11 +1040,11 @@
 
     // Three fields feed one request, so validate them here rather than in submit().
     if (!dutyCode.value.trim() || !dutyOrigin.value.trim() || !dutyValue.value.trim()) {
-      setState(dutyBox, "error", "Enter an HS code, a country of origin and a customs value.");
+      setState(dutyBox, "error", t("duty.validationRequired"));
       return;
     }
     if (isNaN(Number(dutyValue.value.trim()))) {
-      setState(dutyBox, "error", "Customs value must be a number.");
+      setState(dutyBox, "error", t("duty.valueMustBeNumber"));
       return;
     }
 
@@ -726,22 +1056,23 @@
       input: dutyCode,
       button: document.getElementById("duty-btn"),
       box: dutyBox,
-      busyLabel: "Calculating…",
-      idleLabel: "Calculate",
+      busyLabel: t("duty.busy"),
+      idleLabel: t("duty.button"),
       render: (r) => {
         const agreement = r.trade_agreement
           ? `<span class="chip">${escapeHtml(r.trade_agreement)}</span>`
           : "";
+        const rateType = t("duty.rateType")[r.rate_type] || r.rate_type;
         dutyBox.innerHTML = `
           <article class="card calc">
             <div class="card-top">
               <span class="amount">${money(r.duty_amount)}</span>
-              <span class="score">${r.rate_percent}% · ${escapeHtml(r.rate_type)}</span>
+              <span class="score">${r.rate_percent}% · ${escapeHtml(rateType)}</span>
             </div>
             <div class="breakdown">
-              <span>Customs value <b>${money(r.customs_value)}</b></span>
-              <span>Duty <b>${money(r.duty_amount)}</b></span>
-              <span>Total payable <b>${money(r.total_payable)}</b></span>
+              <span>${escapeHtml(t("duty.customsValue"))} <b>${money(r.customs_value)}</b></span>
+              <span>${escapeHtml(t("duty.dutyLabel"))} <b>${money(r.duty_amount)}</b></span>
+              <span>${escapeHtml(t("duty.totalPayable"))} <b>${money(r.total_payable)}</b></span>
             </div>
             <p class="card-desc">${escapeHtml(r.explanation)}</p>
             <span class="chip">${escapeHtml(r.hs_code)}</span>
@@ -762,11 +1093,11 @@
       const response = await fetch("/review/history?limit=20");
       const rows = await response.json();
       if (!response.ok) {
-        setState(reviewHistoryBox, "error", rows.detail || "Could not load review history.");
+        setState(reviewHistoryBox, "error", rows.detail || t("reviewHistory.couldNotLoad"));
         return;
       }
       if (!rows.length) {
-        setState(reviewHistoryBox, "", "No review decisions recorded yet.");
+        setState(reviewHistoryBox, "", t("reviewHistory.empty"));
         return;
       }
       reviewHistoryBox.innerHTML = rows.map((r) => `
@@ -781,7 +1112,7 @@
         </article>
       `).join("");
     } catch (err) {
-      setState(reviewHistoryBox, "error", "Could not reach the API.");
+      setState(reviewHistoryBox, "error", t("common.couldNotReach"));
     }
   }
 
@@ -794,7 +1125,7 @@
     const reviewerInput = document.getElementById("reviewer-name");
     const reviewerName = reviewerInput.value.trim();
     if (!reviewerName) {
-      statusEl.textContent = "Enter your name in the Reviewer field first.";
+      statusEl.textContent = t("review.enterName");
       statusEl.className = "review-status error-text";
       reviewerInput.focus();
       return;
@@ -802,7 +1133,7 @@
 
     const commentInput = wrap.querySelector(".review-comment");
     btn.disabled = true;
-    statusEl.textContent = "Submitting…";
+    statusEl.textContent = t("review.submitting");
     statusEl.className = "review-status";
 
     try {
@@ -819,15 +1150,15 @@
       });
       const payload = await response.json();
       if (!response.ok) {
-        statusEl.textContent = payload.detail || "Could not record review.";
+        statusEl.textContent = payload.detail || t("review.couldNotRecord");
         statusEl.className = "review-status error-text";
         return;
       }
-      statusEl.textContent = `Recorded: ${payload.decision}`;
+      statusEl.textContent = t("review.recorded")(payload.decision);
       statusEl.className = "review-status ok-text";
       loadReviewHistory();
     } catch (err) {
-      statusEl.textContent = "Could not reach the API.";
+      statusEl.textContent = t("common.couldNotReach");
       statusEl.className = "review-status error-text";
     } finally {
       btn.disabled = false;
