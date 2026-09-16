@@ -4,10 +4,10 @@ import logging
 import sqlite3
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from src.customsiq.exceptions import HSCodeNotFoundError
-from src.customsiq.models import HSCode, SanctionedEntity, TariffRate
+from src.customsiq.models import HSCode, ReviewDecision, SanctionedEntity, TariffRate
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,16 @@ CREATE TABLE IF NOT EXISTS tariff_rates (
     trade_agreement TEXT,
     valid_from TEXT NOT NULL,
     PRIMARY KEY (hs_code, country_of_origin, valid_from)
+);
+
+CREATE TABLE IF NOT EXISTS review_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_type TEXT NOT NULL,
+    subject_reference TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    reviewer_name TEXT NOT NULL,
+    comment TEXT,
+    reviewed_at TEXT NOT NULL
 );
 """
 
@@ -304,3 +314,72 @@ def get_by_code(conn: sqlite3.Connection, code: str) -> HSCode:
     if row is None:
         raise HSCodeNotFoundError(f"No HS code found for '{code}'")
     return HSCode(*row)
+
+
+def insert_review_decision(
+    conn: sqlite3.Connection,
+    subject_type: str,
+    subject_reference: str,
+    decision: str,
+    reviewer_name: str,
+    comment: Optional[str],
+    reviewed_at: str,
+) -> int:
+    """Append one review decision. Audit rows are never updated or deleted.
+
+    Args:
+        conn: An open database connection.
+        subject_type: "classification" | "screening" | "duty".
+        subject_reference: Deterministic hash identifying the reviewed input.
+        decision: "approved" | "rejected" | "flagged".
+        reviewer_name: Free text identifying who reviewed it.
+        comment: Optional free-text note.
+        reviewed_at: ISO 8601 timestamp.
+
+    Returns:
+        The autoincrement id of the new row.
+    """
+    cursor = conn.execute(
+        "INSERT INTO review_decisions "
+        "(subject_type, subject_reference, decision, reviewer_name, comment, reviewed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (subject_type, subject_reference, decision, reviewer_name, comment, reviewed_at),
+    )
+    conn.commit()
+    assert cursor.lastrowid is not None  # always set after a successful INSERT
+    return cursor.lastrowid
+
+
+def fetch_review_decisions(
+    conn: sqlite3.Connection,
+    subject_type: Optional[str] = None,
+    subject_reference: Optional[str] = None,
+    limit: int = 50,
+) -> list[ReviewDecision]:
+    """Return review decisions, most recently reviewed first.
+
+    Args:
+        conn: An open database connection.
+        subject_type: Restrict to this subject type, if given.
+        subject_reference: Restrict to this subject reference, if given.
+        limit: Maximum number of rows to return.
+
+    Returns:
+        Matching ReviewDecision records, newest first.
+    """
+    clauses = []
+    params: list = []
+    if subject_type is not None:
+        clauses.append("subject_type = ?")
+        params.append(subject_type)
+    if subject_reference is not None:
+        clauses.append("subject_reference = ?")
+        params.append(subject_reference)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+    rows = conn.execute(
+        "SELECT id, subject_type, subject_reference, decision, reviewer_name, comment, reviewed_at "
+        f"FROM review_decisions {where} ORDER BY reviewed_at DESC, id DESC LIMIT ?",
+        params,
+    ).fetchall()
+    return [ReviewDecision(*row) for row in rows]

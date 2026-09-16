@@ -84,3 +84,29 @@ def test_run_rejects_a_malformed_duty_command(monkeypatch: pytest.MonkeyPatch, c
     out = capsys.readouterr().out
     assert "Usage: duty" in out
     assert "not a number" in out
+
+
+def test_run_records_and_lists_a_review(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """'review ...' records a decision and 'review-history' lists it back."""
+    monkeypatch.setattr(
+        "builtins.input",
+        _fake_input(["review duty someref approved alice looks fine", "review-history", "quit"]),
+    )
+    run(":memory:")
+    out = capsys.readouterr().out
+    assert "Recorded: approved" in out
+    assert "duty:someref  approved  by alice  (looks fine)" in out
+
+
+def test_run_rejects_a_malformed_review_command(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Too few arguments explain the expected shape instead of crashing."""
+    monkeypatch.setattr("builtins.input", _fake_input(["review duty someref", "quit"]))
+    run(":memory:")
+    assert "Usage: review" in capsys.readouterr().out
+
+
+def test_run_reports_no_review_history(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """An empty audit trail says so rather than printing nothing."""
+    monkeypatch.setattr("builtins.input", _fake_input(["review-history", "quit"]))
+    run(":memory:")
+    assert "No review decisions recorded yet." in capsys.readouterr().out

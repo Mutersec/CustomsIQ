@@ -67,6 +67,10 @@
   .header-links {
     margin-left: auto;
     font-size: 13.5px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
   }
 
   .header-links a {
@@ -316,6 +320,67 @@
 
   footer strong { color: #fcd9a0; }
   footer a { color: var(--text-dim); }
+
+  /* ---------- reviewer field ---------- */
+  .reviewer-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+
+  .reviewer-field input {
+    width: 140px;
+    padding: 5px 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-size: 12.5px;
+    font-family: inherit;
+  }
+
+  /* ---------- review controls ---------- */
+  .review {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+  }
+
+  .review-btns { display: flex; gap: 6px; margin-bottom: 6px; }
+
+  .review-btns button {
+    padding: 4px 10px;
+    font-size: 12.5px;
+    font-weight: 600;
+    border-radius: 3px;
+    cursor: pointer;
+    background: transparent;
+    font-family: inherit;
+  }
+
+  .review-btns button[data-decision="approved"] { border: 1px solid var(--green); color: var(--green); }
+  .review-btns button[data-decision="rejected"] { border: 1px solid var(--red); color: var(--red); }
+  .review-btns button[data-decision="flagged"] { border: 1px solid var(--amber); color: var(--amber); }
+  .review-btns button:disabled { opacity: 0.55; cursor: default; }
+
+  .review-comment {
+    display: block;
+    width: 100%;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-size: 12.5px;
+    font-family: inherit;
+  }
+
+  .review-status { font-size: 12px; color: var(--text-dim); min-height: 14px; }
+  .review-status.error-text { color: var(--red); }
+  .review-status.ok-text { color: var(--green); }
 </style>
 </head>
 <body>
@@ -324,7 +389,13 @@
   <div class="header-inner">
     <h1>Customs<span class="accent">IQ</span></h1>
     <span class="tagline">EU trade compliance toolkit — search, classification, screening &amp; duty</span>
-    <span class="header-links"><a href="/docs">API reference →</a></span>
+    <span class="header-links">
+      <span class="reviewer-field">
+        <label for="reviewer-name">Reviewer</label>
+        <input type="text" id="reviewer-name" placeholder="your name" autocomplete="off">
+      </span>
+      <a href="/docs">API reference →</a>
+    </span>
   </div>
 </header>
 
@@ -424,6 +495,21 @@
       <div class="results" id="duty-results" aria-live="polite"></div>
     </div>
   </section>
+
+  <!-- ============ Review history ============ -->
+  <section class="panel wide">
+    <div class="panel-head">
+      <span class="rule"></span>
+      <h2>Review History</h2>
+    </div>
+    <div class="panel-body">
+      <p class="hint">
+        Sign-offs recorded against classification, screening and duty results — append-only,
+        most recent first.
+      </p>
+      <div class="results" id="review-history-results" aria-live="polite"></div>
+    </div>
+  </section>
 </main>
 
 <footer>
@@ -448,6 +534,26 @@
 
   function setState(box, cls, message) {
     box.innerHTML = `<div class="state ${cls}">${escapeHtml(message)}</div>`;
+  }
+
+  /**
+   * Markup for the Approve/Reject/Flag controls on one result card.
+   * subjectReference is always the value the backend computed and returned
+   * with that result — never re-derived here — so review actions always
+   * link back to the exact same audit subject.
+   */
+  function reviewControlsHtml(subjectType, subjectReference) {
+    return `
+      <div class="review" data-subject-type="${escapeHtml(subjectType)}" data-subject-reference="${escapeHtml(subjectReference)}">
+        <div class="review-btns">
+          <button type="button" class="review-btn" data-decision="approved">Approve</button>
+          <button type="button" class="review-btn" data-decision="rejected">Reject</button>
+          <button type="button" class="review-btn" data-decision="flagged">Flag</button>
+        </div>
+        <input type="text" class="review-comment" placeholder="Optional comment">
+        <div class="review-status"></div>
+      </div>
+    `;
   }
 
   /**
@@ -546,6 +652,7 @@
             </p>
             <span class="chip">${escapeHtml(row.country)}</span>
             <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
+            ${reviewControlsHtml("screening", row.subject_reference)}
           </article>
         `).join("");
       },
@@ -582,6 +689,7 @@
               <span class="label">matched on</span>
               ${row.matched_terms.map((t) => `<span class="chip term">${escapeHtml(t)}</span>`).join("")}
             </div>
+            ${reviewControlsHtml("classification", row.subject_reference)}
           </article>
         `).join("");
       },
@@ -639,11 +747,94 @@
             <span class="chip">${escapeHtml(r.hs_code)}</span>
             <span class="chip">${escapeHtml(r.country_of_origin)}</span>
             ${agreement}
+            ${reviewControlsHtml("duty", r.subject_reference)}
           </article>
         `;
       },
     });
   });
+
+  // ---------- Review submission + history ----------
+  const reviewHistoryBox = document.getElementById("review-history-results");
+
+  async function loadReviewHistory() {
+    try {
+      const response = await fetch("/review/history?limit=20");
+      const rows = await response.json();
+      if (!response.ok) {
+        setState(reviewHistoryBox, "error", rows.detail || "Could not load review history.");
+        return;
+      }
+      if (!rows.length) {
+        setState(reviewHistoryBox, "", "No review decisions recorded yet.");
+        return;
+      }
+      reviewHistoryBox.innerHTML = rows.map((r) => `
+        <article class="card">
+          <div class="card-top">
+            <span class="card-title">${escapeHtml(r.decision)}</span>
+            <span class="score">${escapeHtml(r.reviewed_at)}</span>
+          </div>
+          <p class="meta">${escapeHtml(r.subject_type)} · ${escapeHtml(r.subject_reference)}</p>
+          <span class="chip">${escapeHtml(r.reviewer_name)}</span>
+          ${r.comment ? `<p class="card-desc">${escapeHtml(r.comment)}</p>` : ""}
+        </article>
+      `).join("");
+    } catch (err) {
+      setState(reviewHistoryBox, "error", "Could not reach the API.");
+    }
+  }
+
+  document.addEventListener("click", async (event) => {
+    const btn = event.target.closest(".review-btn");
+    if (!btn) return;
+
+    const wrap = btn.closest(".review");
+    const statusEl = wrap.querySelector(".review-status");
+    const reviewerInput = document.getElementById("reviewer-name");
+    const reviewerName = reviewerInput.value.trim();
+    if (!reviewerName) {
+      statusEl.textContent = "Enter your name in the Reviewer field first.";
+      statusEl.className = "review-status error-text";
+      reviewerInput.focus();
+      return;
+    }
+
+    const commentInput = wrap.querySelector(".review-comment");
+    btn.disabled = true;
+    statusEl.textContent = "Submitting…";
+    statusEl.className = "review-status";
+
+    try {
+      const response = await fetch("/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject_type: wrap.dataset.subjectType,
+          subject_reference: wrap.dataset.subjectReference,
+          decision: btn.dataset.decision,
+          reviewer_name: reviewerName,
+          comment: commentInput.value.trim() || null,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        statusEl.textContent = payload.detail || "Could not record review.";
+        statusEl.className = "review-status error-text";
+        return;
+      }
+      statusEl.textContent = `Recorded: ${payload.decision}`;
+      statusEl.className = "review-status ok-text";
+      loadReviewHistory();
+    } catch (err) {
+      statusEl.textContent = "Could not reach the API.";
+      statusEl.className = "review-status error-text";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  loadReviewHistory();
 </script>
 
 </body>

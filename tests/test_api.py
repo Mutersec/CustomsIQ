@@ -1,5 +1,7 @@
 """Tests for the FastAPI endpoints."""
 
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -145,3 +147,85 @@ def test_duty_endpoint_rejects_a_negative_value() -> None:
         params={"hs_code": "6109100000", "country_of_origin": "CN", "customs_value": -5},
     )
     assert response.status_code == 400
+
+
+def test_classify_endpoint_includes_subject_reference() -> None:
+    """Each classify result carries the deterministic audit reference."""
+    response = client.get("/classify", params={"description": "knitted cotton shirt"})
+    assert response.status_code == 200
+    assert response.json()[0]["subject_reference"]
+
+
+def test_screen_endpoint_includes_subject_reference() -> None:
+    """Each screen result carries the deterministic audit reference."""
+    response = client.get("/screen", params={"name": "Northwind Maritime Holdings Ltd"})
+    assert response.status_code == 200
+    assert response.json()[0]["subject_reference"]
+
+
+def test_duty_endpoint_includes_subject_reference() -> None:
+    """The duty result carries the deterministic audit reference."""
+    response = client.get(
+        "/calculate-duty",
+        params={"hs_code": "6109100000", "country_of_origin": "CN", "customs_value": 1000},
+    )
+    assert response.status_code == 200
+    assert response.json()["subject_reference"]
+
+
+def test_review_endpoint_records_a_decision() -> None:
+    """POST /review stores a decision and returns it."""
+    subject_reference = f"test-ref-{uuid.uuid4()}"
+    response = client.post(
+        "/review",
+        json={
+            "subject_type": "duty",
+            "subject_reference": subject_reference,
+            "decision": "approved",
+            "reviewer_name": "alice",
+            "comment": "looks fine",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision"] == "approved"
+    assert body["reviewer_name"] == "alice"
+
+    history = client.get("/review/history", params={"subject_reference": subject_reference})
+    assert history.status_code == 200
+    assert len(history.json()) == 1
+
+
+def test_review_endpoint_rejects_invalid_decision() -> None:
+    """An unknown decision value surfaces as HTTP 400."""
+    response = client.post(
+        "/review",
+        json={
+            "subject_type": "duty",
+            "subject_reference": f"test-ref-{uuid.uuid4()}",
+            "decision": "maybe",
+            "reviewer_name": "alice",
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_review_history_filters_by_subject_type() -> None:
+    """GET /review/history only returns decisions of the requested type."""
+    subject_reference = f"test-ref-{uuid.uuid4()}"
+    client.post(
+        "/review",
+        json={
+            "subject_type": "screening",
+            "subject_reference": subject_reference,
+            "decision": "flagged",
+            "reviewer_name": "bob",
+        },
+    )
+    response = client.get(
+        "/review/history",
+        params={"subject_type": "screening", "subject_reference": subject_reference},
+    )
+    assert response.status_code == 200
+    assert all(row["subject_type"] == "screening" for row in response.json())
+    assert len(response.json()) == 1

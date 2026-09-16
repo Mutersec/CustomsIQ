@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 
+from src.customsiq import review
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.database import get_connection, seed
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 SCREEN_COMMAND = "screen "
 DUTY_COMMAND = "duty "
 CLASSIFY_COMMAND = "classify "
+REVIEW_HISTORY_COMMAND = "review-history"
+REVIEW_COMMAND = "review "
 
 
 def _run_search(conn: sqlite3.Connection, query: str) -> None:
@@ -104,6 +107,51 @@ def _run_duty(conn: sqlite3.Connection, arguments: str) -> None:
     )
 
 
+def _run_review(conn: sqlite3.Connection, arguments: str) -> None:
+    """Record a review decision from a
+    'review <subject_type> <subject_reference> <decision> <reviewer_name> [comment...]' command.
+    """
+    parts = arguments.split()
+    if len(parts) < 4:
+        logger.warning(
+            "Usage: review <subject_type> <subject_reference> <decision> <reviewer_name> "
+            "[comment...]"
+        )
+        return
+    subject_type, subject_reference, decision, reviewer_name, *rest = parts
+    comment = " ".join(rest) or None
+    result = review.submit_review(
+        conn, subject_type, subject_reference, decision, reviewer_name, comment
+    )
+    logger.info(
+        "Recorded: %s %s on %s:%s by %s at %s",
+        result.decision,
+        result.id,
+        result.subject_type,
+        result.subject_reference,
+        result.reviewer_name,
+        result.reviewed_at,
+    )
+
+
+def _run_review_history(conn: sqlite3.Connection) -> None:
+    """List the most recent review decisions."""
+    results = review.get_review_history(conn, limit=20)
+    if not results:
+        logger.info("No review decisions recorded yet.")
+        return
+    for r in results:
+        logger.info(
+            "%s  %s:%s  %s  by %s%s",
+            r.reviewed_at,
+            r.subject_type,
+            r.subject_reference,
+            r.decision,
+            r.reviewer_name,
+            f"  ({r.comment})" if r.comment else "",
+        )
+
+
 def run(db_path: str = settings.database_path) -> None:
     """Start an interactive loop offering search, screening and duty calculation.
 
@@ -117,7 +165,9 @@ def run(db_path: str = settings.database_path) -> None:
     logger.info("Enter a product description to search CN codes,")
     logger.info("'classify <description>' for ranked suggestions with reasoning,")
     logger.info("'screen <name>' to run a sanctions check,")
-    logger.info("or 'duty <hs_code> <country> <value>' to calculate customs duty.")
+    logger.info("'duty <hs_code> <country> <value>' to calculate customs duty,")
+    logger.info("'review <subject_type> <subject_reference> <decision> <reviewer> [comment]' to")
+    logger.info("record a sign-off, or 'review-history' to list recent decisions.")
     while True:
         entry = input("\n> ").strip()
         if entry.lower() in {"quit", "exit"}:
@@ -131,6 +181,10 @@ def run(db_path: str = settings.database_path) -> None:
                 _run_classification(conn, entry[len(CLASSIFY_COMMAND) :].strip())
             elif entry.lower().startswith(DUTY_COMMAND):
                 _run_duty(conn, entry[len(DUTY_COMMAND) :].strip())
+            elif entry.lower() == REVIEW_HISTORY_COMMAND:
+                _run_review_history(conn)
+            elif entry.lower().startswith(REVIEW_COMMAND):
+                _run_review(conn, entry[len(REVIEW_COMMAND) :].strip())
             else:
                 _run_search(conn, entry)
         except (InvalidQueryError, RateNotFoundError) as exc:

@@ -2,11 +2,14 @@
 
 import sqlite3
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+from src.customsiq import review
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.database import get_connection, seed
@@ -90,6 +93,7 @@ def classify_description(
             "category": r.hs_code.category,
             "score": r.score,
             "matched_terms": r.matched_terms,
+            "subject_reference": review.reference_for_classification(description),
         }
         for r in results
     ]
@@ -115,6 +119,7 @@ def screen_name(
             "list_source": m.entity.list_source,
             "date_added": m.entity.date_added,
             "score": m.score,
+            "subject_reference": review.reference_for_screening(name),
         }
         for m in matches
     ]
@@ -147,4 +152,66 @@ def calculate_duty_for_consignment(
         "duty_amount": float(result.duty_amount),
         "total_payable": float(result.total_payable),
         "explanation": result.explanation,
+        "subject_reference": review.reference_for_duty(hs_code, country_of_origin, customs_value),
     }
+
+
+class ReviewSubmission(BaseModel):
+    """Body of a POST /review request."""
+
+    subject_type: str
+    subject_reference: str
+    decision: str
+    reviewer_name: str
+    comment: Optional[str] = None
+
+
+@app.post("/review")
+def submit_review(body: ReviewSubmission) -> dict:
+    """Record a human reviewer's decision on a past classification, screening or duty result.
+
+    Reuses `src.customsiq.review.submit_review`, the same function the CLI calls.
+    Append-only: this never updates an existing decision, only adds a new one.
+    """
+    try:
+        result = review.submit_review(
+            _conn,
+            body.subject_type,
+            body.subject_reference,
+            body.decision,
+            body.reviewer_name,
+            body.comment,
+        )
+    except InvalidQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "id": result.id,
+        "subject_type": result.subject_type,
+        "subject_reference": result.subject_reference,
+        "decision": result.decision,
+        "reviewer_name": result.reviewer_name,
+        "comment": result.comment,
+        "reviewed_at": result.reviewed_at,
+    }
+
+
+@app.get("/review/history")
+def review_history(
+    subject_type: Optional[str] = Query(None),
+    subject_reference: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict]:
+    """Return recorded review decisions, most recently reviewed first."""
+    results = review.get_review_history(_conn, subject_type, subject_reference, limit)
+    return [
+        {
+            "id": r.id,
+            "subject_type": r.subject_type,
+            "subject_reference": r.subject_reference,
+            "decision": r.decision,
+            "reviewer_name": r.reviewer_name,
+            "comment": r.comment,
+            "reviewed_at": r.reviewed_at,
+        }
+        for r in results
+    ]

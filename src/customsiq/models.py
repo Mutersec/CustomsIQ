@@ -37,6 +37,29 @@ class SanctionedEntity:
 
 
 @dataclass(frozen=True)
+class ReviewDecision:
+    """A human reviewer's sign-off on one automated decision (audit trail).
+
+    Attributes:
+        id: Autoincrement row id (audit rows have no natural key).
+        subject_type: "classification" | "screening" | "duty".
+        subject_reference: Deterministic hash identifying the reviewed input.
+        decision: "approved" | "rejected" | "flagged".
+        reviewer_name: Free text — stand-in until authenticated users exist.
+        comment: Optional free-text note.
+        reviewed_at: ISO 8601 timestamp the decision was recorded.
+    """
+
+    id: int
+    subject_type: str
+    subject_reference: str
+    decision: str
+    reviewer_name: str
+    comment: Optional[str]
+    reviewed_at: str
+
+
+@dataclass(frozen=True)
 class TariffRate:
     """A duty rate applicable to one HS code for one origin.
 

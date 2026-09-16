@@ -75,6 +75,7 @@ entscheidet.
 | 🧠 | **Code-Einreihung** | TF-IDF-Vorschläge mit Konfidenzwert und den ausschlaggebenden Begriffen |
 | 🚫 | **Sanktionsprüfung** | Name → Treffer auf Verbotslisten, tolerant gegenüber Wortstellung und Teilnamen |
 | 💶 | **Zollberechnung** | Code + Ursprung + Wert → fälliger Zoll, mit Satz und Begründung |
+| 📋 | **Prüfprotokoll (Vier-Augen-Prinzip)** | Klassifizierung, Prüfung oder Zollergebnis freigeben/ablehnen/markieren — nur Anhängen |
 | 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
 | 📥 | **Import echter Daten** | Lädt die offizielle EU-KN-Nomenklatur idempotent aus einer lokalen Datei |
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
@@ -96,15 +97,16 @@ Scoring- und Validierungslogik existiert an genau einer Stelle und wird nie dupl
 flowchart LR
     subgraph Schnittstellen
         CLI["💻 main.py<br/>Interaktive CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review"]
     end
 
     SEARCH["🔍 search.py<br/>KN-Codes ranken"]
     CLS["🧠 cn_classifier.py<br/>TF-IDF + Begründung"]
     SCREEN["🚫 embargo_screener.py<br/>Sanktionstreffer ranken"]
     DUTY["💶 tariff_calculator.py<br/>Satzwahl + Berechnung"]
+    REVIEW["📋 review.py<br/>Entscheidungen speichern + abrufen"]
     MATCH["🧩 matching.py<br/>Validierung + Ähnlichkeit"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities · tariff_rates")]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
@@ -112,10 +114,12 @@ flowchart LR
     CLI --> CLS
     CLI --> SCREEN
     CLI --> DUTY
+    CLI --> REVIEW
     API --> SEARCH
     API --> CLS
     API --> SCREEN
     API --> DUTY
+    API --> REVIEW
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -123,9 +127,11 @@ flowchart LR
     CLS --> DB
     SCREEN --> DB
     DUTY --> DB
+    REVIEW --> DB
     DUTY -. löst aus .-> EXC
     MATCH -. löst aus .-> EXC
     DB -. löst aus .-> EXC
+    REVIEW -. löst aus .-> EXC
     CFG --> CLI
     CFG --> API
     CFG --> SCREEN
@@ -135,18 +141,19 @@ flowchart LR
 
 | Modul | Zuständigkeit |
 |---|---|
-| `models.py` | `HSCode`, `SanctionedEntity` und `TariffRate` — die unveränderlichen Datensätze |
+| `models.py` | `HSCode`, `SanctionedEntity`, `TariffRate` und `ReviewDecision` — die unveränderlichen Datensätze |
 | `database.py` | SQLite-Schema, Verbindung, Beispieldaten, `fetch_all*()`, `get_by_code()` |
 | `matching.py` | Eingabevalidierung + Ähnlichkeitsbewertung (**von beiden Funktionen genutzt**) |
 | `search.py` | Rankt KN-Codes nach Beschreibungsähnlichkeit |
 | `cn_classifier.py` | Schlägt Codes über TF-IDF-Gewichtung vor und nennt die passenden Begriffe |
 | `embargo_screener.py` | Rankt Sanktionslistentreffer nach Namensähnlichkeit |
 | `tariff_calculator.py` | Wählt den anwendbaren Zollsatz und berechnet den fälligen Betrag |
+| `review.py` | Speichert und listet menschliche Freigaben zu vergangenen Entscheidungen (Prüfprotokoll) |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; liest `CUSTOMSIQ_*`-Umgebungsvariablen und `.env` |
 | `logging_config.py` | Gemeinsames Logging — schlichtes Format nach stdout, nirgends ein `print()` |
 | `main.py` | Einstiegspunkt der interaktiven CLI (Suche + `screen <Name>`) |
-| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/classify`, `/screen`, `/calculate-duty`, `/health` |
+| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/health` |
 | `static/index.html` | Das gesamte Frontend — Inline-CSS, reines `fetch()`, keine Abhängigkeiten |
 
 ### Datenmodell
@@ -173,6 +180,16 @@ CREATE TABLE tariff_rates (
     trade_agreement   TEXT,           -- NULL bei Regelsätzen
     valid_from        TEXT NOT NULL,  -- ISO-8601-Datum des Inkrafttretens
     PRIMARY KEY (hs_code, country_of_origin, valid_from)
+);
+
+CREATE TABLE review_decisions (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,  -- Prüfdatensätze haben keinen natürlichen Schlüssel
+    subject_type       TEXT NOT NULL,   -- "classification" | "screening" | "duty"
+    subject_reference  TEXT NOT NULL,   -- sha256(subject_type + normalisierte Eingabe)
+    decision           TEXT NOT NULL,   -- "approved" | "rejected" | "flagged"
+    reviewer_name      TEXT NOT NULL,   -- Freitext — Platzhalter bis es authentifizierte Nutzer gibt
+    comment            TEXT,            -- optionale Notiz
+    reviewed_at        TEXT NOT NULL    -- ISO-8601-Zeitstempel
 );
 ```
 
@@ -215,6 +232,29 @@ Punkte zutrifft:
 | **Logging statt `print()`** | Derselbe Ausgabeweg für CLI und API; Level über die Konfiguration steuerbar | — |
 | **Validierung in `matching.py`** | Suche, Prüfung, CLI und API erben sie; ein neuer Aufrufer kann sie nicht versehentlich umgehen | — |
 | **Kein `EmbargoScreeningError`** | Die Eingabevalidierung der Prüfung ist identisch mit der der Suche, daher wird `InvalidQueryError` wiederverwendet statt eine Klasse zu duplizieren | Ergänzen, sobald die Prüfung einen wirklich eigenen Fehlerfall bekommt |
+| **`review_decisions` nutzt `INTEGER PRIMARY KEY AUTOINCREMENT`**, anders als die anderen drei Tabellen | Prüfdatensätze sind nicht von Natur aus eindeutig — dieselbe `subject_reference` kann im Lauf der Zeit mehrere Entscheidungen erhalten | — |
+| **`review_decisions` ist nur anhängend (append-only)** | Modelliert das Vier-Augen-/Freigabeprinzip, wie es in Compliance-Tools wie SAP GTS üblich ist: eine korrigierte Entscheidung ist eine neue Zeile, keine Bearbeitung, sodass der Verlauf nie verloren geht. `reviewer_name` ist in dieser Demo Freitext; ein Produktivsystem würde dies an authentifizierte Nutzer binden (siehe Roadmap) | Authentifizierte Nutzer + RBAC ergänzen |
+
+### 🔗 Deterministische `subject_reference`
+
+Jedes prüfbare Ergebnis trägt eine `subject_reference` — `sha256(f"{subject_type}:{normalisierte_eingabe}")`
+— sodass dieselbe Anfrage zweimal gesendet immer denselben Gegenstand prüft; wiederholte
+Einreichungen hängen sich an denselben gemeinsamen Prüfverlauf an, statt einen neuen zu eröffnen.
+Das `subject_type`-Präfix verhindert, dass die drei Funktionen je auf demselben Hash kollidieren.
+
+Die Normalisierung ist bei Textfeldern bewusst groß-/kleinschreibungsunabhängig (die Entscheidung
+ändert sich dadurch nicht), bei Geldbeträgen dagegen exakt (ein anderer Zollwert **ist** eine
+andere Entscheidung):
+
+| Gegenstandstyp | Eingabe | `subject_reference` | Dieselbe Eingabe erneut? |
+|---|---|---|---|
+| classification | `"knitted cotton shirt"` | `ca8b1b95…fc3407` | Identisch |
+| classification | `"KNITTED COTTON SHIRT"` | `ca8b1b95…fc3407` | **Wie oben** — Groß-/Kleinschreibung wird vor dem Hashen vereinheitlicht |
+| screening | `"Northwind Maritime"` | `fa9ec5ed…b32c38c` | Identisch |
+| duty | `hs_code=6109100000, country=DE, value=1000.00` | `8e4b03f6…602e3c2e` | Identisch |
+| duty | `hs_code=6109100000, country=DE, value=1000.01` | `0a16c715…9c8f53` | **Unterschiedlich** — ein anderer Wert ist eine andere zu prüfende Entscheidung |
+
+(Die vollständigen Hashes und dieselben Prüfungen stehen in `tests/test_review.py::TestDeterminism`.)
 
 ### 🧠 `/search` vs. `/classify` — ein Datenbestand, zwei Algorithmen
 
@@ -367,6 +407,12 @@ No sanctions match for 'Quokka Beachwear'.
 Duty on 6109100000 from NO: 0.00 (0.00% preferential)
   Preferential rate of 0% applied under the EU-Solvia Free Trade Agreement, for which origin NO qualifies.
   Customs value 1000.00 + duty 0.00 = 1000.00
+
+> review duty 8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e approved alice confirmed correct
+Recorded: approved 1 on duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e by alice at 2026-01-01T12:00:00+00:00
+
+> review-history
+2026-01-01T12:00:00+00:00  duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e  approved  by alice  (confirmed correct)
 ```
 
 ### 🖥️ Weboberfläche
@@ -375,8 +421,8 @@ Duty on 6109100000 from NO: 0.00 (0.00% preferential)
 uvicorn src.customsiq.api:app --reload
 ```
 
-Öffnen Sie **http://localhost:8000/** für die Weboberfläche — beide Funktionen auf einer Seite,
-oder probieren Sie die [Live-Demo](https://customsiq-gs0u.onrender.com/).
+Probieren Sie die **[Live-Demo](https://customsiq-gs0u.onrender.com/)**, oder öffnen Sie beim
+lokalen Betrieb **http://localhost:8000/** für die Weboberfläche — beide Funktionen auf einer Seite.
 
 ### 🌐 REST-API
 
@@ -430,6 +476,8 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/classify` | Sortierte Code-Vorschläge mit Konfidenz und passenden Begriffen |
 | `GET` | `/screen` | Sanktionslistentreffer zu einem Personen- oder Firmennamen |
 | `GET` | `/calculate-duty` | Fälliger Zoll für eine Sendung, mit Begründung des Satzes |
+| `POST` | `/review` | Speichert die Freigabeentscheidung zu einem früheren Klassifizierungs-, Prüf- oder Zollergebnis |
+| `GET` | `/review/history` | Erfasste Prüfentscheidungen, neueste zuerst |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
 **Parameter von `GET /search`**
@@ -470,6 +518,46 @@ Qualifiziert der Ursprung für einen Präferenzsatz, gilt dieser; sonst der Rege
 **ohne** hinterlegten Satz liefert `404` statt null Zoll — eine Lücke im Datenbestand ist keine
 zollfreie Einfuhr.
 
+**`POST /review`-Body**
+
+| Feld | Typ | Standard | Einschränkungen | Beschreibung |
+|---|---|---|---|---|
+| `subject_type` | `str` | *erforderlich* | `classification` \| `screening` \| `duty` | Art des geprüften Ergebnisses |
+| `subject_reference` | `str` | *erforderlich* | nicht leer | Die `subject_reference` dieses Ergebnisses — nie neu eingegeben, immer der von der API gelieferte Wert |
+| `decision` | `str` | *erforderlich* | `approved` \| `rejected` \| `flagged` | Das Urteil des Prüfers |
+| `reviewer_name` | `str` | *erforderlich* | nicht leer | Freitext — Platzhalter bis es authentifizierte Nutzer gibt |
+| `comment` | `str \| null` | `null` | — | Optionale Notiz |
+
+```bash
+curl -X POST "http://localhost:8000/review" \
+  -H "Content-Type: application/json" \
+  -d '{"subject_type": "duty", "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e", "decision": "approved", "reviewer_name": "alice", "comment": "confirmed correct"}'
+```
+
+```json
+{
+  "id": 1,
+  "subject_type": "duty",
+  "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e",
+  "decision": "approved",
+  "reviewer_name": "alice",
+  "comment": "confirmed correct",
+  "reviewed_at": "2026-01-01T12:00:00+00:00"
+}
+```
+
+**Parameter von `GET /review/history`**
+
+| Parameter | Typ | Standard | Einschränkungen | Beschreibung |
+|---|---|---|---|---|
+| `subject_type` | `str \| null` | `null` | `classification` \| `screening` \| `duty` | Auf diesen Typ einschränken |
+| `subject_reference` | `str \| null` | `null` | — | Auf diesen Gegenstand einschränken |
+| `limit` | `int` | `50` | 1–200 | Maximale Anzahl zurückgegebener Entscheidungen |
+
+```bash
+curl "http://localhost:8000/review/history?subject_type=duty&limit=10"
+```
+
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
 ```
@@ -481,7 +569,8 @@ curl "http://localhost:8000/screen?name=Northwind+Maritime"
     "country": "CY",
     "list_source": "EU Consolidated Financial Sanctions List",
     "date_added": "2023-04-12",
-    "score": 1.0
+    "score": 1.0,
+    "subject_reference": "fa9ec5ed3f84ae68c8c5729faa18e043297e7ec78aae9ab89bebeef82b32c38c"
   }
 ]
 ```
@@ -520,11 +609,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Modul | Abdeckung |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
-| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 100 % |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` | 🟢 100 % |
 | `scripts/import_cn_codes.py` | 🟢 91 % |
 | `logging_config.py` | 🟢 100 % |
-| `main.py` | 🟢 95 % |
-| **Gesamt** | **🟢 97 %** (115 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
+| `main.py` | 🟢 97 % |
+| **Gesamt** | **🟢 98 %** (140 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
 
 ### Getestete Grenzfälle
 
@@ -546,6 +635,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Negativer Zollwert | `InvalidQueryError` → HTTP `400` |
 | Zollwert null | Gültig — kein Zoll fällig |
 | Erneutes Befüllen einer gefüllten Datenbank | Idempotent — keine doppelten Datensätze in allen Tabellen |
+| Dieselbe Klassifizierungs-/Prüfanfrage, andere Groß-/Kleinschreibung | Gleiche `subject_reference` — vor dem Hashen vereinheitlicht |
+| Gleiche Zolleingaben, anderer `customs_value` | Andere `subject_reference` — ein anderer Wert ist eine andere Entscheidung |
+| Zwei Prüfentscheidungen zur selben `subject_reference` | Beide bleiben erhalten, neueste zuerst — Prüfdatensätze werden nie überschrieben |
+| Unbekannter `subject_type` oder `decision` bei `POST /review` | `InvalidQueryError` → HTTP `400` |
 
 ---
 
@@ -677,7 +770,7 @@ da nur dieses Werkzeug sie je bräuchte. Ein CSV-Export erübrigt sie vollständ
 
 ## 🗺️ Roadmap
 
-**Alle vier Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
+**Alle fünf Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
 von der Abdeckungsschwelle gemessen:
 
 | Modul | Status | Funktionsumfang |
@@ -686,11 +779,14 @@ von der Abdeckungsschwelle gemessen:
 | `cn_classifier.py` | ✅ **Ausgeliefert** | TF-IDF-Einreihung mit Konfidenz und passenden Begriffen |
 | `embargo_screener.py` | ✅ **Ausgeliefert** | Namensprüfung gegen Verbotslisten über CLI und REST |
 | `tariff_calculator.py` | ✅ **Ausgeliefert** | Zollberechnung mit Auswahl des Präferenzsatzes |
+| `review.py` | ✅ **Ausgeliefert** | Vier-Augen-Prüfprotokoll für alle drei Entscheidungen |
 
 Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
 Alias- und Transliterationsbehandlung für Entitätsnamen, Kontingent- und Antidumping-Komponenten
-auf der Zollberechnung sowie das Zwischenspeichern des Klassifikator-Index, sobald ein vollständiger
-KN-Import den Neuaufbau pro Aufruf spürbar macht.
+auf der Zollberechnung, das Zwischenspeichern des Klassifikator-Index, sobald ein vollständiger
+KN-Import den Neuaufbau pro Aufruf spürbar macht, sowie **authentifizierte Prüfer mit RBAC** anstelle
+des Freitextfelds `reviewer_name` in `review.py` — der naheliegende nächste Schritt, sobald diese
+Demo echte Nachvollziehbarkeit pro Freigabe braucht.
 
 ---
 
@@ -701,13 +797,14 @@ CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── src/
 │   ├── customsiq/
-│   │   ├── models.py            # HSCode- + SanctionedEntity-Datensätze
-│   │   ├── database.py          # SQLite-Schicht + Beispieldaten (beide Tabellen)
+│   │   ├── models.py            # HSCode- + SanctionedEntity- + TariffRate- + ReviewDecision-Datensätze
+│   │   ├── database.py          # SQLite-Schicht + Beispieldaten
 │   │   ├── matching.py          # gemeinsame Validierung + Ähnlichkeitsbewertung
 │   │   ├── search.py            # KN-Code-Ranking
 │   │   ├── cn_classifier.py     # TF-IDF-Einreihung + Begründung
 │   │   ├── embargo_screener.py  # Namensprüfung gegen Sanktionslisten
 │   │   ├── tariff_calculator.py # Zollsatzwahl + Berechnung
+│   │   ├── review.py            # Prüfprotokoll (Vier-Augen-Prinzip)
 │   │   ├── exceptions.py        # typisierte Fehlerhierarchie
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # gemeinsames Logging-Setup
@@ -716,7 +813,7 @@ CustomsIQ/
 │   │   └── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
 ├── scripts/import_cn_codes.py   # einmaliges Werkzeug: offizielle KN-Datei → hs_codes
-├── tests/                       # 115 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Import
+├── tests/                       # 140 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import
 │   └── fixtures/                # Beispiel-KN-Export für die Importer-Tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

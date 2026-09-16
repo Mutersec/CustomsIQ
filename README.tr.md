@@ -74,6 +74,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 🧠 | **Kod sınıflandırma** | Güven skoru ve her öneriyi getiren terimlerle TF-IDF önerileri |
 | 🚫 | **Yaptırım taraması** | İsim → kelime sırasına ve kısmi isimlere toleranslı yasaklı taraf eşleşmeleri |
 | 💶 | **Vergi hesaplama** | Kod + menşe + kıymet → ödenecek vergi, uygulanan oran ve gerekçesiyle |
+| 📋 | **İnsan onayı / denetim izi** | Sınıflandırma, tarama veya vergi sonucunu onayla/reddet/işaretle — sadece ekleme yapılır |
 | 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
 | 📥 | **Gerçek veri içe aktarma** | Resmî AB CN nomanklatürünü yerel dosyadan idempotent biçimde yükler |
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
@@ -95,15 +96,16 @@ adaptörüdür; skorlama ve doğrulama mantığı tam olarak tek bir yerde bulun
 flowchart LR
     subgraph Arayuzler["Arayüzler"]
         CLI["💻 main.py<br/>Etkileşimli CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review"]
     end
 
     SEARCH["🔍 search.py<br/>CN kodu sıralama"]
     CLS["🧠 cn_classifier.py<br/>TF-IDF + gerekçe"]
     SCREEN["🚫 embargo_screener.py<br/>yaptırım eşleşmeleri"]
     DUTY["💶 tariff_calculator.py<br/>oran seçimi + hesap"]
+    REVIEW["📋 review.py<br/>karar kaydet + listele"]
     MATCH["🧩 matching.py<br/>doğrulama + benzerlik"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes<br/>· sanctioned_entities · tariff_rates")]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
@@ -111,10 +113,12 @@ flowchart LR
     CLI --> CLS
     CLI --> SCREEN
     CLI --> DUTY
+    CLI --> REVIEW
     API --> SEARCH
     API --> CLS
     API --> SCREEN
     API --> DUTY
+    API --> REVIEW
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -122,9 +126,11 @@ flowchart LR
     CLS --> DB
     SCREEN --> DB
     DUTY --> DB
+    REVIEW --> DB
     DUTY -. hata fırlatır .-> EXC
     MATCH -. hata fırlatır .-> EXC
     DB -. hata fırlatır .-> EXC
+    REVIEW -. hata fırlatır .-> EXC
     CFG --> CLI
     CFG --> API
     CFG --> SCREEN
@@ -134,18 +140,19 @@ flowchart LR
 
 | Modül | Sorumluluk |
 |---|---|
-| `models.py` | `HSCode`, `SanctionedEntity` ve `TariffRate` — değişmez kayıtlar |
+| `models.py` | `HSCode`, `SanctionedEntity`, `TariffRate` ve `ReviewDecision` — değişmez kayıtlar |
 | `database.py` | SQLite şeması, bağlantı, örnek veri, `fetch_all*()`, `get_by_code()` |
 | `matching.py` | Girdi doğrulama + benzerlik skorlaması (**her iki yetenek de bunu kullanır**) |
 | `search.py` | CN kodlarını açıklama benzerliğine göre sıralar |
 | `cn_classifier.py` | TF-IDF terim ağırlığıyla kod önerir ve eşleşen terimleri bildirir |
 | `embargo_screener.py` | Yaptırım listesi eşleşmelerini isim benzerliğine göre sıralar |
 | `tariff_calculator.py` | Uygulanacak vergi oranını seçer ve ödenecek tutarı hesaplar |
+| `review.py` | Geçmiş kararlar üzerinde insan onayını kaydeder ve listeler (denetim izi) |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; `CUSTOMSIQ_*` ortam değişkenlerini ve `.env` dosyasını okur |
 | `logging_config.py` | Ortak loglama kurulumu — stdout'a sade format, hiçbir yerde `print()` yok |
 | `main.py` | Etkileşimli CLI giriş noktası (arama + `screen <isim>`) |
-| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/classify`, `/screen`, `/calculate-duty`, `/health` |
+| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/health` |
 | `static/index.html` | Web arayüzünün tamamı — satır içi CSS, saf `fetch()`, sıfır bağımlılık |
 
 ### Veri modeli
@@ -172,6 +179,16 @@ CREATE TABLE tariff_rates (
     trade_agreement   TEXT,           -- standart oranlarda NULL
     valid_from        TEXT NOT NULL,  -- oranın yürürlüğe girdiği ISO 8601 tarih
     PRIMARY KEY (hs_code, country_of_origin, valid_from)
+);
+
+CREATE TABLE review_decisions (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,  -- denetim kaydının doğal anahtarı yok
+    subject_type       TEXT NOT NULL,   -- "classification" | "screening" | "duty"
+    subject_reference  TEXT NOT NULL,   -- sha256(subject_type + normalize edilmiş girdi)
+    decision           TEXT NOT NULL,   -- "approved" | "rejected" | "flagged"
+    reviewer_name      TEXT NOT NULL,   -- serbest metin — kimlik doğrulama gelene kadar geçici
+    comment            TEXT,            -- opsiyonel not
+    reviewed_at        TEXT NOT NULL    -- ISO 8601 zaman damgası
 );
 ```
 
@@ -214,6 +231,29 @@ Aşağıdakilerden **herhangi biri** gerçekleştiğinde `matching.py` içindeki
 | **`print()` değil loglama** | CLI ve API için aynı çıktı yolu; seviye yapılandırmayla kontrol edilir | — |
 | **Doğrulamanın `matching.py` içinde olması** | Arama, tarama, CLI ve API bunu devralır; yeni bir çağıran eklenerek atlanması imkânsızdır | — |
 | **`EmbargoScreeningError` eklenmemesi** | Taramanın girdi doğrulaması aramanınkiyle birebir aynı; yeni sınıf yerine `InvalidQueryError` yeniden kullanılır | Tarama gerçekten farklı bir hata durumu kazanırsa eklenir |
+| **`review_decisions`, diğer üç tablonun aksine `INTEGER PRIMARY KEY AUTOINCREMENT` kullanır** | Denetim kayıtlarının doğal bir benzersizliği yok — aynı `subject_reference` zaman içinde birden çok karara sahip olabilir | — |
+| **`review_decisions` yalnızca ekleme yapılır (append-only)** | SAP GTS gibi gümrük uyum araçlarında yaygın olan dört-göz / insan-onayı ilkesini modeller: düzeltilmiş bir karar bir güncelleme değil, yeni bir satırdır, böylece geçmiş asla kaybolmaz. `reviewer_name` bu demoda serbest metindir; üretim sistemi bunu kimlik doğrulanmış kullanıcılara bağlar (bkz. Yol haritası) | Kimlik doğrulanmış kullanıcılar + RBAC eklenir |
+
+### 🔗 Deterministik `subject_reference`
+
+İncelenebilir her sonuç bir `subject_reference` taşır — `sha256(f"{subject_type}:{normalize_edilmis_girdi}")`
+— böylece aynı sorgu tekrar gönderildiğinde her zaman aynı konuyu denetler; tekrar gönderimler yeni
+bir geçmiş açmak yerine paylaşılan tek bir inceleme geçmişine bağlanır. `subject_type` ön eki, üç
+yeteneğin aynı hash üzerinde çakışmasını engeller.
+
+Normalizasyon, metin girdilerinde bilinçli olarak büyük/küçük harf duyarsızdır (karar
+büyük/küçük harfle değişmez) ama parasal değerde tam eşleşme ister (farklı bir gümrük kıymeti
+**farklı** bir karardır):
+
+| Konu türü | Girdi | `subject_reference` | Aynı girdi tekrar? |
+|---|---|---|---|
+| classification | `"knitted cotton shirt"` | `ca8b1b95…fc3407` | Aynı |
+| classification | `"KNITTED COTTON SHIRT"` | `ca8b1b95…fc3407` | **Yukarıdakiyle aynı** — hash'lemeden önce büyük/küçük harf birleştirilir |
+| screening | `"Northwind Maritime"` | `fa9ec5ed…b32c38c` | Aynı |
+| duty | `hs_code=6109100000, country=DE, value=1000.00` | `8e4b03f6…602e3c2e` | Aynı |
+| duty | `hs_code=6109100000, country=DE, value=1000.01` | `0a16c715…9c8f53` | **Farklı** — farklı bir kıymet, denetlenecek farklı bir karardır |
+
+(Tam hash değerleri ve aynı doğrulamalar `tests/test_review.py::TestDeterminism` içinde bulunur.)
 
 ### 🧠 `/search` ile `/classify` — tek veri, iki algoritma
 
@@ -364,6 +404,12 @@ No sanctions match for 'Quokka Beachwear'.
 Duty on 6109100000 from NO: 0.00 (0.00% preferential)
   Preferential rate of 0% applied under the EU-Solvia Free Trade Agreement, for which origin NO qualifies.
   Customs value 1000.00 + duty 0.00 = 1000.00
+
+> review duty 8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e approved alice confirmed correct
+Recorded: approved 1 on duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e by alice at 2026-01-01T12:00:00+00:00
+
+> review-history
+2026-01-01T12:00:00+00:00  duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e  approved  by alice  (confirmed correct)
 ```
 
 ### 🖥️ Web arayüzü
@@ -372,8 +418,8 @@ Duty on 6109100000 from NO: 0.00 (0.00% preferential)
 uvicorn src.customsiq.api:app --reload
 ```
 
-Web arayüzü için **http://localhost:8000/** adresini açın — her iki yetenek tek sayfada; ya da
-[canlı demoyu](https://customsiq-gs0u.onrender.com/) deneyin.
+**[Canlı demoyu](https://customsiq-gs0u.onrender.com/)** deneyin, ya da yerelde çalıştırırken web
+arayüzü için **http://localhost:8000/** adresini açın — her iki yetenek tek sayfada.
 
 ### 🌐 REST API
 
@@ -427,6 +473,8 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/classify` | Güven skoru ve eşleşen terimlerle sıralanmış kod önerileri |
 | `GET` | `/screen` | Kişi veya kuruluş ismi için yaptırım listesi eşleşmeleri |
 | `GET` | `/calculate-duty` | Sevkiyat için ödenecek vergi, uygulanan oranın gerekçesiyle |
+| `POST` | `/review` | Geçmiş bir sınıflandırma, tarama veya vergi sonucu için inceleyici kararını kaydeder |
+| `GET` | `/review/history` | Kayıtlı inceleme kararları, en yeni önce |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -468,6 +516,46 @@ Menşe bir tercihli orana hak kazanıyorsa o oran uygulanır; aksi hâlde standa
 Kayıtta **hiç** oranı olmayan bir kod sıfır vergi değil `404` döndürür — tarife verisindeki bir
 boşluk, vergisiz ithalat anlamına gelmez.
 
+**`POST /review` gövdesi**
+
+| Alan | Tip | Varsayılan | Kısıtlar | Açıklama |
+|---|---|---|---|---|
+| `subject_type` | `str` | *zorunlu* | `classification` \| `screening` \| `duty` | İncelenen sonucun türü |
+| `subject_reference` | `str` | *zorunlu* | boş olamaz | O sonucun `subject_reference` değeri — asla yeniden yazılmaz, API'nin döndürdüğü değer kullanılır |
+| `decision` | `str` | *zorunlu* | `approved` \| `rejected` \| `flagged` | İnceleyicinin kararı |
+| `reviewer_name` | `str` | *zorunlu* | boş olamaz | Serbest metin — kimlik doğrulama gelene kadar geçici |
+| `comment` | `str \| null` | `null` | — | Opsiyonel not |
+
+```bash
+curl -X POST "http://localhost:8000/review" \
+  -H "Content-Type: application/json" \
+  -d '{"subject_type": "duty", "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e", "decision": "approved", "reviewer_name": "alice", "comment": "confirmed correct"}'
+```
+
+```json
+{
+  "id": 1,
+  "subject_type": "duty",
+  "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e",
+  "decision": "approved",
+  "reviewer_name": "alice",
+  "comment": "confirmed correct",
+  "reviewed_at": "2026-01-01T12:00:00+00:00"
+}
+```
+
+**`GET /review/history` parametreleri**
+
+| Parametre | Tip | Varsayılan | Kısıtlar | Açıklama |
+|---|---|---|---|---|
+| `subject_type` | `str \| null` | `null` | `classification` \| `screening` \| `duty` | Bu türle sınırla |
+| `subject_reference` | `str \| null` | `null` | — | Bu konuyla sınırla |
+| `limit` | `int` | `50` | 1–200 | Azami kayıt sayısı |
+
+```bash
+curl "http://localhost:8000/review/history?subject_type=duty&limit=10"
+```
+
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
 ```
@@ -479,7 +567,8 @@ curl "http://localhost:8000/screen?name=Northwind+Maritime"
     "country": "CY",
     "list_source": "EU Consolidated Financial Sanctions List",
     "date_added": "2023-04-12",
-    "score": 1.0
+    "score": 1.0,
+    "subject_reference": "fa9ec5ed3f84ae68c8c5729faa18e043297e7ec78aae9ab89bebeef82b32c38c"
   }
 ]
 ```
@@ -517,11 +606,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Modül | Kapsam |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
-| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` | 🟢 %100 |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` | 🟢 %100 |
 | `scripts/import_cn_codes.py` | 🟢 %91 |
 | `logging_config.py` | 🟢 %100 |
-| `main.py` | 🟢 %95 |
-| **Toplam** | **🟢 %97** (115 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+| `main.py` | 🟢 %97 |
+| **Toplam** | **🟢 %98** (140 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
 
 ### Test edilen uç durumlar
 
@@ -543,6 +632,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Negatif gümrük kıymeti | `InvalidQueryError` → HTTP `400` |
 | Sıfır gümrük kıymeti | Geçerli — sıfır vergi |
 | Dolu veritabanının yeniden doldurulması | Idempotent — hiçbir tabloda mükerrer kayıt oluşmaz |
+| Aynı classification/screening sorgusu, farklı büyük/küçük harf | Aynı `subject_reference` — hash'lemeden önce harf birleştirilir |
+| Aynı vergi girdileri, farklı `customs_value` | Farklı `subject_reference` — farklı kıymet farklı karardır |
+| Aynı `subject_reference` için iki inceleme kararı | İkisi de kalır, en yeni önce — denetim kayıtları asla üzerine yazılmaz |
+| `POST /review`'da bilinmeyen `subject_type` veya `decision` | `InvalidQueryError` → HTTP `400` |
 
 ---
 
@@ -673,7 +766,7 @@ Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje 
 
 ## 🗺️ Yol haritası
 
-**Dört yeteneğin dördü de bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
+**Beş yeteneğin beşi de bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
 eşiğiyle ölçülüyor:
 
 | Modül | Durum | Kapsam |
@@ -682,11 +775,14 @@ eşiğiyle ölçülüyor:
 | `cn_classifier.py` | ✅ **Tamamlandı** | Güven skoru ve eşleşen terimlerle TF-IDF sınıflandırma |
 | `embargo_screener.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden yasaklı taraf isim taraması |
 | `tariff_calculator.py` | ✅ **Tamamlandı** | Tercihli oran seçimiyle vergi hesaplama |
+| `review.py` | ✅ **Tamamlandı** | Üç kararın tümünde dört-göz insan onayı denetim izi |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
 isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
-bileşenleri, ve tam CN içe aktarımı her sorgudaki yeniden kurulumu hissedilir hâle getirdiğinde
-sınıflandırıcı indeksinin önbelleğe alınması.
+bileşenleri, tam CN içe aktarımı her sorgudaki yeniden kurulumu hissedilir hâle getirdiğinde
+sınıflandırıcı indeksinin önbelleğe alınması, ve `review.py`'nin serbest metin `reviewer_name`
+alanı yerine **kimlik doğrulanmış inceleyiciler + RBAC** — bu demonun gerçek hesap verebilirlik
+ihtiyacı doğduğunda atılacak doğal bir sonraki adım.
 
 ---
 
@@ -697,13 +793,14 @@ CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── src/
 │   ├── customsiq/
-│   │   ├── models.py            # HSCode + SanctionedEntity kayıtları
-│   │   ├── database.py          # SQLite katmanı + örnek veri (iki tablo)
+│   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision kayıtları
+│   │   ├── database.py          # SQLite katmanı + örnek veri
 │   │   ├── matching.py          # ortak doğrulama + benzerlik skorlaması
 │   │   ├── search.py            # CN kodu sıralaması
 │   │   ├── cn_classifier.py     # TF-IDF sınıflandırma + gerekçe
 │   │   ├── embargo_screener.py  # yaptırım isim taraması
 │   │   ├── tariff_calculator.py # vergi oranı seçimi + hesaplama
+│   │   ├── review.py            # insan onayı denetim izi (dört göz)
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # ortak loglama kurulumu
@@ -712,7 +809,7 @@ CustomsIQ/
 │   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── scripts/import_cn_codes.py   # tek seferlik araç: resmî CN dosyası → hs_codes
-├── tests/                       # 115 test — birim, API, CLI, sınıflandırma, tarama, vergi, içe aktarma
+├── tests/                       # 140 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma
 │   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
