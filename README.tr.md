@@ -76,6 +76,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 💶 | **Vergi hesaplama** | Kod + menşe + kıymet → ödenecek vergi, uygulanan oran ve gerekçesiyle |
 | 📋 | **İnsan onayı / denetim izi** | Sınıflandırma, tarama veya vergi sonucunu onayla/reddet/işaretle — sadece ekleme yapılır |
 | 🕘 | **Sürümlü CN kodları (SCD Type 2)** | Değişen her açıklama/kategori eski değerini zaman damgasıyla korur — `GET /codes/{code}/history` |
+| 📊 | **Analitik gösterge paneli** | Referans veriler, inceleme faaliyeti ve içe aktarma çalıştırmalarının salt-okunur özeti — `GET /dashboard/stats` |
 | 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
 | 📥 | **Gerçek veri içe aktarma** | Resmî AB CN nomanklatürünü yerel dosyadan yükler, değişiklikleri sürümleyerek |
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
@@ -97,7 +98,7 @@ adaptörüdür; skorlama ve doğrulama mantığı tam olarak tek bir yerde bulun
 flowchart LR
     subgraph Arayuzler["Arayüzler"]
         CLI["💻 main.py<br/>Etkileşimli CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats"]
         IMPORT["📥 import_cn_codes.py<br/>CLI içe aktarma aracı"]
     end
 
@@ -106,6 +107,7 @@ flowchart LR
     SCREEN["🚫 embargo_screener.py<br/>yaptırım eşleşmeleri"]
     DUTY["💶 tariff_calculator.py<br/>oran seçimi + hesap"]
     REVIEW["📋 review.py<br/>karar kaydet + listele"]
+    DASH["📊 dashboard.py<br/>toplu istatistik"]
     MATCH["🧩 matching.py<br/>doğrulama + benzerlik"]
     DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions<br/>· hs_code_history · cn_code_versions")]
     EXC["🚨 exceptions.py"]
@@ -121,8 +123,10 @@ flowchart LR
     API --> SCREEN
     API --> DUTY
     API --> REVIEW
+    API --> DASH
     API --> DB
     IMPORT --> DB
+    DASH --> DB
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -152,6 +156,7 @@ flowchart LR
 | `embargo_screener.py` | Yaptırım listesi eşleşmelerini isim benzerliğine göre sıralar |
 | `tariff_calculator.py` | Uygulanacak vergi oranını seçer ve ödenecek tutarı hesaplar |
 | `review.py` | Geçmiş kararlar üzerinde insan onayını kaydeder ve listeler (denetim izi) |
+| `dashboard.py` | `/dashboard/stats` için referans veri, inceleme faaliyeti ve CN içe aktarmalarının salt-okunur toplulaştırması |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; `CUSTOMSIQ_*` ortam değişkenlerini ve `.env` dosyasını okur |
 | `logging_config.py` | Ortak loglama kurulumu — stdout'a sade format, hiçbir yerde `print()` yok |
@@ -287,6 +292,20 @@ hiç okumaz, diğer ikisi zaten yalnızca `fetch_all()` çağırır ve bu her za
 Bu aynı zamanda insan-onayı katmanındaki denetim izini de güçlendirir: `review_decisions` bir
 kararın incelendiğini kaydeder, CN kodu geçmişi ise artık o anda hangi nomanklatür verisinin
 etkin olduğunu yeniden kurmayı mümkün kılar.
+
+### 📊 Gösterge paneli: Faz 1 ve 2 üzerine raporlama katmanı
+
+`dashboard.py` hiçbir yeni iş mantığı eklemez ve hiçbir karar vermez — `review.py`'nin ve CN
+hattının zaten kaydettiği verilerin salt-okunur bir toplulaştırmasıdır; mevcut `database.py`
+okumalarını (`fetch_all`, `fetch_all_entities`, `fetch_review_decisions`, `fetch_cn_import_runs`,
+artı iki küçük yeni sayma yardımcısı) frontend'in Gösterge Paneli için tek bir `GET
+/dashboard/stats` çağrısında birleştirir. Belirtilmeye değer bir uyarlama: `cn_code_versions`
+(Faz 2) her zaman yalnızca `row_count` saklamıştır, yeni/değişen/değişmeyen ayrımını değil — o
+ayrım yalnızca `upsert_hs_codes_with_history()` içinde geçici olarak var oldu ve hiçbir yere
+kaydedilmedi. Bunu geriye dönük saklamak için sütun eklemek yerine, gösterge paneli her
+çalıştırma için **değişen ve değişmeyen** sayısını, `hs_code_history`'de o çalıştırmanın
+`version_label`'ını taşıyan kaç satır olduğundan türetir (üç ayrı sayım değil, tek bir `GROUP BY`
+sorgusu) — bu, gerçekte kaydedilenin dürüst bir okunuşudur, uydurulmuş bir dağılım değil.
 
 ### 🔗 Deterministik `subject_reference`
 
@@ -530,6 +549,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/review` | Geçmiş bir sınıflandırma, tarama veya vergi sonucu için inceleyici kararını kaydeder |
 | `GET` | `/review/history` | Kayıtlı inceleme kararları, en yeni önce |
 | `GET` | `/codes/{code}/history` | Bir CN kodunun SCD Type 2 sürüm zaman çizelgesi, en eski önce |
+| `GET` | `/dashboard/stats` | Toplu istatistikler: referans veriler, inceleme faaliyeti, CN içe aktarma çalıştırmaları |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -640,6 +660,38 @@ curl "http://localhost:8000/codes/6109100000/history"
 ]
 ```
 
+**`GET /dashboard/stats`** — parametre almaz, doğrulanacak bir girdi yok. `review_by_decision` ve
+`review_by_subject_type` her zaman üç anahtarı da `0` varsayılanıyla taşır, böylece taze bir
+veritabanı çağıranı eksik anahtarlara karşı korumaya zorlamadan temiz görüntülenir.
+
+```bash
+curl "http://localhost:8000/dashboard/stats"
+```
+
+```json
+{
+  "hs_code_count": 20,
+  "sanctioned_entity_count": 18,
+  "tariff_rate_count": 18,
+  "review_total": 2,
+  "review_by_decision": { "approved": 1, "rejected": 0, "flagged": 1 },
+  "review_by_subject_type": { "classification": 1, "screening": 0, "duty": 1 },
+  "recent_reviews": [ { "id": 2, "subject_type": "duty", "decision": "flagged", "...": "..." } ],
+  "import_run_count": 1,
+  "recent_import_runs": [
+    {
+      "version_label": "CN2026",
+      "source_description": "cn2026.csv",
+      "imported_at": "2026-02-01T09:00:00+00:00",
+      "row_count": 10,
+      "changed_count": 1,
+      "unchanged_count": 9
+    }
+  ],
+  "versioned_code_count": 1
+}
+```
+
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
 ```
@@ -690,11 +742,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Modül | Kapsam |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
-| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` | 🟢 %100 |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` | 🟢 %100 |
 | `scripts/import_cn_codes.py` | 🟢 %91 |
 | `logging_config.py` | 🟢 %100 |
 | `main.py` | 🟢 %97 |
-| **Toplam** | **🟢 %98** (146 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+| **Toplam** | **🟢 %98** (154 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
 
 ### Test edilen uç durumlar
 
@@ -724,6 +776,7 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Aynı veriyle bir kodu yeniden içe aktarma | Yeni `hs_code_history` satırı yok; `hs_codes` zararsız bir no-op upsert alır |
 | Hiç sürümlenmemiş tohumlanan bir kod için `GET /codes/{code}/history` | `200 []`, hata değil |
 | Bilinmeyen bir kod için `GET /codes/{code}/history` | `HSCodeNotFoundError` → HTTP `404` |
+| Taze bir veritabanında `GET /dashboard/stats` (inceleme yok, içe aktarma yok) | Tüm sayılar `0`, dağılım anahtarları eksik değil mevcut, boş listeler — frontend'de asla `NaN%` |
 
 ---
 
@@ -860,7 +913,7 @@ Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje 
 
 ## 🗺️ Yol haritası
 
-**Altı yeteneğin altısı da bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
+**Yedi yeteneğin yedisi de bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
 eşiğiyle ölçülüyor:
 
 | Modül | Durum | Kapsam |
@@ -871,16 +924,18 @@ eşiğiyle ölçülüyor:
 | `tariff_calculator.py` | ✅ **Tamamlandı** | Tercihli oran seçimiyle vergi hesaplama |
 | `review.py` | ✅ **Tamamlandı** | Üç kararın tümünde dört-göz insan onayı denetim izi |
 | CN kodu sürümleme (SCD Type 2) | ✅ **Tamamlandı** | `hs_code_history` + `cn_code_versions`, `GET /codes/{code}/history` üzerinden sunulur |
+| `dashboard.py` | ✅ **Tamamlandı** | Faz 1 ve 2 üzerine salt-okunur raporlama, `GET /dashboard/stats` üzerinden |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
 isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
 bileşenleri, tam CN içe aktarımı her sorgudaki yeniden kurulumu hissedilir hâle getirdiğinde
 sınıflandırıcı indeksinin önbelleğe alınması, `review.py`'nin serbest metin `reviewer_name`
 alanı yerine **kimlik doğrulanmış inceleyiciler + RBAC** — bu demonun gerçek hesap verebilirlik
-ihtiyacı doğduğunda atılacak doğal bir sonraki adım — ve sürümleme işinin iki ertelenen parçası:
-`cn_code_versions`'ı listelemek için bir `GET /cn-imports` uç noktası (şimdilik içe aktarma
-aracının kendi log satırı bunu karşılıyor; `database.fetch_cn_import_runs` zaten hazır, sadece
-dışa açılmamış) ve API uç noktasını yansıtan bir CLI `history <code>` komutu.
+ihtiyacı doğduğunda atılacak doğal bir sonraki adım — API uç noktasını yansıtan bir CLI
+`history <code>` komutu, ve tam `cn_code_versions` günlüğünü sayfalayarak gezmek için ayrı bir
+`GET /cn-imports` uç noktası (`/dashboard/stats` artık daha önce dışa açılmamış olan
+`fetch_cn_import_runs` verisini sunuyor, ama yalnızca son birkaçını — liste tam olarak
+gezilecekse özel, filtrelenebilir bir uç nokta hâlâ açık).
 
 ---
 
@@ -899,6 +954,7 @@ CustomsIQ/
 │   │   ├── embargo_screener.py  # yaptırım isim taraması
 │   │   ├── tariff_calculator.py # vergi oranı seçimi + hesaplama
 │   │   ├── review.py            # insan onayı denetim izi (dört göz)
+│   │   ├── dashboard.py         # Faz 1 ve 2 üzerine salt-okunur toplulaştırma
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # ortak loglama kurulumu
@@ -907,7 +963,7 @@ CustomsIQ/
 │   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── scripts/import_cn_codes.py   # resmî CN dosyası → hs_codes, değişiklikleri sürümler (SCD Type 2)
-├── tests/                       # 146 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma
+├── tests/                       # 154 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli
 │   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

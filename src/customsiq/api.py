@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from src.customsiq import review
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
+from src.customsiq.dashboard import get_dashboard_stats
 from src.customsiq.database import fetch_hs_code_history, get_by_code, get_connection, seed
 from src.customsiq.embargo_screener import screen_entity
 from src.customsiq.exceptions import HSCodeNotFoundError, InvalidQueryError, RateNotFoundError
@@ -241,3 +242,47 @@ def review_history(
         }
         for r in results
     ]
+
+
+@app.get("/dashboard/stats")
+def dashboard_stats() -> dict:
+    """Return aggregate stats over reference data, review activity and CN imports.
+
+    Reuses `src.customsiq.dashboard.get_dashboard_stats`, which itself only
+    composes existing `database.py` reads — this is a reporting view, not a
+    new decision. No input, so nothing here can be invalid.
+    """
+    stats = get_dashboard_stats(_conn)
+    return {
+        "hs_code_count": stats.hs_code_count,
+        "sanctioned_entity_count": stats.sanctioned_entity_count,
+        "tariff_rate_count": stats.tariff_rate_count,
+        "review_total": stats.review_total,
+        "review_by_decision": stats.review_by_decision,
+        "review_by_subject_type": stats.review_by_subject_type,
+        "recent_reviews": [
+            {
+                "id": r.id,
+                "subject_type": r.subject_type,
+                "subject_reference": r.subject_reference,
+                "decision": r.decision,
+                "reviewer_name": r.reviewer_name,
+                "comment": r.comment,
+                "reviewed_at": r.reviewed_at,
+            }
+            for r in stats.recent_reviews
+        ],
+        "import_run_count": stats.import_run_count,
+        "recent_import_runs": [
+            {
+                "version_label": s.run.version_label,
+                "source_description": s.run.source_description,
+                "imported_at": s.run.imported_at,
+                "row_count": s.run.row_count,
+                "changed_count": s.changed_count,
+                "unchanged_count": s.unchanged_count,
+            }
+            for s in stats.recent_import_runs
+        ],
+        "versioned_code_count": stats.versioned_code_count,
+    }

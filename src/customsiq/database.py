@@ -539,3 +539,55 @@ def fetch_cn_import_runs(conn: sqlite3.Connection, limit: int = 50) -> list[Impo
         (limit,),
     ).fetchall()
     return [ImportRun(*row) for row in rows]
+
+
+def fetch_all_rates(conn: sqlite3.Connection) -> list[TariffRate]:
+    """Return every tariff rate record in the database.
+
+    Args:
+        conn: An open database connection.
+
+    Returns:
+        All stored TariffRate records.
+    """
+    rows = conn.execute(
+        "SELECT hs_code, country_of_origin, rate_type, rate_percent, trade_agreement, valid_from "
+        "FROM tariff_rates"
+    ).fetchall()
+    return [TariffRate(*row) for row in rows]
+
+
+def count_versioned_codes(conn: sqlite3.Connection) -> int:
+    """Return how many HS codes have more than one recorded history version.
+
+    Args:
+        conn: An open database connection.
+
+    Returns:
+        The number of distinct codes that have actually changed over time.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM ("
+        "SELECT code FROM hs_code_history GROUP BY code HAVING COUNT(*) > 1"
+        ")"
+    ).fetchone()
+    return row[0]
+
+
+def count_history_rows_by_version_label(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return how many hs_code_history rows each import run produced.
+
+    That count is exactly how many codes were new or changed in that run,
+    since unchanged codes never get a history row — see
+    upsert_hs_codes_with_history.
+
+    Args:
+        conn: An open database connection.
+
+    Returns:
+        {version_label: row count}, for every version_label seen in the history table.
+    """
+    rows = conn.execute(
+        "SELECT version_label, COUNT(*) FROM hs_code_history GROUP BY version_label"
+    ).fetchall()
+    return dict(rows)

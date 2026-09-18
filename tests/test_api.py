@@ -242,3 +242,28 @@ def test_code_history_returns_404_for_an_unknown_code() -> None:
     """A code that doesn't exist in hs_codes at all surfaces as HTTP 404."""
     response = client.get("/codes/00000000/history")
     assert response.status_code == 404
+
+
+def test_dashboard_stats_returns_the_expected_shape() -> None:
+    """The dashboard endpoint returns every field, with sane types.
+
+    Exact counts aren't asserted here: _conn is the shared, persistent
+    customsiq.db that accumulates rows across the whole test session (the
+    same reason the /review tests above use uuid-based data instead of
+    exact totals). tests/test_dashboard.py covers exact-count behaviour
+    against an isolated in-memory database.
+    """
+    response = client.get("/dashboard/stats")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["hs_code_count"] >= 0
+    assert body["sanctioned_entity_count"] >= 0
+    assert body["tariff_rate_count"] >= 0
+    assert body["review_total"] >= 0
+    assert set(body["review_by_decision"]) == {"approved", "rejected", "flagged"}
+    assert set(body["review_by_subject_type"]) == {"classification", "screening", "duty"}
+    assert isinstance(body["recent_reviews"], list)
+    assert body["import_run_count"] >= 0
+    assert isinstance(body["recent_import_runs"], list)
+    assert body["versioned_code_count"] >= 0

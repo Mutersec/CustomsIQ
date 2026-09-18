@@ -75,6 +75,7 @@ not a black box that decides alone.
 | 💶 | **Duty calculation** | Code + origin + value → duty owed, with the rate and reason explained |
 | 📋 | **Human-review audit trail** | Approve/reject/flag any classification, screening or duty result — append-only |
 | 🕘 | **Versioned CN codes (SCD Type 2)** | Every changed description/category keeps its prior value, timestamped, via `GET /codes/{code}/history` |
+| 📊 | **Analytics dashboard** | Read-only overview of reference data, review activity and import runs via `GET /dashboard/stats` |
 | 🖥️ | **Web UI** | Single-page frontend served at `/` — no build step, no framework, no CDN |
 | 📥 | **Real-data import** | Load the official EU CN nomenclature from a local file, versioning any changes |
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
@@ -96,7 +97,7 @@ validation logic exists in exactly one place and is never duplicated.
 flowchart LR
     subgraph Interfaces
         CLI["💻 main.py<br/>Interactive CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats"]
         IMPORT["📥 import_cn_codes.py<br/>CLI import tool"]
     end
 
@@ -105,6 +106,7 @@ flowchart LR
     SCREEN["🚫 embargo_screener.py<br/>rank sanctions hits"]
     DUTY["💶 tariff_calculator.py<br/>select rate + compute"]
     REVIEW["📋 review.py<br/>submit + fetch decisions"]
+    DASH["📊 dashboard.py<br/>aggregate stats"]
     MATCH["🧩 matching.py<br/>validate + similarity"]
     DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions<br/>· hs_code_history · cn_code_versions")]
     EXC["🚨 exceptions.py"]
@@ -120,8 +122,10 @@ flowchart LR
     API --> SCREEN
     API --> DUTY
     API --> REVIEW
+    API --> DASH
     API --> DB
     IMPORT --> DB
+    DASH --> DB
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -151,6 +155,7 @@ flowchart LR
 | `embargo_screener.py` | Ranks sanctions-list hits by name similarity |
 | `tariff_calculator.py` | Selects the applicable duty rate and computes what is owed |
 | `review.py` | Records and lists human reviewer sign-offs on past decisions (audit trail) |
+| `dashboard.py` | Read-only aggregation of reference data, review activity and CN imports for `/dashboard/stats` |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; reads `CUSTOMSIQ_*` env vars and `.env` |
 | `logging_config.py` | Shared logging setup — plain formatter to stdout, no `print()` anywhere |
@@ -283,6 +288,19 @@ two already call `fetch_all()`/nothing-else, which returns exactly what it alway
 This also strengthens the audit trail from the human-review layer: `review_decisions` records
 *that* a decision was reviewed, and CN code history now makes it possible to reconstruct what
 nomenclature data was active at that time.
+
+### 📊 Dashboard: the reporting layer over Phases 1 & 2
+
+`dashboard.py` adds no new business logic and makes no decisions — it's a read-only aggregation
+of what `review.py` and the CN pipeline already recorded, composing existing `database.py` reads
+(`fetch_all`, `fetch_all_entities`, `fetch_review_decisions`, `fetch_cn_import_runs`, plus two
+small new counting primitives) into one `GET /dashboard/stats` call for the frontend's Dashboard
+panel. One adaptation worth noting: `cn_code_versions` (Phase 2) only ever stored `row_count`
+per import run, not a new/changed/unchanged split — that split existed only transiently inside
+`upsert_hs_codes_with_history()` and was never persisted. Rather than add columns to store it
+retroactively, the dashboard derives **changed vs. unchanged** per run from how many
+`hs_code_history` rows carry that run's `version_label` (one `GROUP BY` query, not three
+separate counts) — an honest reading of what was actually recorded, not a fabricated breakdown.
 
 ### 🔗 Deterministic `subject_reference`
 
@@ -523,6 +541,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/review` | Record a reviewer's sign-off on a past classification, screening or duty result |
 | `GET` | `/review/history` | Recorded review decisions, most recently reviewed first |
 | `GET` | `/codes/{code}/history` | One CN code's SCD Type 2 version timeline, oldest first |
+| `GET` | `/dashboard/stats` | Aggregate stats: reference data, review activity, CN import runs |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
 **`GET /search` parameters**
@@ -657,6 +676,38 @@ curl "http://localhost:8000/codes/6109100000/history"
 ]
 ```
 
+**`GET /dashboard/stats`** — no parameters, no input to validate. `review_by_decision` and
+`review_by_subject_type` always carry all three keys, defaulted to `0`, so a fresh database
+renders cleanly rather than forcing the caller to guard against missing keys.
+
+```bash
+curl "http://localhost:8000/dashboard/stats"
+```
+
+```json
+{
+  "hs_code_count": 20,
+  "sanctioned_entity_count": 18,
+  "tariff_rate_count": 18,
+  "review_total": 2,
+  "review_by_decision": { "approved": 1, "rejected": 0, "flagged": 1 },
+  "review_by_subject_type": { "classification": 1, "screening": 0, "duty": 1 },
+  "recent_reviews": [ { "id": 2, "subject_type": "duty", "decision": "flagged", "...": "..." } ],
+  "import_run_count": 1,
+  "recent_import_runs": [
+    {
+      "version_label": "CN2026",
+      "source_description": "cn2026.csv",
+      "imported_at": "2026-02-01T09:00:00+00:00",
+      "row_count": 10,
+      "changed_count": 1,
+      "unchanged_count": 9
+    }
+  ],
+  "versioned_code_count": 1
+}
+```
+
 ```bash
 curl "http://localhost:8000/calculate-duty?hs_code=6109100000&country_of_origin=NO&customs_value=1000"
 ```
@@ -726,11 +777,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | Module | Coverage |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
-| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` | 🟢 100% |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` | 🟢 100% |
 | `scripts/import_cn_codes.py` | 🟢 91% |
 | `logging_config.py` | 🟢 100% |
 | `main.py` | 🟢 97% |
-| **Total** | **🟢 98%** (146 tests, gate at 80%) — **no module is excluded from the gate** |
+| **Total** | **🟢 98%** (154 tests, gate at 80%) — **no module is excluded from the gate** |
 
 ### Edge cases under test
 
@@ -760,6 +811,7 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | Re-importing a code with identical data | No new `hs_code_history` row; `hs_codes` gets a harmless no-op upsert |
 | `GET /codes/{code}/history` for a seeded-but-never-versioned code | `200 []`, not an error |
 | `GET /codes/{code}/history` for an unknown code | `HSCodeNotFoundError` → HTTP `404` |
+| `GET /dashboard/stats` on a fresh database (no reviews, no imports) | All counts `0`, breakdown keys present not missing, empty lists — never `NaN%` on the frontend |
 
 ---
 
@@ -894,7 +946,7 @@ dependency, since only this tool would ever use it. Exporting the sheet to CSV a
 
 ## 🗺️ Roadmap
 
-**All six features ship today — no scaffolds remain**, and every module is measured by the
+**All seven features ship today — no scaffolds remain**, and every module is measured by the
 coverage gate:
 
 | Module | Status | Scope |
@@ -905,15 +957,17 @@ coverage gate:
 | `tariff_calculator.py` | ✅ **Shipped** | Duty calculation with preferential-rate selection |
 | `review.py` | ✅ **Shipped** | Four-eyes human-review audit trail on all three decisions |
 | CN code versioning (SCD Type 2) | ✅ **Shipped** | `hs_code_history` + `cn_code_versions`, surfaced at `GET /codes/{code}/history` |
+| `dashboard.py` | ✅ **Shipped** | Read-only reporting layer over Phases 1 & 2, via `GET /dashboard/stats` |
 
 Planned extensions: country-level embargo checks and product/destination restrictions, alias and
 transliteration handling for entity names, quota/anti-dumping components on top of the duty
 calculation, caching the classifier index once a full CN import makes the per-call rebuild
 noticeable, **authenticated reviewers with RBAC** in place of `review.py`'s free-text
 `reviewer_name` — the natural next step once this demo needs real accountability per sign-off —
-and two deferred pieces of the versioning work: a `GET /cn-imports` endpoint for browsing
-`cn_code_versions` (the import script's own log line covers this for now; `database.fetch_cn_import_runs`
-is already there, just unexposed), and a CLI `history <code>` command mirroring the API endpoint.
+a CLI `history <code>` command mirroring the API endpoint, and a paginated `GET /cn-imports`
+endpoint for browsing the full `cn_code_versions` log (`/dashboard/stats` now surfaces the
+`fetch_cn_import_runs` data that used to be unexposed, but only the most recent handful — a
+dedicated, filterable endpoint is still open if the list needs to be browsed in full).
 
 ---
 
@@ -924,14 +978,15 @@ CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── src/
 │   ├── customsiq/
-│   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision records
-│   │   ├── database.py          # SQLite layer + seed data
+│   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision + HSCodeVersion + ImportRun records
+│   │   ├── database.py          # SQLite layer + seed data + SCD Type 2 versioning
 │   │   ├── matching.py          # shared validation + similarity scoring
 │   │   ├── search.py            # CN code ranking
 │   │   ├── cn_classifier.py     # TF-IDF classification + explanation
 │   │   ├── embargo_screener.py  # sanctions name screening
 │   │   ├── tariff_calculator.py # duty rate selection + calculation
 │   │   ├── review.py            # human-review audit trail (four-eyes)
+│   │   ├── dashboard.py         # read-only aggregation over Phases 1 & 2
 │   │   ├── exceptions.py        # typed error hierarchy
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # shared logging setup
@@ -940,7 +995,7 @@ CustomsIQ/
 │   │   └── static/index.html    # web frontend — single file, no build step
 │   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── scripts/import_cn_codes.py   # official CN file → hs_codes, versioning changes (SCD Type 2)
-├── tests/                       # 146 tests — unit, API, CLI, classification, screening, duty, review, import
+├── tests/                       # 154 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard
 │   └── fixtures/                # sample CN export for the importer's tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

@@ -77,6 +77,7 @@ entscheidet.
 | 💶 | **Zollberechnung** | Code + Ursprung + Wert → fälliger Zoll, mit Satz und Begründung |
 | 📋 | **Prüfprotokoll (Vier-Augen-Prinzip)** | Klassifizierung, Prüfung oder Zollergebnis freigeben/ablehnen/markieren — nur Anhängen |
 | 🕘 | **Versionierte KN-Codes (SCD Type 2)** | Jede geänderte Beschreibung/Kategorie behält ihren vorherigen Wert, mit Zeitstempel — `GET /codes/{code}/history` |
+| 📊 | **Analyse-Dashboard** | Schreibgeschützter Überblick über Referenzdaten, Prüfaktivität und Importläufe — `GET /dashboard/stats` |
 | 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
 | 📥 | **Import echter Daten** | Lädt die offizielle EU-KN-Nomenklatur aus einer lokalen Datei, versioniert Änderungen |
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
@@ -98,7 +99,7 @@ Scoring- und Validierungslogik existiert an genau einer Stelle und wird nie dupl
 flowchart LR
     subgraph Schnittstellen
         CLI["💻 main.py<br/>Interaktive CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats"]
         IMPORT["📥 import_cn_codes.py<br/>CLI-Importwerkzeug"]
     end
 
@@ -107,6 +108,7 @@ flowchart LR
     SCREEN["🚫 embargo_screener.py<br/>Sanktionstreffer ranken"]
     DUTY["💶 tariff_calculator.py<br/>Satzwahl + Berechnung"]
     REVIEW["📋 review.py<br/>Entscheidungen speichern + abrufen"]
+    DASH["📊 dashboard.py<br/>aggregierte Statistiken"]
     MATCH["🧩 matching.py<br/>Validierung + Ähnlichkeit"]
     DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions<br/>· hs_code_history · cn_code_versions")]
     EXC["🚨 exceptions.py"]
@@ -122,8 +124,10 @@ flowchart LR
     API --> SCREEN
     API --> DUTY
     API --> REVIEW
+    API --> DASH
     API --> DB
     IMPORT --> DB
+    DASH --> DB
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -153,6 +157,7 @@ flowchart LR
 | `embargo_screener.py` | Rankt Sanktionslistentreffer nach Namensähnlichkeit |
 | `tariff_calculator.py` | Wählt den anwendbaren Zollsatz und berechnet den fälligen Betrag |
 | `review.py` | Speichert und listet menschliche Freigaben zu vergangenen Entscheidungen (Prüfprotokoll) |
+| `dashboard.py` | Schreibgeschützte Aggregation von Referenzdaten, Prüfaktivität und KN-Importen für `/dashboard/stats` |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; liest `CUSTOMSIQ_*`-Umgebungsvariablen und `.env` |
 | `logging_config.py` | Gemeinsames Logging — schlichtes Format nach stdout, nirgends ein `print()` |
@@ -289,6 +294,21 @@ das liefert, was es immer geliefert hat.
 Das stärkt zudem das Prüfprotokoll der Freigabeschicht: `review_decisions` erfasst, *dass* eine
 Entscheidung geprüft wurde, und die KN-Code-Historie macht es nun möglich zu rekonstruieren,
 welche Nomenklaturdaten zu diesem Zeitpunkt aktiv waren.
+
+### 📊 Dashboard: die Berichtsschicht über Phase 1 & 2
+
+`dashboard.py` fügt keine neue Geschäftslogik hinzu und trifft keine Entscheidungen — es ist eine
+schreibgeschützte Aggregation dessen, was `review.py` und die KN-Pipeline bereits erfasst haben,
+und setzt bestehende `database.py`-Lesevorgänge (`fetch_all`, `fetch_all_entities`,
+`fetch_review_decisions`, `fetch_cn_import_runs`, plus zwei kleine neue Zählprimitive) zu einem
+einzigen `GET /dashboard/stats`-Aufruf für das Dashboard-Panel des Frontends zusammen. Eine
+Anpassung ist erwähnenswert: `cn_code_versions` (Phase 2) speicherte immer nur `row_count` pro
+Importlauf, keine Aufschlüsselung nach neu/geändert/unverändert — diese Aufschlüsselung existierte
+nur vorübergehend innerhalb von `upsert_hs_codes_with_history()` und wurde nie persistiert. Anstatt
+nachträglich Spalten dafür hinzuzufügen, leitet das Dashboard **geändert vs. unverändert** pro Lauf
+davon ab, wie viele `hs_code_history`-Zeilen das `version_label` dieses Laufs tragen (eine einzige
+`GROUP BY`-Abfrage, nicht drei separate Zählungen) — eine ehrliche Lesart dessen, was tatsächlich
+erfasst wurde, keine erfundene Aufschlüsselung.
 
 ### 🔗 Deterministische `subject_reference`
 
@@ -534,6 +554,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/review` | Speichert die Freigabeentscheidung zu einem früheren Klassifizierungs-, Prüf- oder Zollergebnis |
 | `GET` | `/review/history` | Erfasste Prüfentscheidungen, neueste zuerst |
 | `GET` | `/codes/{code}/history` | Versionszeitlinie eines KN-Codes (SCD Type 2), älteste zuerst |
+| `GET` | `/dashboard/stats` | Aggregierte Statistiken: Referenzdaten, Prüfaktivität, KN-Importläufe |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
 **Parameter von `GET /search`**
@@ -644,6 +665,39 @@ curl "http://localhost:8000/codes/6109100000/history"
 ]
 ```
 
+**`GET /dashboard/stats`** — keine Parameter, keine zu validierende Eingabe. `review_by_decision`
+und `review_by_subject_type` enthalten immer alle drei Schlüssel, standardmäßig auf `0`, sodass
+eine frische Datenbank sauber gerendert wird, ohne den Aufrufer zu zwingen, sich gegen fehlende
+Schlüssel abzusichern.
+
+```bash
+curl "http://localhost:8000/dashboard/stats"
+```
+
+```json
+{
+  "hs_code_count": 20,
+  "sanctioned_entity_count": 18,
+  "tariff_rate_count": 18,
+  "review_total": 2,
+  "review_by_decision": { "approved": 1, "rejected": 0, "flagged": 1 },
+  "review_by_subject_type": { "classification": 1, "screening": 0, "duty": 1 },
+  "recent_reviews": [ { "id": 2, "subject_type": "duty", "decision": "flagged", "...": "..." } ],
+  "import_run_count": 1,
+  "recent_import_runs": [
+    {
+      "version_label": "CN2026",
+      "source_description": "cn2026.csv",
+      "imported_at": "2026-02-01T09:00:00+00:00",
+      "row_count": 10,
+      "changed_count": 1,
+      "unchanged_count": 9
+    }
+  ],
+  "versioned_code_count": 1
+}
+```
+
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
 ```
@@ -695,11 +749,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Modul | Abdeckung |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
-| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` | 🟢 100 % |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` | 🟢 100 % |
 | `scripts/import_cn_codes.py` | 🟢 91 % |
 | `logging_config.py` | 🟢 100 % |
 | `main.py` | 🟢 97 % |
-| **Gesamt** | **🟢 98 %** (146 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
+| **Gesamt** | **🟢 98 %** (154 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
 
 ### Getestete Grenzfälle
 
@@ -729,6 +783,7 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Erneuter Import eines Codes mit identischen Daten | Keine neue `hs_code_history`-Zeile; `hs_codes` erhält einen harmlosen No-op-Upsert |
 | `GET /codes/{code}/history` für einen eingesäten, nie versionierten Code | `200 []`, kein Fehler |
 | `GET /codes/{code}/history` für einen unbekannten Code | `HSCodeNotFoundError` → HTTP `404` |
+| `GET /dashboard/stats` bei einer frischen Datenbank (keine Prüfungen, keine Importe) | Alle Zählungen `0`, Aufschlüsselungsschlüssel vorhanden statt fehlend, leere Listen — nie `NaN%` im Frontend |
 
 ---
 
@@ -866,7 +921,7 @@ da nur dieses Werkzeug sie je bräuchte. Ein CSV-Export erübrigt sie vollständ
 
 ## 🗺️ Roadmap
 
-**Alle sechs Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
+**Alle sieben Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
 von der Abdeckungsschwelle gemessen:
 
 | Modul | Status | Funktionsumfang |
@@ -877,17 +932,18 @@ von der Abdeckungsschwelle gemessen:
 | `tariff_calculator.py` | ✅ **Ausgeliefert** | Zollberechnung mit Auswahl des Präferenzsatzes |
 | `review.py` | ✅ **Ausgeliefert** | Vier-Augen-Prüfprotokoll für alle drei Entscheidungen |
 | KN-Code-Versionierung (SCD Type 2) | ✅ **Ausgeliefert** | `hs_code_history` + `cn_code_versions`, bereitgestellt über `GET /codes/{code}/history` |
+| `dashboard.py` | ✅ **Ausgeliefert** | Schreibgeschützte Berichtsschicht über Phase 1 & 2, via `GET /dashboard/stats` |
 
 Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
 Alias- und Transliterationsbehandlung für Entitätsnamen, Kontingent- und Antidumping-Komponenten
 auf der Zollberechnung, das Zwischenspeichern des Klassifikator-Index, sobald ein vollständiger
 KN-Import den Neuaufbau pro Aufruf spürbar macht, **authentifizierte Prüfer mit RBAC** anstelle
 des Freitextfelds `reviewer_name` in `review.py` — der naheliegende nächste Schritt, sobald diese
-Demo echte Nachvollziehbarkeit pro Freigabe braucht — sowie zwei zurückgestellte Teile der
-Versionierung: ein `GET /cn-imports`-Endpunkt zum Durchsuchen von `cn_code_versions` (vorerst
-deckt die eigene Logzeile des Importskripts das ab; `database.fetch_cn_import_runs` steht schon
-bereit, nur noch nicht exponiert) und ein CLI-Befehl `history <code>`, der den API-Endpunkt
-spiegelt.
+Demo echte Nachvollziehbarkeit pro Freigabe braucht — ein CLI-Befehl `history <code>`, der den
+API-Endpunkt spiegelt, sowie ein eigener, paginierter `GET /cn-imports`-Endpunkt zum vollständigen
+Durchsuchen des `cn_code_versions`-Protokolls (`/dashboard/stats` stellt die zuvor nicht
+exponierten `fetch_cn_import_runs`-Daten jetzt bereit, aber nur die jüngsten — für die vollständige
+Liste bleibt ein dedizierter, filterbarer Endpunkt offen).
 
 ---
 
@@ -906,6 +962,7 @@ CustomsIQ/
 │   │   ├── embargo_screener.py  # Namensprüfung gegen Sanktionslisten
 │   │   ├── tariff_calculator.py # Zollsatzwahl + Berechnung
 │   │   ├── review.py            # Prüfprotokoll (Vier-Augen-Prinzip)
+│   │   ├── dashboard.py         # schreibgeschützte Aggregation über Phase 1 & 2
 │   │   ├── exceptions.py        # typisierte Fehlerhierarchie
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # gemeinsames Logging-Setup
@@ -914,7 +971,7 @@ CustomsIQ/
 │   │   └── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
 ├── scripts/import_cn_codes.py   # offizielle KN-Datei → hs_codes, versioniert Änderungen (SCD Type 2)
-├── tests/                       # 146 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import
+├── tests/                       # 154 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import, Dashboard
 │   └── fixtures/                # Beispiel-KN-Export für die Importer-Tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
