@@ -75,8 +75,9 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 🚫 | **Yaptırım taraması** | İsim → kelime sırasına ve kısmi isimlere toleranslı yasaklı taraf eşleşmeleri |
 | 💶 | **Vergi hesaplama** | Kod + menşe + kıymet → ödenecek vergi, uygulanan oran ve gerekçesiyle |
 | 📋 | **İnsan onayı / denetim izi** | Sınıflandırma, tarama veya vergi sonucunu onayla/reddet/işaretle — sadece ekleme yapılır |
+| 🕘 | **Sürümlü CN kodları (SCD Type 2)** | Değişen her açıklama/kategori eski değerini zaman damgasıyla korur — `GET /codes/{code}/history` |
 | 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
-| 📥 | **Gerçek veri içe aktarma** | Resmî AB CN nomanklatürünü yerel dosyadan idempotent biçimde yükler |
+| 📥 | **Gerçek veri içe aktarma** | Resmî AB CN nomanklatürünü yerel dosyadan yükler, değişiklikleri sürümleyerek |
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
 | 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
@@ -96,7 +97,8 @@ adaptörüdür; skorlama ve doğrulama mantığı tam olarak tek bir yerde bulun
 flowchart LR
     subgraph Arayuzler["Arayüzler"]
         CLI["💻 main.py<br/>Etkileşimli CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history"]
+        IMPORT["📥 import_cn_codes.py<br/>CLI içe aktarma aracı"]
     end
 
     SEARCH["🔍 search.py<br/>CN kodu sıralama"]
@@ -105,7 +107,7 @@ flowchart LR
     DUTY["💶 tariff_calculator.py<br/>oran seçimi + hesap"]
     REVIEW["📋 review.py<br/>karar kaydet + listele"]
     MATCH["🧩 matching.py<br/>doğrulama + benzerlik"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions")]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions<br/>· hs_code_history · cn_code_versions")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
@@ -119,6 +121,8 @@ flowchart LR
     API --> SCREEN
     API --> DUTY
     API --> REVIEW
+    API --> DB
+    IMPORT --> DB
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -140,8 +144,8 @@ flowchart LR
 
 | Modül | Sorumluluk |
 |---|---|
-| `models.py` | `HSCode`, `SanctionedEntity`, `TariffRate` ve `ReviewDecision` — değişmez kayıtlar |
-| `database.py` | SQLite şeması, bağlantı, örnek veri, `fetch_all*()`, `get_by_code()` |
+| `models.py` | `HSCode`, `SanctionedEntity`, `TariffRate`, `ReviewDecision`, `HSCodeVersion` ve `ImportRun` — değişmez kayıtlar |
+| `database.py` | SQLite şeması, bağlantı, örnek veri, `fetch_all*()`, `get_by_code()`, `upsert_hs_codes_with_history()` (SCD Type 2) |
 | `matching.py` | Girdi doğrulama + benzerlik skorlaması (**her iki yetenek de bunu kullanır**) |
 | `search.py` | CN kodlarını açıklama benzerliğine göre sıralar |
 | `cn_classifier.py` | TF-IDF terim ağırlığıyla kod önerir ve eşleşen terimleri bildirir |
@@ -152,7 +156,8 @@ flowchart LR
 | `config.py` | `pydantic-settings`; `CUSTOMSIQ_*` ortam değişkenlerini ve `.env` dosyasını okur |
 | `logging_config.py` | Ortak loglama kurulumu — stdout'a sade format, hiçbir yerde `print()` yok |
 | `main.py` | Etkileşimli CLI giriş noktası (arama + `screen <isim>`) |
-| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/health` |
+| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/codes/{code}/history`, `/health` |
+| `scripts/import_cn_codes.py` | CLI içe aktarma aracı: CN dosyasını ayrıştırır, değişiklikleri `upsert_hs_codes_with_history()` ile sürümler |
 | `static/index.html` | Web arayüzünün tamamı — satır içi CSS, saf `fetch()`, sıfır bağımlılık |
 
 ### Veri modeli
@@ -189,6 +194,24 @@ CREATE TABLE review_decisions (
     reviewer_name      TEXT NOT NULL,   -- serbest metin — kimlik doğrulama gelene kadar geçici
     comment            TEXT,            -- opsiyonel not
     reviewed_at        TEXT NOT NULL    -- ISO 8601 zaman damgası
+);
+
+CREATE TABLE hs_code_history (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,  -- geçmiş kaydının doğal anahtarı yok
+    code          TEXT NOT NULL,     -- bu sürümün ait olduğu hs_codes.code
+    description   TEXT NOT NULL,     -- bu sürümde geçerli olan açıklama
+    category      TEXT NOT NULL,     -- bu sürümde geçerli olan kategori
+    valid_from    TEXT NOT NULL,     -- bu sürümün geçerli olduğu ISO 8601 zaman damgası
+    valid_to      TEXT,              -- değiştirildiği zaman damgası, hâlâ güncelse NULL
+    version_label TEXT NOT NULL      -- bu sürümü üreten içe aktarma, örn. "CN2026"
+);
+
+CREATE TABLE cn_code_versions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    version_label       TEXT NOT NULL,     -- örn. "CN2026"
+    source_description  TEXT,              -- örn. içe aktarılan dosyanın adı
+    imported_at         TEXT NOT NULL,     -- işlemin tamamlandığı ISO 8601 zaman damgası
+    row_count           INTEGER NOT NULL   -- bu çalıştırmada işlenen yaprak CN kodu sayısı
 );
 ```
 
@@ -233,6 +256,37 @@ Aşağıdakilerden **herhangi biri** gerçekleştiğinde `matching.py` içindeki
 | **`EmbargoScreeningError` eklenmemesi** | Taramanın girdi doğrulaması aramanınkiyle birebir aynı; yeni sınıf yerine `InvalidQueryError` yeniden kullanılır | Tarama gerçekten farklı bir hata durumu kazanırsa eklenir |
 | **`review_decisions`, diğer üç tablonun aksine `INTEGER PRIMARY KEY AUTOINCREMENT` kullanır** | Denetim kayıtlarının doğal bir benzersizliği yok — aynı `subject_reference` zaman içinde birden çok karara sahip olabilir | — |
 | **`review_decisions` yalnızca ekleme yapılır (append-only)** | SAP GTS gibi gümrük uyum araçlarında yaygın olan dört-göz / insan-onayı ilkesini modeller: düzeltilmiş bir karar bir güncelleme değil, yeni bir satırdır, böylece geçmiş asla kaybolmaz. `reviewer_name` bu demoda serbest metindir; üretim sistemi bunu kimlik doğrulanmış kullanıcılara bağlar (bkz. Yol haritası) | Kimlik doğrulanmış kullanıcılar + RBAC eklenir |
+| **CN kodu geçmişi `hs_codes`'a eklenen `valid_from`/`valid_to` sütunları yerine ayrı bir `hs_code_history` tablosunda tutulur** | `hs_codes` mevcut `code TEXT PRIMARY KEY` yapısını ve iki okuma fonksiyonunu (`fetch_all`, `get_by_code`) birebir aynı korur — süzülecek, unutulacak bir şey yok. Ayrıca göç açısından güvenli tek seçenek: bu projede şema göçü yok ve `CREATE TABLE IF NOT EXISTS` mevcut bir tabloyu asla değiştirmez, dolayısıyla `hs_codes`'a eklenen sütunlar mevcut hiçbir `customsiq.db` dosyasında görünmezdi | Gerçek bir dağıtım ilk günden tam derinlikli geçmiş istiyorsa mevcut her kod için açılış geçmiş satırı geri doldurulur |
+
+### 🕘 Sürümlü CN kodları (SCD Type 2)
+
+CN referans verisini yeniden içe aktarmak, `hs_codes`'u yerinde sessizce eziyordu
+(`ON CONFLICT DO UPDATE`) — bir sınıflandırma veya vergi kararı eski bir açıklamaya karşı
+verildiyse ve nomanklatür daha sonra değişmiş veriyle yeniden içe aktarıldıysa, sistemin karar
+anında "ne bildiğini" yeniden kurmanın bir yolu yoktu. `scripts/import_cn_codes.py` artık BI/veri
+ambarı araçlarında yaygın olan SCD Type 2 desenini kullanarak her gerçek değişikliği sürümlüyor
+(SAP BW'nin değişiklik-belgesi tabloları aynı fikirdir): `hs_codes` öncekiyle birebir aynı şekilde
+kod başına tek güncel satır tutmaya devam eder, `hs_code_history` ise her önceki değeri —
+silinmeden, kapatılarak — saklar.
+
+"CN2025" (yeni bir kod), ardından "CN2026" (aynı kod, açıklama yeniden yazılmış) içe aktarıldığında:
+
+| Tablo | CN2025 sonrası | CN2026 sonrası |
+|---|---|---|
+| `hs_codes` | `6109100000` → *"Cotton T-shirts, knitted"* | `6109100000` → *"Cotton T-shirts, knitted or crocheted"* (eski değer burada yok — tıpkı bugünkü gibi) |
+| `hs_code_history` | tek açık satır: *"...knitted"*, `valid_to = NULL`, `version_label = "CN2025"` | o satır artık **kapalı** (`valid_to` set edilmiş) **artı yeni bir açık satır**: *"...knitted or crocheted"*, `version_label = "CN2026"` |
+| `cn_code_versions` | `CN2025`, `row_count = 1` | `CN2026`, `row_count = 1` |
+
+`GET /codes/6109100000/history` her iki `hs_code_history` satırını da, en eskisi önce olacak
+şekilde döndürür — eski açıklama silinmez, hayatta kalır. "CN2026"yı **aynı** veriyle ikinci kez
+içe aktarmak hiçbir geçmiş tablosuna bir şey eklemez: yalnızca `cn_code_versions`, çalıştırmanın
+0 değişiklikle gerçekleştiğini kaydeder. `search.py`, `cn_classifier.py`, `tariff_calculator.py`
+ve `embargo_screener.py` bunların hiçbirinden etkilenmez — `tariff_calculator.py` `hs_codes`'u
+hiç okumaz, diğer ikisi zaten yalnızca `fetch_all()` çağırır ve bu her zaman döndürdüğünü döndürür.
+
+Bu aynı zamanda insan-onayı katmanındaki denetim izini de güçlendirir: `review_decisions` bir
+kararın incelendiğini kaydeder, CN kodu geçmişi ise artık o anda hangi nomanklatür verisinin
+etkin olduğunu yeniden kurmayı mümkün kılar.
 
 ### 🔗 Deterministik `subject_reference`
 
@@ -475,6 +529,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/calculate-duty` | Sevkiyat için ödenecek vergi, uygulanan oranın gerekçesiyle |
 | `POST` | `/review` | Geçmiş bir sınıflandırma, tarama veya vergi sonucu için inceleyici kararını kaydeder |
 | `GET` | `/review/history` | Kayıtlı inceleme kararları, en yeni önce |
+| `GET` | `/codes/{code}/history` | Bir CN kodunun SCD Type 2 sürüm zaman çizelgesi, en eski önce |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -556,6 +611,35 @@ curl -X POST "http://localhost:8000/review" \
 curl "http://localhost:8000/review/history?subject_type=duty&limit=10"
 ```
 
+**`GET /codes/{code}/history`** — kodun kendisi dışında parametre almaz. Kod bilinmiyorsa `404`;
+kod var ama hiçbir sürümlü içe aktarmaya konu olmadıysa (örn. tohumlanan demo verisi) `200 []`
+döner, hata değil — `/search` ile aynı "boş liste, asla hata değil" kuralı.
+
+```bash
+curl "http://localhost:8000/codes/6109100000/history"
+```
+
+```json
+[
+  {
+    "code": "6109100000",
+    "description": "Cotton T-shirts, knitted",
+    "category": "Textile",
+    "valid_from": "2025-01-15T09:00:00+00:00",
+    "valid_to": "2026-02-01T09:00:00+00:00",
+    "version_label": "CN2025"
+  },
+  {
+    "code": "6109100000",
+    "description": "Cotton T-shirts, knitted or crocheted",
+    "category": "Textile",
+    "valid_from": "2026-02-01T09:00:00+00:00",
+    "valid_to": null,
+    "version_label": "CN2026"
+  }
+]
+```
+
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
 ```
@@ -579,7 +663,7 @@ curl "http://localhost:8000/screen?name=Northwind+Maritime"
 |---|---|
 | `200` | Başarılı — eşleşme dizisi (boş olabilir) |
 | `400` | `InvalidQueryError` — boş/çok uzun sorgu, hatalı kod veya negatif kıymet |
-| `404` | `RateNotFoundError` — o HS kodu için kayıtlı vergi oranı yok |
+| `404` | `RateNotFoundError` — o HS kodu için kayıtlı vergi oranı yok, veya `/codes/{code}/history`'de `HSCodeNotFoundError` |
 | `422` | Eksik/geçersiz parametre tipi (FastAPI doğrulaması) |
 
 ---
@@ -610,7 +694,7 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | `scripts/import_cn_codes.py` | 🟢 %91 |
 | `logging_config.py` | 🟢 %100 |
 | `main.py` | 🟢 %97 |
-| **Toplam** | **🟢 %98** (140 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+| **Toplam** | **🟢 %98** (146 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
 
 ### Test edilen uç durumlar
 
@@ -636,6 +720,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Aynı vergi girdileri, farklı `customs_value` | Farklı `subject_reference` — farklı kıymet farklı karardır |
 | Aynı `subject_reference` için iki inceleme kararı | İkisi de kalır, en yeni önce — denetim kayıtları asla üzerine yazılmaz |
 | `POST /review`'da bilinmeyen `subject_type` veya `decision` | `InvalidQueryError` → HTTP `400` |
+| Değişen açıklama/kategoriyle bir kodu yeniden içe aktarma | Eski `hs_code_history` satırı kapatılır (`valid_to` set edilir), yenisi açılır — asla silinmez |
+| Aynı veriyle bir kodu yeniden içe aktarma | Yeni `hs_code_history` satırı yok; `hs_codes` zararsız bir no-op upsert alır |
+| Hiç sürümlenmemiş tohumlanan bir kod için `GET /codes/{code}/history` | `200 []`, hata değil |
+| Bilinmeyen bir kod için `GET /codes/{code}/history` | `HSCodeNotFoundError` → HTTP `404` |
 
 ---
 
@@ -742,11 +830,17 @@ python scripts/import_cn_codes.py path/to/cn_codes.csv
 | `--code-column` | otomatik algılanır | Dışa aktarım alışılmadık bir başlık kullanıyorsa |
 | `--description-column` | otomatik algılanır | Aynısı, açıklama sütunu için |
 | `--batch-size` | `1000` | Her upsert'te yazılan satır sayısı |
+| `--version-label` | bir zaman damgası | Bu çalıştırma için etiket (örn. `CN2026`), değişen her kod için kaydedilir |
 
 İçe aktarıcı olağan RAMON/TARIC sütun adlarını otomatik algılar, her kodun kategorisini HS
 bölümünden (ilk iki hane) türetir, 8 haneli yaprakların üstündeki bölüm/pozisyon satırlarını atlar,
-bozuk satırları iptal etmek yerine loglayıp geçer ve **kod üzerinden upsert yapar — yani yeniden
-çalıştırmak veriyi çoğaltmaz, tazeler**.
+bozuk satırları iptal etmek yerine loglayıp geçer ve **`hs_codes`'u kod üzerinden upsert yapar —
+yani yeniden çalıştırmak güncel veriyi çoğaltmaz, tazeler, tıpkı öncekiyle aynı**. Yeni olan:
+açıklaması veya kategorisi gerçekten değişen bir kod, `hs_code_history`'de kapatılıp yeniden
+açılan bir kayıt da alır (yukarıdaki [🕘 Sürümlü CN kodları](#-sürümlü-cn-kodları-scd-type-2)
+bölümüne bakın), böylece yeniden içe aktarma bir kodun eski hâlini asla sessizce kaybetmez. Bir
+kodun tam zaman çizelgesini görmek için `GET /codes/{code}/history`'yi çağırın — bu aynı zamanda
+demonun sürümlemeyi gösteren somut kanıtıdır.
 
 Uygulamayı içe aktarılan veritabanına yöneltmek için:
 
@@ -766,7 +860,7 @@ Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje 
 
 ## 🗺️ Yol haritası
 
-**Beş yeteneğin beşi de bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
+**Altı yeteneğin altısı da bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
 eşiğiyle ölçülüyor:
 
 | Modül | Durum | Kapsam |
@@ -776,13 +870,17 @@ eşiğiyle ölçülüyor:
 | `embargo_screener.py` | ✅ **Tamamlandı** | CLI ve REST üzerinden yasaklı taraf isim taraması |
 | `tariff_calculator.py` | ✅ **Tamamlandı** | Tercihli oran seçimiyle vergi hesaplama |
 | `review.py` | ✅ **Tamamlandı** | Üç kararın tümünde dört-göz insan onayı denetim izi |
+| CN kodu sürümleme (SCD Type 2) | ✅ **Tamamlandı** | `hs_code_history` + `cn_code_versions`, `GET /codes/{code}/history` üzerinden sunulur |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
 isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
 bileşenleri, tam CN içe aktarımı her sorgudaki yeniden kurulumu hissedilir hâle getirdiğinde
-sınıflandırıcı indeksinin önbelleğe alınması, ve `review.py`'nin serbest metin `reviewer_name`
+sınıflandırıcı indeksinin önbelleğe alınması, `review.py`'nin serbest metin `reviewer_name`
 alanı yerine **kimlik doğrulanmış inceleyiciler + RBAC** — bu demonun gerçek hesap verebilirlik
-ihtiyacı doğduğunda atılacak doğal bir sonraki adım.
+ihtiyacı doğduğunda atılacak doğal bir sonraki adım — ve sürümleme işinin iki ertelenen parçası:
+`cn_code_versions`'ı listelemek için bir `GET /cn-imports` uç noktası (şimdilik içe aktarma
+aracının kendi log satırı bunu karşılıyor; `database.fetch_cn_import_runs` zaten hazır, sadece
+dışa açılmamış) ve API uç noktasını yansıtan bir CLI `history <code>` komutu.
 
 ---
 
@@ -793,8 +891,8 @@ CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── src/
 │   ├── customsiq/
-│   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision kayıtları
-│   │   ├── database.py          # SQLite katmanı + örnek veri
+│   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision + HSCodeVersion + ImportRun kayıtları
+│   │   ├── database.py          # SQLite katmanı + örnek veri + SCD Type 2 sürümleme
 │   │   ├── matching.py          # ortak doğrulama + benzerlik skorlaması
 │   │   ├── search.py            # CN kodu sıralaması
 │   │   ├── cn_classifier.py     # TF-IDF sınıflandırma + gerekçe
@@ -808,8 +906,8 @@ CustomsIQ/
 │   │   ├── api.py               # FastAPI uygulaması (arayüzü de sunar)
 │   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
-├── scripts/import_cn_codes.py   # tek seferlik araç: resmî CN dosyası → hs_codes
-├── tests/                       # 140 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma
+├── scripts/import_cn_codes.py   # resmî CN dosyası → hs_codes, değişiklikleri sürümler (SCD Type 2)
+├── tests/                       # 146 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma
 │   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

@@ -12,9 +12,9 @@ from pydantic import BaseModel
 from src.customsiq import review
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
-from src.customsiq.database import get_connection, seed
+from src.customsiq.database import fetch_hs_code_history, get_by_code, get_connection, seed
 from src.customsiq.embargo_screener import screen_entity
-from src.customsiq.exceptions import InvalidQueryError, RateNotFoundError
+from src.customsiq.exceptions import HSCodeNotFoundError, InvalidQueryError, RateNotFoundError
 from src.customsiq.search import search
 from src.customsiq.tariff_calculator import calculate_duty
 
@@ -154,6 +154,32 @@ def calculate_duty_for_consignment(
         "explanation": result.explanation,
         "subject_reference": review.reference_for_duty(hs_code, country_of_origin, customs_value),
     }
+
+
+@app.get("/codes/{code}/history")
+def code_history(code: str) -> list[dict]:
+    """Return one CN code's version timeline, oldest first.
+
+    404 only if the code itself is unknown. A code that exists but was seeded
+    before versioning existed (e.g. the demo data) has simply never had a
+    version recorded — that's an empty list, not an error, matching how
+    /search, /classify and /screen already treat "no results" as HTTP 200.
+    """
+    try:
+        get_by_code(_conn, code)
+    except HSCodeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [
+        {
+            "code": v.code,
+            "description": v.description,
+            "category": v.category,
+            "valid_from": v.valid_from,
+            "valid_to": v.valid_to,
+            "version_label": v.version_label,
+        }
+        for v in fetch_hs_code_history(_conn, code)
+    ]
 
 
 class ReviewSubmission(BaseModel):

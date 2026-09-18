@@ -76,8 +76,9 @@ entscheidet.
 | 🚫 | **Sanktionsprüfung** | Name → Treffer auf Verbotslisten, tolerant gegenüber Wortstellung und Teilnamen |
 | 💶 | **Zollberechnung** | Code + Ursprung + Wert → fälliger Zoll, mit Satz und Begründung |
 | 📋 | **Prüfprotokoll (Vier-Augen-Prinzip)** | Klassifizierung, Prüfung oder Zollergebnis freigeben/ablehnen/markieren — nur Anhängen |
+| 🕘 | **Versionierte KN-Codes (SCD Type 2)** | Jede geänderte Beschreibung/Kategorie behält ihren vorherigen Wert, mit Zeitstempel — `GET /codes/{code}/history` |
 | 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
-| 📥 | **Import echter Daten** | Lädt die offizielle EU-KN-Nomenklatur idempotent aus einer lokalen Datei |
+| 📥 | **Import echter Daten** | Lädt die offizielle EU-KN-Nomenklatur aus einer lokalen Datei, versioniert Änderungen |
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
 | 🌐 | **REST-API** | `GET /search` und `GET /screen` über FastAPI, mit erzeugter `/docs`-Oberfläche |
 | 🗄️ | **Speicherung ohne Einrichtungsaufwand** | SQLite aus der Standardbibliothek, vorbefüllt mit 20 Codes + 18 fiktiven Einträgen |
@@ -97,7 +98,8 @@ Scoring- und Validierungslogik existiert an genau einer Stelle und wird nie dupl
 flowchart LR
     subgraph Schnittstellen
         CLI["💻 main.py<br/>Interaktive CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history"]
+        IMPORT["📥 import_cn_codes.py<br/>CLI-Importwerkzeug"]
     end
 
     SEARCH["🔍 search.py<br/>KN-Codes ranken"]
@@ -106,7 +108,7 @@ flowchart LR
     DUTY["💶 tariff_calculator.py<br/>Satzwahl + Berechnung"]
     REVIEW["📋 review.py<br/>Entscheidungen speichern + abrufen"]
     MATCH["🧩 matching.py<br/>Validierung + Ähnlichkeit"]
-    DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions")]
+    DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions<br/>· hs_code_history · cn_code_versions")]
     EXC["🚨 exceptions.py"]
     CFG["⚙️ config.py<br/>.env"]
 
@@ -120,6 +122,8 @@ flowchart LR
     API --> SCREEN
     API --> DUTY
     API --> REVIEW
+    API --> DB
+    IMPORT --> DB
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -141,8 +145,8 @@ flowchart LR
 
 | Modul | Zuständigkeit |
 |---|---|
-| `models.py` | `HSCode`, `SanctionedEntity`, `TariffRate` und `ReviewDecision` — die unveränderlichen Datensätze |
-| `database.py` | SQLite-Schema, Verbindung, Beispieldaten, `fetch_all*()`, `get_by_code()` |
+| `models.py` | `HSCode`, `SanctionedEntity`, `TariffRate`, `ReviewDecision`, `HSCodeVersion` und `ImportRun` — die unveränderlichen Datensätze |
+| `database.py` | SQLite-Schema, Verbindung, Beispieldaten, `fetch_all*()`, `get_by_code()`, `upsert_hs_codes_with_history()` (SCD Type 2) |
 | `matching.py` | Eingabevalidierung + Ähnlichkeitsbewertung (**von beiden Funktionen genutzt**) |
 | `search.py` | Rankt KN-Codes nach Beschreibungsähnlichkeit |
 | `cn_classifier.py` | Schlägt Codes über TF-IDF-Gewichtung vor und nennt die passenden Begriffe |
@@ -153,7 +157,8 @@ flowchart LR
 | `config.py` | `pydantic-settings`; liest `CUSTOMSIQ_*`-Umgebungsvariablen und `.env` |
 | `logging_config.py` | Gemeinsames Logging — schlichtes Format nach stdout, nirgends ein `print()` |
 | `main.py` | Einstiegspunkt der interaktiven CLI (Suche + `screen <Name>`) |
-| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/health` |
+| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/codes/{code}/history`, `/health` |
+| `scripts/import_cn_codes.py` | CLI-Importwerkzeug: parst einen KN-Export und versioniert Änderungen über `upsert_hs_codes_with_history()` |
 | `static/index.html` | Das gesamte Frontend — Inline-CSS, reines `fetch()`, keine Abhängigkeiten |
 
 ### Datenmodell
@@ -190,6 +195,24 @@ CREATE TABLE review_decisions (
     reviewer_name      TEXT NOT NULL,   -- Freitext — Platzhalter bis es authentifizierte Nutzer gibt
     comment            TEXT,            -- optionale Notiz
     reviewed_at        TEXT NOT NULL    -- ISO-8601-Zeitstempel
+);
+
+CREATE TABLE hs_code_history (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,  -- Historieneinträge haben keinen natürlichen Schlüssel
+    code          TEXT NOT NULL,     -- der hs_codes.code, zu dem diese Version gehört
+    description   TEXT NOT NULL,     -- die Beschreibung während der Gültigkeit dieser Version
+    category      TEXT NOT NULL,     -- die Kategorie während der Gültigkeit dieser Version
+    valid_from    TEXT NOT NULL,     -- ISO-8601-Zeitstempel, ab dem diese Version aktuell wurde
+    valid_to      TEXT,              -- ISO-8601-Zeitstempel der Ablösung, NULL wenn noch aktuell
+    version_label TEXT NOT NULL      -- der Importlauf, der diese Version erzeugt hat, z. B. "CN2026"
+);
+
+CREATE TABLE cn_code_versions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    version_label       TEXT NOT NULL,     -- z. B. "CN2026"
+    source_description  TEXT,              -- z. B. der Name der importierten Datei
+    imported_at         TEXT NOT NULL,     -- ISO-8601-Zeitstempel des Laufabschlusses
+    row_count           INTEGER NOT NULL   -- in diesem Lauf verarbeitete KN-Blattcodes
 );
 ```
 
@@ -234,6 +257,38 @@ Punkte zutrifft:
 | **Kein `EmbargoScreeningError`** | Die Eingabevalidierung der Prüfung ist identisch mit der der Suche, daher wird `InvalidQueryError` wiederverwendet statt eine Klasse zu duplizieren | Ergänzen, sobald die Prüfung einen wirklich eigenen Fehlerfall bekommt |
 | **`review_decisions` nutzt `INTEGER PRIMARY KEY AUTOINCREMENT`**, anders als die anderen drei Tabellen | Prüfdatensätze sind nicht von Natur aus eindeutig — dieselbe `subject_reference` kann im Lauf der Zeit mehrere Entscheidungen erhalten | — |
 | **`review_decisions` ist nur anhängend (append-only)** | Modelliert das Vier-Augen-/Freigabeprinzip, wie es in Compliance-Tools wie SAP GTS üblich ist: eine korrigierte Entscheidung ist eine neue Zeile, keine Bearbeitung, sodass der Verlauf nie verloren geht. `reviewer_name` ist in dieser Demo Freitext; ein Produktivsystem würde dies an authentifizierte Nutzer binden (siehe Roadmap) | Authentifizierte Nutzer + RBAC ergänzen |
+| **KN-Code-Historie liegt in einer separaten `hs_code_history`-Tabelle**, nicht in `valid_from`/`valid_to`-Spalten auf `hs_codes` selbst | `hs_codes` behält sein bestehendes `code TEXT PRIMARY KEY` und seine beiden Lesefunktionen (`fetch_all`, `get_by_code`) bleiben byte-für-byte unverändert — nichts zu filtern, nichts zu vergessen. Es ist zudem die einzige migrationssichere Option: Dieses Projekt hat keine Schema-Migrationen, und `CREATE TABLE IF NOT EXISTS` ändert nie eine bestehende Tabelle, also würden Spalten auf `hs_codes` in keiner bestehenden `customsiq.db`-Datei je erscheinen | Bei einem Produktivbetrieb, der von Tag eins volle Historientiefe braucht, eine einmalige Eröffnungszeile pro bestehendem Code nachträglich befüllen |
+
+### 🕘 Versionierte KN-Codes (SCD Type 2)
+
+Das erneute Importieren von KN-Referenzdaten überschrieb `hs_codes` bisher stillschweigend an Ort
+und Stelle (`ON CONFLICT DO UPDATE`) — wurde eine Einreihungs- oder Zollentscheidung gegen eine
+alte Beschreibung getroffen und die Nomenklatur später mit geänderten Daten neu importiert, gab es
+keine Möglichkeit zu rekonstruieren, was das System zum Entscheidungszeitpunkt "wusste".
+`scripts/import_cn_codes.py` versioniert jetzt jede tatsächliche Änderung nach dem in
+BI-/Data-Warehouse-Werkzeugen gängigen SCD-Type-2-Muster (dieselbe Idee wie SAP BWs
+Änderungsbeleg-Tabellen): `hs_codes` hält weiterhin genau eine aktuelle Zeile pro Code, exakt wie
+zuvor, während `hs_code_history` jeden vorherigen Wert aufbewahrt — geschlossen, nicht gelöscht.
+
+Import von "CN2025" (ein neuer Code), dann "CN2026" (derselbe Code, Beschreibung überarbeitet):
+
+| Tabelle | Nach CN2025 | Nach CN2026 |
+|---|---|---|
+| `hs_codes` | `6109100000` → *"Cotton T-shirts, knitted"* | `6109100000` → *"Cotton T-shirts, knitted or crocheted"* (alter Wert hier weg, genau wie bisher) |
+| `hs_code_history` | eine offene Zeile: *"...knitted"*, `valid_to = NULL`, `version_label = "CN2025"` | diese Zeile jetzt **geschlossen** (`valid_to` gesetzt) **plus eine neue offene Zeile**: *"...knitted or crocheted"*, `version_label = "CN2026"` |
+| `cn_code_versions` | `CN2025`, `row_count = 1` | `CN2026`, `row_count = 1` |
+
+`GET /codes/6109100000/history` liefert beide `hs_code_history`-Zeilen, älteste zuerst — die alte
+Beschreibung bleibt erhalten, sie wird nicht gelöscht. Ein erneuter Import von "CN2026" mit
+**identischen** Daten fügt keiner der beiden Historientabellen etwas hinzu: nur `cn_code_versions`
+protokolliert, dass der Lauf stattgefunden hat, mit 0 Änderungen. `search.py`, `cn_classifier.py`,
+`tariff_calculator.py` und `embargo_screener.py` bleiben davon unberührt — `tariff_calculator.py`
+liest `hs_codes` überhaupt nicht, die anderen beiden rufen ohnehin nur `fetch_all()` auf, das genau
+das liefert, was es immer geliefert hat.
+
+Das stärkt zudem das Prüfprotokoll der Freigabeschicht: `review_decisions` erfasst, *dass* eine
+Entscheidung geprüft wurde, und die KN-Code-Historie macht es nun möglich zu rekonstruieren,
+welche Nomenklaturdaten zu diesem Zeitpunkt aktiv waren.
 
 ### 🔗 Deterministische `subject_reference`
 
@@ -478,6 +533,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/calculate-duty` | Fälliger Zoll für eine Sendung, mit Begründung des Satzes |
 | `POST` | `/review` | Speichert die Freigabeentscheidung zu einem früheren Klassifizierungs-, Prüf- oder Zollergebnis |
 | `GET` | `/review/history` | Erfasste Prüfentscheidungen, neueste zuerst |
+| `GET` | `/codes/{code}/history` | Versionszeitlinie eines KN-Codes (SCD Type 2), älteste zuerst |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
 **Parameter von `GET /search`**
@@ -558,6 +614,36 @@ curl -X POST "http://localhost:8000/review" \
 curl "http://localhost:8000/review/history?subject_type=duty&limit=10"
 ```
 
+**`GET /codes/{code}/history`** — außer dem Code selbst keine Parameter. `404` wenn der Code
+unbekannt ist; ein Code, der existiert, aber nie von einem versionierten Import berührt wurde
+(z. B. die eingesäten Demodaten), liefert `200 []`, keinen Fehler — dieselbe Konvention "leere
+Liste, nie ein Fehler" wie bei `/search`.
+
+```bash
+curl "http://localhost:8000/codes/6109100000/history"
+```
+
+```json
+[
+  {
+    "code": "6109100000",
+    "description": "Cotton T-shirts, knitted",
+    "category": "Textile",
+    "valid_from": "2025-01-15T09:00:00+00:00",
+    "valid_to": "2026-02-01T09:00:00+00:00",
+    "version_label": "CN2025"
+  },
+  {
+    "code": "6109100000",
+    "description": "Cotton T-shirts, knitted or crocheted",
+    "category": "Textile",
+    "valid_from": "2026-02-01T09:00:00+00:00",
+    "valid_to": null,
+    "version_label": "CN2026"
+  }
+]
+```
+
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
 ```
@@ -581,7 +667,7 @@ curl "http://localhost:8000/screen?name=Northwind+Maritime"
 |---|---|
 | `200` | Erfolg — Liste der Treffer (kann leer sein) |
 | `400` | `InvalidQueryError` — leere/zu lange Abfrage, fehlerhafter Code oder negativer Wert |
-| `404` | `RateNotFoundError` — kein Zollsatz für diesen HS-Code hinterlegt |
+| `404` | `RateNotFoundError` — kein Zollsatz für diesen HS-Code hinterlegt, oder `HSCodeNotFoundError` bei `/codes/{code}/history` |
 | `422` | Fehlender/ungültiger Parametertyp (FastAPI-Validierung) |
 
 ---
@@ -613,7 +699,7 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | `scripts/import_cn_codes.py` | 🟢 91 % |
 | `logging_config.py` | 🟢 100 % |
 | `main.py` | 🟢 97 % |
-| **Gesamt** | **🟢 98 %** (140 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
+| **Gesamt** | **🟢 98 %** (146 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
 
 ### Getestete Grenzfälle
 
@@ -639,6 +725,10 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Gleiche Zolleingaben, anderer `customs_value` | Andere `subject_reference` — ein anderer Wert ist eine andere Entscheidung |
 | Zwei Prüfentscheidungen zur selben `subject_reference` | Beide bleiben erhalten, neueste zuerst — Prüfdatensätze werden nie überschrieben |
 | Unbekannter `subject_type` oder `decision` bei `POST /review` | `InvalidQueryError` → HTTP `400` |
+| Erneuter Import eines Codes mit geänderter Beschreibung/Kategorie | Alte `hs_code_history`-Zeile geschlossen (`valid_to` gesetzt), neue geöffnet — nie gelöscht |
+| Erneuter Import eines Codes mit identischen Daten | Keine neue `hs_code_history`-Zeile; `hs_codes` erhält einen harmlosen No-op-Upsert |
+| `GET /codes/{code}/history` für einen eingesäten, nie versionierten Code | `200 []`, kein Fehler |
+| `GET /codes/{code}/history` für einen unbekannten Code | `HSCodeNotFoundError` → HTTP `404` |
 
 ---
 
@@ -745,12 +835,18 @@ python scripts/import_cn_codes.py path/to/cn_codes.csv
 | `--code-column` | automatisch erkannt | Falls der Export eine unbekannte Spaltenüberschrift nutzt |
 | `--description-column` | automatisch erkannt | Dasselbe für die Beschreibungsspalte |
 | `--batch-size` | `1000` | Zeilen pro Upsert |
+| `--version-label` | ein Zeitstempel | Label für diesen Lauf (z. B. `CN2026`), bei jedem geänderten Code erfasst |
 
 Der Importer erkennt die üblichen RAMON-/TARIC-Spaltennamen automatisch, leitet die Kategorie aus
 dem HS-Kapitel (den ersten beiden Ziffern) ab, überspringt die Kapitel- und Positionszeilen oberhalb
 der achtstelligen Endcodes, protokolliert fehlerhafte Zeilen und überspringt sie statt abzubrechen,
-und **führt einen Upsert auf den Code aus — ein erneuter Lauf aktualisiert die Daten, statt sie zu
-verdoppeln**.
+und **führt einen Upsert von `hs_codes` auf den Code aus — ein erneuter Lauf aktualisiert die
+aktuellen Daten, statt sie zu verdoppeln, genau wie bisher**. Neu: Ein Code, dessen Beschreibung
+oder Kategorie sich tatsächlich geändert hat, erhält zusätzlich einen geschlossenen und neu
+geöffneten Eintrag in `hs_code_history` (siehe [🕘 Versionierte KN-Codes](#-versionierte-kn-codes-scd-type-2)
+oben), sodass ein erneuter Import den früheren Wortlaut eines Codes nie stillschweigend verliert.
+Mit `GET /codes/{code}/history` lässt sich die vollständige Zeitlinie eines Codes abrufen — das ist
+auch der sichtbare Beweis der Versionierung in dieser Demo.
 
 Die Anwendung auf die importierte Datenbank zeigen lassen:
 
@@ -770,7 +866,7 @@ da nur dieses Werkzeug sie je bräuchte. Ein CSV-Export erübrigt sie vollständ
 
 ## 🗺️ Roadmap
 
-**Alle fünf Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
+**Alle sechs Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
 von der Abdeckungsschwelle gemessen:
 
 | Modul | Status | Funktionsumfang |
@@ -780,13 +876,18 @@ von der Abdeckungsschwelle gemessen:
 | `embargo_screener.py` | ✅ **Ausgeliefert** | Namensprüfung gegen Verbotslisten über CLI und REST |
 | `tariff_calculator.py` | ✅ **Ausgeliefert** | Zollberechnung mit Auswahl des Präferenzsatzes |
 | `review.py` | ✅ **Ausgeliefert** | Vier-Augen-Prüfprotokoll für alle drei Entscheidungen |
+| KN-Code-Versionierung (SCD Type 2) | ✅ **Ausgeliefert** | `hs_code_history` + `cn_code_versions`, bereitgestellt über `GET /codes/{code}/history` |
 
 Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
 Alias- und Transliterationsbehandlung für Entitätsnamen, Kontingent- und Antidumping-Komponenten
 auf der Zollberechnung, das Zwischenspeichern des Klassifikator-Index, sobald ein vollständiger
-KN-Import den Neuaufbau pro Aufruf spürbar macht, sowie **authentifizierte Prüfer mit RBAC** anstelle
+KN-Import den Neuaufbau pro Aufruf spürbar macht, **authentifizierte Prüfer mit RBAC** anstelle
 des Freitextfelds `reviewer_name` in `review.py` — der naheliegende nächste Schritt, sobald diese
-Demo echte Nachvollziehbarkeit pro Freigabe braucht.
+Demo echte Nachvollziehbarkeit pro Freigabe braucht — sowie zwei zurückgestellte Teile der
+Versionierung: ein `GET /cn-imports`-Endpunkt zum Durchsuchen von `cn_code_versions` (vorerst
+deckt die eigene Logzeile des Importskripts das ab; `database.fetch_cn_import_runs` steht schon
+bereit, nur noch nicht exponiert) und ein CLI-Befehl `history <code>`, der den API-Endpunkt
+spiegelt.
 
 ---
 
@@ -797,8 +898,8 @@ CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── src/
 │   ├── customsiq/
-│   │   ├── models.py            # HSCode- + SanctionedEntity- + TariffRate- + ReviewDecision-Datensätze
-│   │   ├── database.py          # SQLite-Schicht + Beispieldaten
+│   │   ├── models.py            # HSCode- + SanctionedEntity- + TariffRate- + ReviewDecision- + HSCodeVersion- + ImportRun-Datensätze
+│   │   ├── database.py          # SQLite-Schicht + Beispieldaten + SCD-Type-2-Versionierung
 │   │   ├── matching.py          # gemeinsame Validierung + Ähnlichkeitsbewertung
 │   │   ├── search.py            # KN-Code-Ranking
 │   │   ├── cn_classifier.py     # TF-IDF-Einreihung + Begründung
@@ -812,8 +913,8 @@ CustomsIQ/
 │   │   ├── api.py               # FastAPI-Anwendung (liefert auch das Frontend)
 │   │   └── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
-├── scripts/import_cn_codes.py   # einmaliges Werkzeug: offizielle KN-Datei → hs_codes
-├── tests/                       # 140 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import
+├── scripts/import_cn_codes.py   # offizielle KN-Datei → hs_codes, versioniert Änderungen (SCD Type 2)
+├── tests/                       # 146 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import
 │   └── fixtures/                # Beispiel-KN-Export für die Importer-Tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

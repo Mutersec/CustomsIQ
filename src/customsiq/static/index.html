@@ -416,6 +416,37 @@
   .review-status { font-size: 12px; color: var(--text-dim); min-height: 14px; }
   .review-status.error-text { color: var(--red); }
   .review-status.ok-text { color: var(--green); }
+
+  /* ---------- code version history ---------- */
+  .history-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-top: 6px;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .history-toggle:hover { color: var(--primary); }
+
+  .history-panel {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    display: grid;
+    gap: 6px;
+  }
+
+  .history-row {
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+
+  .history-row b { color: var(--text); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -604,6 +635,14 @@
         empty: "No review decisions recorded yet.",
         couldNotLoad: "Could not load review history.",
       },
+      history: {
+        viewLink: "View history",
+        hideLink: "Hide history",
+        current: "current",
+        empty: "No recorded version history for this code.",
+        loading: "Loading…",
+        couldNotLoad: "Could not load version history.",
+      },
       review: {
         approve: "Approve",
         reject: "Reject",
@@ -692,6 +731,14 @@
         empty: "Henüz kayıtlı bir inceleme kararı yok.",
         couldNotLoad: "İnceleme geçmişi yüklenemedi.",
       },
+      history: {
+        viewLink: "Geçmişi görüntüle",
+        hideLink: "Geçmişi gizle",
+        current: "güncel",
+        empty: "Bu kod için kayıtlı bir sürüm geçmişi yok.",
+        loading: "Yükleniyor…",
+        couldNotLoad: "Sürüm geçmişi yüklenemedi.",
+      },
       review: {
         approve: "Onayla",
         reject: "Reddet",
@@ -779,6 +826,14 @@
         hint: "Freigaben zu Einreihungs-, Prüf- und Zollergebnissen — nur anhängend, neueste zuerst.",
         empty: "Noch keine Prüfentscheidungen erfasst.",
         couldNotLoad: "Prüfprotokoll konnte nicht geladen werden.",
+      },
+      history: {
+        viewLink: "Verlauf anzeigen",
+        hideLink: "Verlauf ausblenden",
+        current: "aktuell",
+        empty: "Kein erfasster Versionsverlauf für diesen Code.",
+        loading: "Wird geladen…",
+        couldNotLoad: "Versionsverlauf konnte nicht geladen werden.",
       },
       review: {
         approve: "Freigeben",
@@ -889,6 +944,67 @@
   }
 
   /**
+   * "View history" toggle for one CN code. Markup only — click handling and
+   * the actual fetch live in toggleCodeHistory, wired up via one delegated
+   * listener below, the same pattern reviewControlsHtml/its click handler use.
+   */
+  function historyToggleHtml(code) {
+    return `
+      <button type="button" class="history-toggle" data-code="${escapeHtml(code)}">${escapeHtml(t("history.viewLink"))}</button>
+      <div class="history-panel" hidden></div>
+    `;
+  }
+
+  const _historyCache = new Map();
+
+  async function toggleCodeHistory(btn) {
+    const panel = btn.nextElementSibling;
+    const code = btn.dataset.code;
+
+    if (!panel.hidden) {
+      panel.hidden = true;
+      btn.textContent = t("history.viewLink");
+      return;
+    }
+
+    panel.hidden = false;
+    btn.textContent = t("history.hideLink");
+
+    if (_historyCache.has(code)) {
+      panel.innerHTML = _historyCache.get(code);
+      return;
+    }
+
+    panel.innerHTML = `<div class="history-row">${escapeHtml(t("history.loading"))}</div>`;
+    try {
+      const response = await fetch(`/codes/${encodeURIComponent(code)}/history`);
+      const versions = await response.json();
+      if (!response.ok) {
+        panel.innerHTML = `<div class="history-row">${escapeHtml(versions.detail || t("history.couldNotLoad"))}</div>`;
+        return;
+      }
+      const html = !versions.length
+        ? `<div class="history-row">${escapeHtml(t("history.empty"))}</div>`
+        : versions.map((v) => `
+            <div class="history-row">
+              <b>${escapeHtml(v.description)}</b> · ${escapeHtml(v.category)}<br>
+              ${escapeHtml(v.valid_from)} → ${v.valid_to ? escapeHtml(v.valid_to) : escapeHtml(t("history.current"))}
+              <span class="chip">${escapeHtml(v.version_label)}</span>
+            </div>
+          `).join("");
+      _historyCache.set(code, html);
+      panel.innerHTML = html;
+    } catch (err) {
+      panel.innerHTML = `<div class="history-row">${escapeHtml(t("common.couldNotReach"))}</div>`;
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    const btn = event.target.closest(".history-toggle");
+    if (btn) toggleCodeHistory(btn);
+  });
+
+  /**
    * Call an endpoint and hand the parsed rows to `render`.
    * The API answers a blank or oversized query with HTTP 400 and a `detail`
    * message, so surface that text rather than a generic failure.
@@ -947,6 +1063,7 @@
             <p class="card-desc">${escapeHtml(row.description)}</p>
             <span class="chip">${escapeHtml(row.category)}</span>
             <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
+            ${historyToggleHtml(row.code)}
           </article>
         `).join("");
       },
@@ -1019,6 +1136,7 @@
               <span class="label">${escapeHtml(t("classify.matchedOn"))}</span>
               ${row.matched_terms.map((term) => `<span class="chip term">${escapeHtml(term)}</span>`).join("")}
             </div>
+            ${historyToggleHtml(row.code)}
             ${reviewControlsHtml("classification", row.subject_reference)}
           </article>
         `).join("");

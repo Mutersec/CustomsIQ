@@ -229,3 +229,16 @@ def test_review_history_filters_by_subject_type() -> None:
     assert response.status_code == 200
     assert all(row["subject_type"] == "screening" for row in response.json())
     assert len(response.json()) == 1
+
+
+def test_code_history_returns_empty_for_a_never_versioned_code() -> None:
+    """A seeded code with no recorded imports has an empty, not erroring, history."""
+    response = client.get("/codes/6109100000/history")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_code_history_returns_404_for_an_unknown_code() -> None:
+    """A code that doesn't exist in hs_codes at all surfaces as HTTP 404."""
+    response = client.get("/codes/00000000/history")
+    assert response.status_code == 404

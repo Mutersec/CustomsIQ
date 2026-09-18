@@ -7,7 +7,11 @@ consultation site (https://ec.europa.eu/taxation_customs/dds2/taric/), then:
 
     python scripts/import_cn_codes.py path/to/cn_codes.csv
 
-Re-running the import is safe: rows are upserted on their code.
+Re-running the import is safe: hs_codes ends up with the latest value per
+code either way, and a code whose description/category actually changed gets
+a new entry in its version history (hs_code_history) rather than silently
+losing the old value — see the "Importing the real CN nomenclature" section
+of the README for how to inspect that history.
 """
 
 import argparse
@@ -15,6 +19,7 @@ import csv
 import logging
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +28,12 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.customsiq.config import settings
-from src.customsiq.database import get_connection, upsert_hs_codes
+from src.customsiq.database import (
+    ImportStats,
+    get_connection,
+    record_cn_import,
+    upsert_hs_codes_with_history,
+)
 from src.customsiq.logging_config import configure_logging
 from src.customsiq.models import HSCode
 from src.utils.validators import validate_cn_code
@@ -255,8 +265,9 @@ def import_file(
     code_column: Optional[str] = None,
     description_column: Optional[str] = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    version_label: Optional[str] = None,
 ) -> int:
-    """Parse a CN export and upsert it into the hs_codes table.
+    """Parse a CN export and upsert it into the hs_codes table, versioning changes.
 
     Args:
         path: The CN export to import.
@@ -264,23 +275,42 @@ def import_file(
         code_column: Explicit code column name, overriding auto-detection.
         description_column: Explicit description column name.
         batch_size: Rows written per upsert call.
+        version_label: Label for this import run (e.g. "CN2026"), recorded
+            against any code that changed. Defaults to a timestamp so every
+            run is still identifiable if the caller doesn't name one.
 
     Returns:
         The number of codes imported.
     """
     records, skipped, malformed = parse_records(path, code_column, description_column)
+    if version_label is None:
+        version_label = f"import-{datetime.now(timezone.utc).isoformat()}"
 
     conn = get_connection(db_path)
     try:
+        new_count = changed_count = unchanged_count = 0
         for start in range(0, len(records), batch_size):
-            upsert_hs_codes(conn, records[start : start + batch_size])
+            stats: ImportStats = upsert_hs_codes_with_history(
+                conn, records[start : start + batch_size], version_label
+            )
+            new_count += stats.new_count
+            changed_count += stats.changed_count
+            unchanged_count += stats.unchanged_count
+        record_cn_import(
+            conn, version_label, path.name, datetime.now(timezone.utc).isoformat(), len(records)
+        )
     finally:
         conn.close()
 
     logger.info(
-        "imported %d codes into %s (%d hierarchy rows skipped, %d malformed)",
+        "imported %d codes into %s as %r (%d new, %d changed, %d unchanged, "
+        "%d hierarchy rows skipped, %d malformed)",
         len(records),
         db_path,
+        version_label,
+        new_count,
+        changed_count,
+        unchanged_count,
         skipped,
         malformed,
     )
@@ -302,11 +332,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--code-column", help="Override the auto-detected code column")
     parser.add_argument("--description-column", help="Override the description column")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument(
+        "--version-label", help="Label for this import run (e.g. CN2026); default is a timestamp"
+    )
     args = parser.parse_args(argv)
 
     configure_logging()
     try:
-        import_file(args.path, args.db, args.code_column, args.description_column, args.batch_size)
+        import_file(
+            args.path,
+            args.db,
+            args.code_column,
+            args.description_column,
+            args.batch_size,
+            args.version_label,
+        )
     except (CNImportError, FileNotFoundError) as exc:
         logger.error("%s", exc)
         return 1

@@ -60,6 +60,48 @@ class ReviewDecision:
 
 
 @dataclass(frozen=True)
+class HSCodeVersion:
+    """One SCD Type 2 version of an HS code's description/category over time.
+
+    Attributes:
+        id: Autoincrement row id (history rows have no natural key).
+        code: The CN/TARIC code this version belongs to.
+        description: The description as it read during this version's validity.
+        category: The category as it read during this version's validity.
+        valid_from: ISO 8601 timestamp this version became current.
+        valid_to: ISO 8601 timestamp this version was superseded, or None if current.
+        version_label: The import run that produced this version (e.g. "CN2026").
+    """
+
+    id: int
+    code: str
+    description: str
+    category: str
+    valid_from: str
+    valid_to: Optional[str]
+    version_label: str
+
+
+@dataclass(frozen=True)
+class ImportRun:
+    """One run of scripts/import_cn_codes.py (the cn_code_versions audit log).
+
+    Attributes:
+        id: Autoincrement row id.
+        version_label: Label identifying the run (e.g. "CN2026").
+        source_description: The imported file's name, if known.
+        imported_at: ISO 8601 timestamp the run completed.
+        row_count: Number of leaf CN code records processed in this run.
+    """
+
+    id: int
+    version_label: str
+    source_description: Optional[str]
+    imported_at: str
+    row_count: int
+
+
+@dataclass(frozen=True)
 class TariffRate:
     """A duty rate applicable to one HS code for one origin.
 

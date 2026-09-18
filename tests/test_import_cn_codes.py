@@ -14,7 +14,12 @@ from scripts.import_cn_codes import (
     normalise_code,
     parse_records,
 )
-from src.customsiq.database import fetch_all, get_connection
+from src.customsiq.database import (
+    fetch_all,
+    fetch_cn_import_runs,
+    fetch_hs_code_history,
+    get_connection,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_cn_codes.csv"
 
@@ -198,6 +203,68 @@ class TestImport:
         count = len(fetch_all(conn))
         conn.close()
         assert count == LEAF_CODES
+
+    def test_reimport_with_changed_description_versions_history(self, tmp_path: Path) -> None:
+        """A changed code closes its old history row and opens a new one."""
+        db = str(tmp_path / "cn.db")
+        v1 = write_csv(tmp_path / "v1.csv", "6109 10 00,Old wording\n")
+        v2 = write_csv(tmp_path / "v2.csv", "6109 10 00,New wording\n")
+        import_file(v1, db, version_label="CN2025")
+        import_file(v2, db, version_label="CN2026")
+
+        conn = get_connection(db)
+        history = fetch_hs_code_history(conn, "61091000")
+        current = {r.code: r for r in fetch_all(conn)}
+        conn.close()
+
+        assert len(history) == 2
+        assert history[0].description == "Old wording"
+        assert history[0].valid_to is not None  # closed, not deleted
+        assert history[1].description == "New wording"
+        assert history[1].valid_to is None  # current
+        assert history[0].version_label == "CN2025"
+        assert history[1].version_label == "CN2026"
+        assert current["61091000"].description == "New wording"  # hs_codes unchanged in shape
+
+    def test_reimport_with_unchanged_data_creates_no_spurious_version(self, tmp_path: Path) -> None:
+        """Re-importing identical data must not add a new history row."""
+        db = str(tmp_path / "cn.db")
+        csv_path = write_csv(tmp_path / "v1.csv", "6109 10 00,Same wording\n")
+        import_file(csv_path, db, version_label="CN2025")
+        import_file(csv_path, db, version_label="CN2025-rerun")
+
+        conn = get_connection(db)
+        history = fetch_hs_code_history(conn, "61091000")
+        conn.close()
+        assert len(history) == 1
+
+    def test_current_only_reads_unaffected_by_history(self, tmp_path: Path) -> None:
+        """hs_codes never grows extra rows, however many versions a code has."""
+        db = str(tmp_path / "cn.db")
+        v1 = write_csv(tmp_path / "v1.csv", "6109 10 00,Old wording\n")
+        v2 = write_csv(tmp_path / "v2.csv", "6109 10 00,New wording\n")
+        v3 = write_csv(tmp_path / "v3.csv", "6109 10 00,Newest wording\n")
+        import_file(v1, db, version_label="CN2025")
+        import_file(v2, db, version_label="CN2026")
+        import_file(v3, db, version_label="CN2027")
+
+        conn = get_connection(db)
+        stored = fetch_all(conn)
+        conn.close()
+        assert len(stored) == 1
+
+    def test_import_run_is_logged_every_time(self, tmp_path: Path) -> None:
+        """Every run is logged, even one that changes nothing."""
+        db = str(tmp_path / "cn.db")
+        csv_path = write_csv(tmp_path / "v1.csv", "6109 10 00,Same wording\n")
+        import_file(csv_path, db, version_label="CN2025")
+        import_file(csv_path, db, version_label="CN2025-rerun")
+
+        conn = get_connection(db)
+        runs = fetch_cn_import_runs(conn)
+        conn.close()
+        assert [r.version_label for r in runs] == ["CN2025-rerun", "CN2025"]  # newest first
+        assert all(r.row_count == 1 for r in runs)
 
 
 class TestCommandLine:
