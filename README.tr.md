@@ -357,6 +357,29 @@ destekler, serbest metin açıklamayı değil: düz bir REPL satırı iki ayrı 
 `screen <isim>`'in her birinin tek bir alan tutabildiği gibi. API ve frontend (yapılandırılmış
 form alanları) ikisini de destekler.
 
+### 🐳 Docker: yerel geliştirme için, Render için değil (henüz)
+
+Render servisi hiç Dockerfile ile yapılandırılmamış bir repoya Dockerfile eklemek, yapmadan önce
+düşünülmesi gereken tam olarak bu tür bir değişikliktir — bir servisin Language'ı Docker'a
+ayarlıysa Render bir `Dockerfile`'dan build *edebilir*, ve bunu yanlış anlamak canlı demonun
+bugünkünden farklı build/start olmasına yol açabilir. Hiçbir şey yazmadan önce Render'ın kendi
+belgelerine karşı araştırıldı: Docker'ı etkinleştirmek **servis oluşturma anı**na ait bir
+dashboard ayarı olarak tarif edilir (*"Render Dashboard'da şu ayarları servis oluşturma
+sırasında uygulayın: 1. Language alanını Docker'a ayarlayın"*) — daha sonraki bir push'ta bir
+`Dockerfile` belirdiği için *zaten oluşturulmuş* bir servisin runtime'ı yeniden algılayıp
+değiştirmesine dair belgelenmiş bir mekanizma yok. Bu repoda ayrıca `render.yaml` veya Procfile
+yok, bu da canlı servisin build/start komutlarının ve runtime'ının tamamen Render'ın
+dashboard'unda, bu reponun dışında yaşadığını doğruluyor — buraya dosya push etmek onu yeniden
+yazamaz.
+
+Bunu göz önünde bulundurarak, `Dockerfile`/`docker-compose.yml` — araştırmanın zaten mevcut bir
+servise uygulanmadığını söylediği bir algılama mekanizmasından kaçınmak için bir alt dizine
+gizlenmek yerine — repo kökünde (geleneksel konum) yaşıyor. Bir insanın tek seferlik kontrol
+etmesi gereken tek şey: bu servis için Render dashboard'unu açıp Language/Runtime'ın hâlâ
+mevcut yerel ayarında olduğunu, "Docker" olmadığını doğrulamak — yukarıdaki gerekçe göz önüne
+alındığında maliyetsiz bir doğrulama, beklenen bir sorun değil, çünkü o dashboard'u kendim
+görüp doğrudan doğrulayamıyorum.
+
 ### 🔗 Deterministik `subject_reference`
 
 İncelenebilir her sonuç bir `subject_reference` taşır — `sha256(f"{subject_type}:{normalize_edilmis_girdi}")`
@@ -485,6 +508,39 @@ Tüm ayarlar ortam değişkenlerinden veya `.env` dosyasından okunur:
 | `CUSTOMSIQ_DATABASE_PATH` | `customsiq.db` | SQLite dosya yolu (geçici veritabanı için `:memory:`) |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python log seviyesi (`DEBUG`, `INFO`, `WARNING`, …) |
 | `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Tarama eşleşmesi için asgari isim benzerlik skoru (0–1) |
+
+### 🐳 Docker ile çalıştırma
+
+Yalnızca yerel geliştirme için — **[canlı demo](https://customsiq-gs0u.onrender.com/) Render'ın
+mevcut yerel (native) Python dağıtımını kullanmaya devam ediyor, bundan etkilenmiyor.**
+`render.yaml` yok, Procfile yok; bu repo Render'a hiçbir zaman nasıl dağıtım yapacağını
+söylemedi, dolayısıyla buraya bir `Dockerfile` eklemek onu etkilemiyor. Gerekçe için aşağıdaki
+[🐳 Docker: yerel geliştirme için, Render için değil (henüz)](#-docker-yerel-geli%C5%9Ftirme-i%C3%A7in-render-i%C3%A7in-de%C4%9Fil-hen%C3%BCz)
+bölümüne bakın. Yine de değerli: bu projeyi elle Python venv kurmadan inceleyen veya çalıştıran
+herkes için ortam paritesi, ve gelecekteki bir fazda planlanan Postgres göçünün ilk somut
+parçası — `docker-compose.yml`'de zaten yorum satırına alınmış bir taslak var.
+
+```bash
+docker build -t customsiq .
+docker run -p 8000:8000 customsiq
+```
+
+Ya da yerel geliştirme için, `docker-compose.yml` `.env.example` ile aynı üç ayarı bağlar ve
+yeniden başlatmalar arasında tohumlanan veritabanının hayatta kalması için adlandırılmış bir
+volume ekler:
+
+```bash
+docker compose up
+```
+
+İkisi de `uvicorn`'u doğrudan çalıştırmakla aynı şekilde **http://localhost:8000/**'de servis
+verir. Çok aşamalı build, `python:3.11-slim` (bu makinenin rastgele yerel sürümü değil, CI'nin
+`actions/setup-python` sürümüyle eşleşecek şekilde sabitlenmiş) — üretim imajı yalnızca beş
+çalışma zamanı paketini kurar (`requirements-runtime.txt`), geliştirme araçlarını
+(ruff/black/mypy/pytest) veya yalnızca test amaçlı bağımlılıkları (`httpx`, yalnızca
+`fastapi.testclient.TestClient` için gerekli) asla kurmaz. Sıcak yeniden yükleme
+bağlanmamıştır — kod değişikliğinden sonra yeniden build edin; burada "yerel geliştirme"nin
+gerektirdiği bilinçli bir sadeleştirme, bir eksiklik değil.
 
 ---
 
@@ -1054,6 +1110,10 @@ kendisini denetlemesi gerekirse kalıcı/incelenebilir risk değerlendirmeleri.
 ```text
 CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
+├── Dockerfile                   # yerel geliştirme imajı — bkz. 🐳 Docker ile çalıştırma
+├── docker-compose.yml           # app + gelecekteki bir faz için yorumlu Postgres taslağı
+├── .dockerignore
+├── requirements-runtime.txt     # requirements.txt'nin yalnızca çalışma zamanı alt kümesi, Dockerfile'da kullanılır
 ├── src/
 │   ├── customsiq/
 │   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision + HSCodeVersion + ImportRun kayıtları

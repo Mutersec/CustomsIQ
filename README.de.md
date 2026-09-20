@@ -362,6 +362,30 @@ Freitextbeschreibung: Eine flache REPL-Zeile kann nicht eindeutig zwei separate 
 `screen <name>`, die jeweils eines enthalten können. API und Frontend (strukturierte
 Formularfelder) unterstützen beides.
 
+### 🐳 Docker für die lokale Entwicklung, nicht für Render (noch nicht)
+
+Ein `Dockerfile` zu einem Repo hinzuzufügen, dessen Render-Service nie mit einem konfiguriert
+war, ist genau die Art von Änderung, die es wert ist, vor und nicht nach dem Handeln durchdacht
+zu werden — Render *kann* aus einem `Dockerfile` bauen, wenn die Language eines Services auf
+Docker gesetzt ist, und das falsch zu machen könnte bedeuten, dass die Live-Demo anders baut/
+startet als heute. Vor dem Schreiben von irgendetwas gegen Renders eigene Dokumentation
+recherchiert: Docker zu aktivieren wird als eine Dashboard-Einstellung zum **Zeitpunkt der
+Service-Erstellung** beschrieben (*"wenden Sie die folgenden Einstellungen im Render Dashboard
+bei der Service-Erstellung an: 1. Setzen Sie das Feld Language auf Docker"*) — es gibt keinen
+dokumentierten Mechanismus, mit dem ein *bereits erstellter* Service seine Runtime neu erkennt
+und wechselt, weil in einem späteren Push ein `Dockerfile` auftaucht. Dieses Repo hat außerdem
+weder `render.yaml` noch Procfile, was bestätigt, dass die Build-/Start-Befehle und die Runtime
+des Live-Service vollständig in Renders Dashboard leben, außerhalb dieses Repos — das Pushen von
+Dateien hierher kann das nicht überschreiben.
+
+Angesichts dessen liegen `Dockerfile`/`docker-compose.yml` im Repo-Root (der konventionelle Ort)
+statt in einem Unterverzeichnis versteckt, um einem Erkennungsmechanismus auszuweichen, der laut
+obiger Recherche auf einen bereits bestehenden Service ohnehin nicht zutrifft. Die eine Sache,
+die einen einmaligen menschlichen Blick wert ist: das Render-Dashboard für diesen Service öffnen
+und bestätigen, dass Language/Runtime noch auf der heutigen nativen Einstellung steht, nicht auf
+"Docker" — angesichts der obigen Begründung eine kostenlose Bestätigung, kein erwartetes
+Problem, da ich dieses Dashboard nicht selbst einsehen kann, um es direkt zu verifizieren.
+
 ### 🔗 Deterministische `subject_reference`
 
 Jedes prüfbare Ergebnis trägt eine `subject_reference` — `sha256(f"{subject_type}:{normalisierte_eingabe}")`
@@ -492,6 +516,40 @@ Alle Einstellungen stammen aus Umgebungsvariablen oder aus `.env`:
 | `CUSTOMSIQ_DATABASE_PATH` | `customsiq.db` | Pfad zur SQLite-Datei (`:memory:` für eine flüchtige Datenbank) |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python-Loglevel (`DEBUG`, `INFO`, `WARNING`, …) |
 | `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Mindest-Namensähnlichkeit (0–1) für einen Prüftreffer |
+
+### 🐳 Mit Docker ausführen
+
+Nur für die lokale Entwicklung — **die [Live-Demo](https://customsiq-gs0u.onrender.com/) nutzt
+weiterhin Renders bestehenden nativen Python-Deploy, unverändert davon.** Kein `render.yaml`,
+kein Procfile; dieses Repo hat Render nie gesagt, wie es deployen soll, also ändert das
+Hinzufügen eines `Dockerfile` hier daran nichts. Die Begründung siehe unten unter
+[🐳 Docker für die lokale Entwicklung, nicht für Render (noch nicht)](#-docker-für-die-lokale-entwicklung-nicht-für-render-noch-nicht).
+Trotzdem lohnenswert: Umgebungsparität für alle, die dieses Projekt prüfen oder ausführen wollen,
+ohne von Hand ein Python-venv einzurichten, und es ist das erste konkrete Puzzleteil des für eine
+künftige Phase geplanten Postgres-Migrationswegs — `docker-compose.yml` enthält bereits einen
+auskommentierten Stub dafür.
+
+```bash
+docker build -t customsiq .
+docker run -p 8000:8000 customsiq
+```
+
+Oder für die lokale Entwicklung: `docker-compose.yml` verdrahtet dieselben drei Einstellungen
+wie `.env.example` und fügt ein benanntes Volume hinzu, damit die eingesäte Datenbank Neustarts
+übersteht:
+
+```bash
+docker compose up
+```
+
+Beide bedienen dieselbe App unter **http://localhost:8000/** wie ein direkt gestartetes
+`uvicorn`. Mehrstufiger Build, `python:3.11-slim` (gepinnt auf die Version von CIs
+`actions/setup-python`, nicht auf die zufällige lokale Version dieser Maschine) — das
+Produktionsimage installiert nur die fünf Laufzeitpakete (`requirements-runtime.txt`), nie die
+Entwicklungswerkzeuge (ruff/black/mypy/pytest) oder testexklusive Abhängigkeiten (`httpx`, nur
+von `fastapi.testclient.TestClient` benötigt). Kein Hot-Reload eingerichtet — nach
+Codeänderungen neu bauen, eine bewusste Vereinfachung für das, was "lokale Entwicklung" hier
+brauchte, kein Versehen.
 
 ---
 
@@ -1065,6 +1123,10 @@ nicht nur die drei zusammengefassten Entscheidungen prüfen muss.
 ```text
 CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
+├── Dockerfile                   # Image für die lokale Entwicklung — siehe 🐳 Mit Docker ausführen
+├── docker-compose.yml           # app + ein auskommentierter Postgres-Stub für eine künftige Phase
+├── .dockerignore
+├── requirements-runtime.txt     # Laufzeit-Teilmenge von requirements.txt, vom Dockerfile genutzt
 ├── src/
 │   ├── customsiq/
 │   │   ├── models.py            # HSCode- + SanctionedEntity- + TariffRate- + ReviewDecision- + HSCodeVersion- + ImportRun-Datensätze

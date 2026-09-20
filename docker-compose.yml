@@ -1,0 +1,43 @@
+# Local development only — not used by the live Render deploy (see the
+# README's "🐳 Running with Docker" section).
+#
+# No hot-reload / source volume mount: "docker compose up for local dev"
+# means "runs locally via compose," not "watches for file changes" — a
+# deliberate simplification, not an oversight. Rebuild after code changes.
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Same three keys as .env.example, wired through the existing
+      # pydantic-settings config (src/customsiq/config.py) — no new settings.
+      CUSTOMSIQ_DATABASE_PATH: /data/customsiq.db
+      CUSTOMSIQ_LOG_LEVEL: INFO
+      CUSTOMSIQ_SCREENING_THRESHOLD: "0.75"
+    volumes:
+      # Named volume so the seeded database survives `docker compose down`/`up`
+      # instead of resetting every time.
+      - customsiq-data:/data
+
+  # ponytail: Phase 6 stub, deliberately inert. database.py only supports
+  # SQLite today (see src/customsiq/database.py) — an active Postgres
+  # container here would be dead weight, not a real option yet. Uncomment
+  # and wire CUSTOMSIQ_DATABASE_PATH (or a new DSN setting) to this when
+  # that migration lands.
+  #
+  # postgres:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_DB: customsiq
+  #     POSTGRES_USER: customsiq
+  #     POSTGRES_PASSWORD: customsiq
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - customsiq-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  customsiq-data:
+  # customsiq-postgres-data:

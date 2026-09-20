@@ -350,6 +350,27 @@ the HS-code path, not free-text description: a flat REPL line can't unambiguousl
 separate free-text fields (description and party name) the way `duty <code> <country> <value>`
 and `screen <name>` can each hold one. The API and frontend (structured form fields) support both.
 
+### 🐳 Docker for local dev, not for Render (yet)
+
+Adding a `Dockerfile` to a repo whose Render service was never configured with one is exactly
+the kind of change worth reasoning about before making, not after — Render *can* build from a
+`Dockerfile` if a service's Language is set to Docker, and getting that wrong could mean the live
+demo tries to build/start differently than it does today. Researched against Render's own docs
+before writing anything: enabling Docker is described as a **service-creation-time** dashboard
+setting (*"apply the following settings in the Render Dashboard during service creation: 1. Set
+the Language field to Docker"*) — there's no documented mechanism for an *already-created*
+service to re-detect and switch runtime because a `Dockerfile` shows up in a later push. This
+repo also has no `render.yaml` or `Procfile`, confirming the live service's build/start commands
+and runtime live entirely in Render's dashboard, outside this repo — pushing files here cannot
+rewrite that.
+
+Given that, `Dockerfile`/`docker-compose.yml` live at the repo root (the conventional location)
+rather than tucked into a subdirectory to dodge a detection mechanism the research above says
+doesn't apply to an existing service anyway. The one thing worth a human, one-time check: open
+the Render dashboard for this service and confirm Language/Runtime is still its current native
+setting, not "Docker" — a zero-cost confirmation given the reasoning above, not an expected
+problem, since I can't see that dashboard myself to verify it directly.
+
 ### 🔗 Deterministic `subject_reference`
 
 Every reviewable result carries a `subject_reference` — `sha256(f"{subject_type}:{normalized_input}")`
@@ -475,6 +496,37 @@ All settings are read from environment variables or `.env`:
 | `CUSTOMSIQ_DATABASE_PATH` | `customsiq.db` | SQLite file path (`:memory:` for an ephemeral DB) |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, …) |
 | `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Minimum name-similarity score (0–1) for a screening hit |
+
+### 🐳 Running with Docker
+
+Local development only — **the [live demo](https://customsiq-gs0u.onrender.com/) keeps using
+Render's existing native Python deploy, unchanged by this.** No `render.yaml`, no Procfile; this
+repo has never told Render how to deploy, so adding a `Dockerfile` here doesn't touch that. See
+[🐳 Docker for local dev, not for Render (yet)](#-docker-for-local-dev-not-for-render-yet) below
+for the reasoning. Still worth having: environment parity for anyone reviewing or running this
+project without setting up a Python venv by hand, and it's the first concrete piece of the
+Postgres migration path planned for a future phase — `docker-compose.yml` already has a
+commented-out stub for it.
+
+```bash
+docker build -t customsiq .
+docker run -p 8000:8000 customsiq
+```
+
+Or for local development, `docker-compose.yml` wires the same three settings as `.env.example`
+and adds a named volume so the seeded database survives restarts:
+
+```bash
+docker compose up
+```
+
+Both serve the same app at **http://localhost:8000/** as running `uvicorn` directly. Multi-stage
+build, `python:3.11-slim` (pinned to match CI's `actions/setup-python` version, not this
+machine's incidental local one) — the production image installs only the five runtime packages
+(`requirements-runtime.txt`), never the dev tooling (ruff/black/mypy/pytest) or test-only deps
+(`httpx`, needed solely by `fastapi.testclient.TestClient`). No hot-reload wired up — rebuild
+after code changes, a deliberate simplification for what "local dev" needed here, not an
+oversight.
 
 ---
 
@@ -1084,6 +1136,10 @@ three decisions it summarizes.
 ```text
 CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
+├── Dockerfile                   # local-dev image — see 🐳 Running with Docker
+├── docker-compose.yml           # app + a commented Postgres stub for a future phase
+├── .dockerignore
+├── requirements-runtime.txt     # runtime-only subset of requirements.txt, used by Dockerfile
 ├── src/
 │   ├── customsiq/
 │   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision + HSCodeVersion + ImportRun records

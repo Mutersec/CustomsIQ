@@ -1,0 +1,8 @@
+# Runtime-only subset of requirements.txt, used by the Docker build.
+# Dev tooling (pytest, ruff, black, mypy) and test-only deps (httpx, needed
+# only by fastapi.testclient.TestClient) stay out of the production image.
+# Keep versions in sync with requirements.txt.
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+fastapi==0.104.1
+uvicorn==0.24.0

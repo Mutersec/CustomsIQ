@@ -1,0 +1,42 @@
+# Version control
+.git
+.github
+
+# Python environments and caches
+.venv
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dev-only: not needed to run the web service (Dockerfile copies src/ only)
+tests/
+scripts/
+
+# Local/runtime data — gitignored, never belongs in the build context
+customsiq.db
+*.db
+.env
+.env.local
+
+# Tooling / editor
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# Stray nested clone (see .gitignore)
+CustomsIQ/
+
+# Sensitive/untracked data directories
+data/customs/sensitive/
+data/sanctions/sources/
+
+# The Docker files themselves don't need to be in their own build context
+Dockerfile
+docker-compose.yml
+.dockerignore
