@@ -77,6 +77,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 📋 | **İnsan onayı / denetim izi** | Sınıflandırma, tarama veya vergi sonucunu onayla/reddet/işaretle — sadece ekleme yapılır |
 | 🕘 | **Sürümlü CN kodları (SCD Type 2)** | Değişen her açıklama/kategori eski değerini zaman damgasıyla korur — `GET /codes/{code}/history` |
 | 📊 | **Analitik gösterge paneli** | Referans veriler, inceleme faaliyeti ve içe aktarma çalıştırmalarının salt-okunur özeti — `GET /dashboard/stats` |
+| ⚠️ | **Toplu risk skorlama** | Sınıflandırma güveni, tarama ve vergiyi birleştiren tek açıklanabilir skor — `GET /assess-risk` |
 | 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
 | 📥 | **Gerçek veri içe aktarma** | Resmî AB CN nomanklatürünü yerel dosyadan yükler, değişiklikleri sürümleyerek |
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
@@ -98,7 +99,7 @@ adaptörüdür; skorlama ve doğrulama mantığı tam olarak tek bir yerde bulun
 flowchart LR
     subgraph Arayuzler["Arayüzler"]
         CLI["💻 main.py<br/>Etkileşimli CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats<br/>· /assess-risk"]
         IMPORT["📥 import_cn_codes.py<br/>CLI içe aktarma aracı"]
     end
 
@@ -108,6 +109,7 @@ flowchart LR
     DUTY["💶 tariff_calculator.py<br/>oran seçimi + hesap"]
     REVIEW["📋 review.py<br/>karar kaydet + listele"]
     DASH["📊 dashboard.py<br/>toplu istatistik"]
+    RISK["⚠️ risk.py<br/>toplu değerlendirme"]
     MATCH["🧩 matching.py<br/>doğrulama + benzerlik"]
     DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions<br/>· hs_code_history · cn_code_versions")]
     EXC["🚨 exceptions.py"]
@@ -118,15 +120,20 @@ flowchart LR
     CLI --> SCREEN
     CLI --> DUTY
     CLI --> REVIEW
+    CLI --> RISK
     API --> SEARCH
     API --> CLS
     API --> SCREEN
     API --> DUTY
     API --> REVIEW
     API --> DASH
+    API --> RISK
     API --> DB
     IMPORT --> DB
     DASH --> DB
+    RISK --> CLS
+    RISK --> SCREEN
+    RISK --> DUTY
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -157,11 +164,12 @@ flowchart LR
 | `tariff_calculator.py` | Uygulanacak vergi oranını seçer ve ödenecek tutarı hesaplar |
 | `review.py` | Geçmiş kararlar üzerinde insan onayını kaydeder ve listeler (denetim izi) |
 | `dashboard.py` | `/dashboard/stats` için referans veri, inceleme faaliyeti ve CN içe aktarmalarının salt-okunur toplulaştırması |
+| `risk.py` | classify/screen/duty'yi tek açıklanabilir toplu risk skorunda birleştirir |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; `CUSTOMSIQ_*` ortam değişkenlerini ve `.env` dosyasını okur |
 | `logging_config.py` | Ortak loglama kurulumu — stdout'a sade format, hiçbir yerde `print()` yok |
 | `main.py` | Etkileşimli CLI giriş noktası (arama + `screen <isim>`) |
-| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/codes/{code}/history`, `/health` |
+| `api.py` | FastAPI uygulaması: `/` adresinde arayüzü sunar, ayrıca `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/codes/{code}/history`, `/dashboard/stats`, `/assess-risk`, `/health` |
 | `scripts/import_cn_codes.py` | CLI içe aktarma aracı: CN dosyasını ayrıştırır, değişiklikleri `upsert_hs_codes_with_history()` ile sürümler |
 | `static/index.html` | Web arayüzünün tamamı — satır içi CSS, saf `fetch()`, sıfır bağımlılık |
 
@@ -306,6 +314,48 @@ kaydedilmedi. Bunu geriye dönük saklamak için sütun eklemek yerine, gösterg
 çalıştırma için **değişen ve değişmeyen** sayısını, `hs_code_history`'de o çalıştırmanın
 `version_label`'ını taşıyan kaç satır olduğundan türetir (üç ayrı sayım değil, tek bir `GROUP BY`
 sorgusu) — bu, gerçekte kaydedilenin dürüst bir okunuşudur, uydurulmuş bir dağılım değil.
+
+### ⚠️ Toplu risk skorlama
+
+Gerçek risk tabanlı gümrük kontrolleri (SAP GTS "Legal Control" dahil) sınıflandırma, tarama ve
+vergiyi bağımsız olarak puanlamaz — bir sevkiyatın genel riski üçünün birlikte bir fonksiyonudur.
+`risk.py`, `classify()`, `screen_entity()` ve `calculate_duty()`'yi — mevcut genel imzalarıyla,
+hiçbir yenilik olmadan — çağıran `assess_shipment()`'ı ekler ve üçünü tek bir toplu skorda
+birleştirir:
+
+```
+toplu = 0.6 × tarama + 0.25 × sınıflandırma + 0.15 × vergi      (her faktör [0, 1] arasında)
+seviye = toplu ≥ 0.5 ise "yüksek", ≥ 0.2 ise "orta", aksi hâlde "düşük"
+```
+
+| Faktör | Ağırlık | Kural | Neden |
+|---|---|---|---|
+| **Tarama** | 0,6 | Gerçek eşleşme → `1,0`; yakın-ıskala (uyum eşiği 0,75'e karşı yalnızca daha düşük bir izleme eşiği 0,55'te bir eşleşme) → `0,4`; hiçbiri → `0,0` | Gerçek bir eşleşme diskalifiye edicidir, sadece riskli değil — 0,6 ağırlıkta, tek başına bir eşleşme (`0,6`) diğer iki faktör ne kadar temiz olursa olsun "yüksek"i zaten geçer |
+| **Sınıflandırma** | 0,25 | `1 − en_iyi_güven`; hiç eşleşme yok → `1,0`; kod doğrudan verilmiş (çıkarılacak bir şey yok) → `0,0` | Düşük güven, yanlış HS kodunun uygulanabileceği anlamına gelir — bir uyum ihlali değil, veri kalitesi sorunudur, dolayısıyla taramanın ağırlığının çok altındadır |
+| **Vergi** | 0,15 | `min(oran_yüzdesi / 20, 1,0)`, tercihliyse `+0,15`, `1,0`'a kırpılır; oran yoksa sabit `0,6` | %20, tohumlanan en yüksek standart orandan (%16,9, ayakkabı) yüksektir; tercihli bonus gerçek bir dolandırıcılık vektörünü yansıtır — bir ticaret anlaşması iddiası, sonuç oranı düşük veya sıfır olsa bile denetimde yeniden doğrulanacak tam olarak budur |
+
+Açıkça belirtilmesi gereken iki şey, ima edilmeden:
+
+- **Vergi faktörü kırpılır**, `min(min(oran_yüzdesi/20, 1) + 0,15, 1,0)` — sadece kırpılmamış
+  `+ 0,15` değil. Veri modelinde `TariffRate.rate_percent`'i sınırlayan hiçbir şey yok, dolayısıyla
+  %20 tavanında veya üzerinde tercihli bir oran, bugünün örnek verisi böyle bir şey içermese bile
+  şemanın izin verdiği gerçek bir olasılıktır — kırpma, bugünün fikstürlerine değil veri modelinin
+  şartlarına göre doğrudur ve sentetik bir %90 oran kullanan özel bir testle kapsanır.
+- **Denetim kaydı yok.** Bir risk değerlendirmesi kalıcı hale getirilmez ve `review_decisions`
+  üzerinden incelenebilir değildir — yeniden hesaplamak ucuzdur (üç mevcut fonksiyon çağrısı,
+  yeni G/Ç yok) ve incelenebilir yapmak, bu fazın bilinçli olarak dokunmadığı `review.py`'nin
+  kapalı `_VALID_SUBJECT_TYPES` kümesini genişletmek anlamına gelirdi. Zaten bir risk
+  değerlendirmesi yeni bir karar türü değil — zaten incelenebilir olan üç karar üzerine bir
+  mercek; bir incelemeciye onaylanacak/reddedilecek dördüncü bir şey eklemek yerine, o üçünden
+  *hangisine* önce bakması gerektiğini söyler.
+
+Üç alttaki çağrının herhangi birinden gelen `InvalidQueryError` (hatalı HS kodu, yanlış ülke,
+negatif değer) asla yakalanıp bir skora çevrilmez — kötü girdi bir istek sorunudur ve diğer her
+uç nokta gibi HTTP `400` olarak yüzeye çıkar. CLI'nin `risk` komutu yalnızca HS kodu yolunu
+destekler, serbest metin açıklamayı değil: düz bir REPL satırı iki ayrı serbest metin alanını
+(açıklama ve taraf ismi) belirsizlik olmadan tutamaz — `duty <kod> <ülke> <değer>` ve
+`screen <isim>`'in her birinin tek bir alan tutabildiği gibi. API ve frontend (yapılandırılmış
+form alanları) ikisini de destekler.
 
 ### 🔗 Deterministik `subject_reference`
 
@@ -483,7 +533,18 @@ Recorded: approved 1 on duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d
 
 > review-history
 2026-01-01T12:00:00+00:00  duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e  approved  by alice  (confirmed correct)
+
+> risk 6109100000 NO 1000 Northwind Maritime
+Risk for 6109100000 from NO, party 'Northwind Maritime': HIGH (0.6609)
+  screening       1.0000 (weight 0.60)  real sanctions match: Northwind Maritime Holdings Ltd (1.00)
+  classification  0.0000 (weight 0.25)  HS code given directly
+  duty            0.1500 (weight 0.15)  preferential rate 0.0%
 ```
+
+CLI'nin `risk` komutu yalnızca HS kodu yolunu destekler (`risk <hs_kodu> <ülke> <değer>
+<taraf_ismi>`), serbest metin açıklamayı değil — nedeni için
+[⚠️ Toplu risk skorlama](#️-toplu-risk-skorlama) bölümüne bakın. API ve web arayüzü açıklamayı
+da destekler.
 
 ### 🖥️ Web arayüzü
 
@@ -550,6 +611,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/review/history` | Kayıtlı inceleme kararları, en yeni önce |
 | `GET` | `/codes/{code}/history` | Bir CN kodunun SCD Type 2 sürüm zaman çizelgesi, en eski önce |
 | `GET` | `/dashboard/stats` | Toplu istatistikler: referans veriler, inceleme faaliyeti, CN içe aktarma çalıştırmaları |
+| `GET` | `/assess-risk` | Sınıflandırma, tarama ve vergiyi birleştiren toplu risk skoru |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -692,6 +754,45 @@ curl "http://localhost:8000/dashboard/stats"
 }
 ```
 
+**`GET /assess-risk`** — `description`/`hs_code`'dan tam olarak biri zorunludur (ikisi de
+verilmezse veya ikisi de verilirse `400`); `country_of_origin`, `party_name` ve `customs_value`
+her zaman zorunludur. `classify()`, `screen_entity()` ve `calculate_duty()`'yi birleştirir —
+ağırlıklar ve gerekçe için [⚠️ Toplu risk skorlama](#️-toplu-risk-skorlama) bölümüne bakın. Bu
+örnek, aksi hâlde temiz sınıflandırma/vergi verisine karşı gerçek bir yaptırım eşleşmesidir —
+tarama tek başına (ağırlık 0,6) "yüksek"e ulaşmaya yeter:
+
+```bash
+curl "http://localhost:8000/assess-risk?description=cotton+t-shirt&country_of_origin=NO&party_name=Northwind+Maritime&customs_value=1000"
+```
+
+```json
+{
+  "level": "high",
+  "composite_score": 0.6608770728095686,
+  "hs_code": "6109100000",
+  "factors": [
+    {
+      "name": "screening",
+      "score": 1.0,
+      "weight": 0.6,
+      "explanation": "real sanctions match: Northwind Maritime Holdings Ltd (1.00)"
+    },
+    {
+      "name": "classification",
+      "score": 0.1535082912382748,
+      "weight": 0.25,
+      "explanation": "top match 6109100000 at 84.65% confidence"
+    },
+    {
+      "name": "duty",
+      "score": 0.15,
+      "weight": 0.15,
+      "explanation": "preferential rate 0.0%"
+    }
+  ]
+}
+```
+
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
 ```
@@ -742,11 +843,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Modül | Kapsam |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
-| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` | 🟢 %100 |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` · `risk.py` | 🟢 %100 |
 | `scripts/import_cn_codes.py` | 🟢 %91 |
 | `logging_config.py` | 🟢 %100 |
-| `main.py` | 🟢 %97 |
-| **Toplam** | **🟢 %98** (154 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+| `main.py` | 🟢 %98 |
+| **Toplam** | **🟢 %98** (173 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
 
 ### Test edilen uç durumlar
 
@@ -777,6 +878,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | Hiç sürümlenmemiş tohumlanan bir kod için `GET /codes/{code}/history` | `200 []`, hata değil |
 | Bilinmeyen bir kod için `GET /codes/{code}/history` | `HSCodeNotFoundError` → HTTP `404` |
 | Taze bir veritabanında `GET /dashboard/stats` (inceleme yok, içe aktarma yok) | Tüm sayılar `0`, dağılım anahtarları eksik değil mevcut, boş listeler — frontend'de asla `NaN%` |
+| Gerçek bir yaptırım eşleşmesi, aksi hâlde temiz sınıflandırma/vergi | Tarama tek başına (`0,6 × 1,0`) "yüksek"e ulaşır — diğer faktörler onu sulandıramaz |
+| Yakın-ıskala + düşük sınıflandırma güveni + eksik vergi oranı birlikte | "Orta"da (`0,4989`) toplanır, hiçbiri tek başına dikkat çekici olmasa da |
+| Bir risk değerlendirmesinde hiçbir kodla terim paylaşmayan açıklama | Sınıflandırma faktörü azami riski puanlar (`1,0`); vergi atlanır, "oran bulunamadı" ile karıştırılmaz |
+| `/assess-risk`'e `description`/`hs_code`'dan ne biri ne ikisi verilmesi | `InvalidQueryError` → HTTP `400` |
+| Risk tavanında veya üzerinde tercihli vergi oranı (testlerde sentetik %90) | Vergi faktörü `1,0`'a kırpılır, belgelenen 0–1 sözleşmesini asla aşmaz |
 
 ---
 
@@ -913,7 +1019,7 @@ Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje 
 
 ## 🗺️ Yol haritası
 
-**Yedi yeteneğin yedisi de bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
+**Sekiz yeteneğin sekizi de bugün kullanıma hazır — geriye iskelet kalmadı** ve her modül kapsam
 eşiğiyle ölçülüyor:
 
 | Modül | Durum | Kapsam |
@@ -925,6 +1031,7 @@ eşiğiyle ölçülüyor:
 | `review.py` | ✅ **Tamamlandı** | Üç kararın tümünde dört-göz insan onayı denetim izi |
 | CN kodu sürümleme (SCD Type 2) | ✅ **Tamamlandı** | `hs_code_history` + `cn_code_versions`, `GET /codes/{code}/history` üzerinden sunulur |
 | `dashboard.py` | ✅ **Tamamlandı** | Faz 1 ve 2 üzerine salt-okunur raporlama, `GET /dashboard/stats` üzerinden |
+| `risk.py` | ✅ **Tamamlandı** | Sınıflandırma, tarama ve vergi üzerinden toplu sevkiyat risk skoru, `GET /assess-risk` üzerinden |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
 isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
@@ -932,10 +1039,13 @@ bileşenleri, tam CN içe aktarımı her sorgudaki yeniden kurulumu hissedilir h
 sınıflandırıcı indeksinin önbelleğe alınması, `review.py`'nin serbest metin `reviewer_name`
 alanı yerine **kimlik doğrulanmış inceleyiciler + RBAC** — bu demonun gerçek hesap verebilirlik
 ihtiyacı doğduğunda atılacak doğal bir sonraki adım — API uç noktasını yansıtan bir CLI
-`history <code>` komutu, ve tam `cn_code_versions` günlüğünü sayfalayarak gezmek için ayrı bir
+`history <code>` komutu, tam `cn_code_versions` günlüğünü sayfalayarak gezmek için ayrı bir
 `GET /cn-imports` uç noktası (`/dashboard/stats` artık daha önce dışa açılmamış olan
 `fetch_cn_import_runs` verisini sunuyor, ama yalnızca son birkaçını — liste tam olarak
-gezilecekse özel, filtrelenebilir bir uç nokta hâlâ açık).
+gezilecekse özel, filtrelenebilir bir uç nokta hâlâ açık), serbest metin açıklama kabul eden bir
+CLI `risk` yolu (bugün yalnızca HS kodu yoluyla sınırlı — bkz.
+[⚠️ Toplu risk skorlama](#️-toplu-risk-skorlama)), ve gerçek bir dağıtımın üç kararı değil skorun
+kendisini denetlemesi gerekirse kalıcı/incelenebilir risk değerlendirmeleri.
 
 ---
 
@@ -955,6 +1065,7 @@ CustomsIQ/
 │   │   ├── tariff_calculator.py # vergi oranı seçimi + hesaplama
 │   │   ├── review.py            # insan onayı denetim izi (dört göz)
 │   │   ├── dashboard.py         # Faz 1 ve 2 üzerine salt-okunur toplulaştırma
+│   │   ├── risk.py              # toplu sevkiyat risk skoru
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # ortak loglama kurulumu
@@ -963,7 +1074,7 @@ CustomsIQ/
 │   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── scripts/import_cn_codes.py   # resmî CN dosyası → hs_codes, değişiklikleri sürümler (SCD Type 2)
-├── tests/                       # 154 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli
+├── tests/                       # 173 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli, risk
 │   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

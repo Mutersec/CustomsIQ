@@ -78,6 +78,7 @@ entscheidet.
 | 📋 | **Prüfprotokoll (Vier-Augen-Prinzip)** | Klassifizierung, Prüfung oder Zollergebnis freigeben/ablehnen/markieren — nur Anhängen |
 | 🕘 | **Versionierte KN-Codes (SCD Type 2)** | Jede geänderte Beschreibung/Kategorie behält ihren vorherigen Wert, mit Zeitstempel — `GET /codes/{code}/history` |
 | 📊 | **Analyse-Dashboard** | Schreibgeschützter Überblick über Referenzdaten, Prüfaktivität und Importläufe — `GET /dashboard/stats` |
+| ⚠️ | **Zusammengesetztes Risiko-Scoring** | Ein erklärbarer Score aus Einreihungskonfidenz, Prüfung und Zoll — `GET /assess-risk` |
 | 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
 | 📥 | **Import echter Daten** | Lädt die offizielle EU-KN-Nomenklatur aus einer lokalen Datei, versioniert Änderungen |
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
@@ -99,7 +100,7 @@ Scoring- und Validierungslogik existiert an genau einer Stelle und wird nie dupl
 flowchart LR
     subgraph Schnittstellen
         CLI["💻 main.py<br/>Interaktive CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats<br/>· /assess-risk"]
         IMPORT["📥 import_cn_codes.py<br/>CLI-Importwerkzeug"]
     end
 
@@ -109,6 +110,7 @@ flowchart LR
     DUTY["💶 tariff_calculator.py<br/>Satzwahl + Berechnung"]
     REVIEW["📋 review.py<br/>Entscheidungen speichern + abrufen"]
     DASH["📊 dashboard.py<br/>aggregierte Statistiken"]
+    RISK["⚠️ risk.py<br/>Gesamtbewertung"]
     MATCH["🧩 matching.py<br/>Validierung + Ähnlichkeit"]
     DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions<br/>· hs_code_history · cn_code_versions")]
     EXC["🚨 exceptions.py"]
@@ -119,15 +121,20 @@ flowchart LR
     CLI --> SCREEN
     CLI --> DUTY
     CLI --> REVIEW
+    CLI --> RISK
     API --> SEARCH
     API --> CLS
     API --> SCREEN
     API --> DUTY
     API --> REVIEW
     API --> DASH
+    API --> RISK
     API --> DB
     IMPORT --> DB
     DASH --> DB
+    RISK --> CLS
+    RISK --> SCREEN
+    RISK --> DUTY
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -158,11 +165,12 @@ flowchart LR
 | `tariff_calculator.py` | Wählt den anwendbaren Zollsatz und berechnet den fälligen Betrag |
 | `review.py` | Speichert und listet menschliche Freigaben zu vergangenen Entscheidungen (Prüfprotokoll) |
 | `dashboard.py` | Schreibgeschützte Aggregation von Referenzdaten, Prüfaktivität und KN-Importen für `/dashboard/stats` |
+| `risk.py` | Kombiniert classify/screen/duty zu einem erklärbaren zusammengesetzten Risiko-Score |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; liest `CUSTOMSIQ_*`-Umgebungsvariablen und `.env` |
 | `logging_config.py` | Gemeinsames Logging — schlichtes Format nach stdout, nirgends ein `print()` |
 | `main.py` | Einstiegspunkt der interaktiven CLI (Suche + `screen <Name>`) |
-| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/codes/{code}/history`, `/health` |
+| `api.py` | FastAPI-Anwendung: liefert das Frontend unter `/`, dazu `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/codes/{code}/history`, `/dashboard/stats`, `/assess-risk`, `/health` |
 | `scripts/import_cn_codes.py` | CLI-Importwerkzeug: parst einen KN-Export und versioniert Änderungen über `upsert_hs_codes_with_history()` |
 | `static/index.html` | Das gesamte Frontend — Inline-CSS, reines `fetch()`, keine Abhängigkeiten |
 
@@ -309,6 +317,50 @@ nachträglich Spalten dafür hinzuzufügen, leitet das Dashboard **geändert vs.
 davon ab, wie viele `hs_code_history`-Zeilen das `version_label` dieses Laufs tragen (eine einzige
 `GROUP BY`-Abfrage, nicht drei separate Zählungen) — eine ehrliche Lesart dessen, was tatsächlich
 erfasst wurde, keine erfundene Aufschlüsselung.
+
+### ⚠️ Zusammengesetztes Risiko-Scoring
+
+Echte risikobasierte Zollkontrollen (SAP GTS "Legal Control" eingeschlossen) bewerten
+Einreihung, Prüfung und Zoll nicht unabhängig voneinander — das Gesamtrisiko einer Sendung ist
+eine Funktion aller drei zusammen. `risk.py` fügt `assess_shipment()` hinzu, das `classify()`,
+`screen_entity()` und `calculate_duty()` aufruft — deren bestehende öffentliche Signaturen, ohne
+Neuerungen — und die drei zu einem Gesamtscore zusammenführt:
+
+```
+gesamt = 0,6 × Prüfung + 0,25 × Einreihung + 0,15 × Zoll      (jeder Faktor in [0, 1])
+Stufe = "hoch" wenn gesamt ≥ 0,5, "mittel" wenn ≥ 0,2, sonst "niedrig"
+```
+
+| Faktor | Gewicht | Regel | Warum |
+|---|---|---|---|
+| **Prüfung** | 0,6 | Echter Treffer → `1,0`; Beinahe-Treffer (ein Treffer nur bei einem niedrigeren Beobachtungsschwellenwert von 0,55 gegenüber dem Compliance-Schwellenwert von 0,75) → `0,4`; nichts → `0,0` | Ein echter Treffer ist disqualifizierend, nicht nur riskant — bei einem Gewicht von 0,6 überschreitet ein Treffer allein (`0,6`) bereits "hoch", egal wie sauber die anderen beiden Faktoren sind |
+| **Einreihung** | 0,25 | `1 − höchste_Konfidenz`; kein Treffer → `1,0`; Code direkt angegeben (nichts abzuleiten) → `0,0` | Niedrige Konfidenz bedeutet, dass der falsche HS-Code angewendet werden könnte — ein Datenqualitätsproblem, kein Compliance-Verstoß, daher deutlich unter dem Gewicht der Prüfung |
+| **Zoll** | 0,15 | `min(Zollsatz / 20, 1,0)`, `+0,15` bei Präferenzsatz, auf `1,0` begrenzt; fehlender Satz → fest `0,6` | 20 % liegt über jedem eingesäten Regelsatz (16,9 %, Schuhwerk, ist der höchste); der Präferenzbonus spiegelt einen realen Betrugsvektor wider — ein Freihandelsabkommen-Anspruch wird bei einer Prüfung genau deshalb erneut verifiziert, selbst bei einem niedrigen oder Nullsatz |
+
+Zwei Dinge, die explizit gemacht werden, nicht implizit bleiben:
+
+- **Der Zollfaktor wird begrenzt**, `min(min(Zollsatz/20, 1) + 0,15, 1,0)`, nicht nur
+  unbegrenztes `+ 0,15`. Nichts im Datenmodell begrenzt `TariffRate.rate_percent`, sodass ein
+  Präferenzsatz an oder über der 20-%-Obergrenze eine reale Möglichkeit ist, die das Schema
+  zulässt, auch wenn die heutigen Seed-Daten zufällig keinen solchen enthalten — die Begrenzung
+  ist nach den Bedingungen des Datenmodells korrekt, nicht nur nach den heutigen Fixtures, und
+  wird durch einen dedizierten Test mit einem synthetischen 90-%-Satz abgedeckt.
+- **Kein Prüfprotokoll-Eintrag.** Eine Risikobewertung wird nicht persistiert und ist nicht über
+  `review_decisions` prüfbar — eine Neuberechnung ist günstig (drei bestehende Funktionsaufrufe,
+  keine neue I/O), und sie prüfbar zu machen würde bedeuten, `review.py`s geschlossene
+  `_VALID_SUBJECT_TYPES`-Menge zu erweitern, die diese Phase bewusst nicht anfasst. Eine
+  Risikobewertung ist ohnehin keine neue Art von Entscheidung — sie ist eine Linse über die drei
+  Entscheidungen, die bereits prüfbar sind, und sagt einem Prüfer, *welche* der drei zuerst
+  anzusehen ist, statt ein viertes Ding zum Freigeben oder Ablehnen hinzuzufügen.
+
+`InvalidQueryError` aus einem der drei zugrunde liegenden Aufrufe (ein fehlerhafter HS-Code, ein
+falsches Land, ein negativer Wert) wird nie abgefangen und in einen Score umgewandelt — eine
+schlechte Eingabe ist ein Anfrageproblem und erscheint als HTTP `400`, genau wie bei jedem
+anderen Endpunkt. Der CLI-Befehl `risk` unterstützt nur den HS-Code-Pfad, keine
+Freitextbeschreibung: Eine flache REPL-Zeile kann nicht eindeutig zwei separate Freitextfelder
+(Beschreibung und Parteiname) enthalten — anders als `duty <code> <land> <wert>` und
+`screen <name>`, die jeweils eines enthalten können. API und Frontend (strukturierte
+Formularfelder) unterstützen beides.
 
 ### 🔗 Deterministische `subject_reference`
 
@@ -488,7 +540,18 @@ Recorded: approved 1 on duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d
 
 > review-history
 2026-01-01T12:00:00+00:00  duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e  approved  by alice  (confirmed correct)
+
+> risk 6109100000 NO 1000 Northwind Maritime
+Risk for 6109100000 from NO, party 'Northwind Maritime': HIGH (0.6609)
+  screening       1.0000 (weight 0.60)  real sanctions match: Northwind Maritime Holdings Ltd (1.00)
+  classification  0.0000 (weight 0.25)  HS code given directly
+  duty            0.1500 (weight 0.15)  preferential rate 0.0%
 ```
+
+Der CLI-Befehl `risk` unterstützt nur den HS-Code-Pfad (`risk <hs_code> <land> <wert>
+<parteiname>`), keine Freitextbeschreibung — Grund siehe
+[⚠️ Zusammengesetztes Risiko-Scoring](#️-zusammengesetztes-risiko-scoring). API und Weboberfläche
+unterstützen auch eine Beschreibung.
 
 ### 🖥️ Weboberfläche
 
@@ -555,6 +618,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/review/history` | Erfasste Prüfentscheidungen, neueste zuerst |
 | `GET` | `/codes/{code}/history` | Versionszeitlinie eines KN-Codes (SCD Type 2), älteste zuerst |
 | `GET` | `/dashboard/stats` | Aggregierte Statistiken: Referenzdaten, Prüfaktivität, KN-Importläufe |
+| `GET` | `/assess-risk` | Zusammengesetzter Risiko-Score aus Einreihung, Prüfung und Zoll |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
 **Parameter von `GET /search`**
@@ -698,6 +762,45 @@ curl "http://localhost:8000/dashboard/stats"
 }
 ```
 
+**`GET /assess-risk`** — genau eines von `description`/`hs_code` ist erforderlich (`400`, wenn
+keines oder beide angegeben werden); `country_of_origin`, `party_name` und `customs_value` sind
+immer erforderlich. Kombiniert `classify()`, `screen_entity()` und `calculate_duty()` — Gewichte
+und Begründung siehe [⚠️ Zusammengesetztes Risiko-Scoring](#️-zusammengesetztes-risiko-scoring).
+Dieses Beispiel ist ein echter Sanktionstreffer bei ansonsten sauberen Einreihungs-/Zolldaten —
+die Prüfung allein (Gewicht 0,6) reicht aus, um "hoch" zu erreichen:
+
+```bash
+curl "http://localhost:8000/assess-risk?description=cotton+t-shirt&country_of_origin=NO&party_name=Northwind+Maritime&customs_value=1000"
+```
+
+```json
+{
+  "level": "high",
+  "composite_score": 0.6608770728095686,
+  "hs_code": "6109100000",
+  "factors": [
+    {
+      "name": "screening",
+      "score": 1.0,
+      "weight": 0.6,
+      "explanation": "real sanctions match: Northwind Maritime Holdings Ltd (1.00)"
+    },
+    {
+      "name": "classification",
+      "score": 0.1535082912382748,
+      "weight": 0.25,
+      "explanation": "top match 6109100000 at 84.65% confidence"
+    },
+    {
+      "name": "duty",
+      "score": 0.15,
+      "weight": 0.15,
+      "explanation": "preferential rate 0.0%"
+    }
+  ]
+}
+```
+
 ```bash
 curl "http://localhost:8000/screen?name=Northwind+Maritime"
 ```
@@ -749,11 +852,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | Modul | Abdeckung |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
-| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` | 🟢 100 % |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` · `risk.py` | 🟢 100 % |
 | `scripts/import_cn_codes.py` | 🟢 91 % |
 | `logging_config.py` | 🟢 100 % |
-| `main.py` | 🟢 97 % |
-| **Gesamt** | **🟢 98 %** (154 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
+| `main.py` | 🟢 98 % |
+| **Gesamt** | **🟢 98 %** (173 Tests, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
 
 ### Getestete Grenzfälle
 
@@ -784,6 +887,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | `GET /codes/{code}/history` für einen eingesäten, nie versionierten Code | `200 []`, kein Fehler |
 | `GET /codes/{code}/history` für einen unbekannten Code | `HSCodeNotFoundError` → HTTP `404` |
 | `GET /dashboard/stats` bei einer frischen Datenbank (keine Prüfungen, keine Importe) | Alle Zählungen `0`, Aufschlüsselungsschlüssel vorhanden statt fehlend, leere Listen — nie `NaN%` im Frontend |
+| Ein echter Sanktionstreffer, ansonsten saubere Einreihung/Zoll | Prüfung allein (`0,6 × 1,0`) erreicht "hoch" — die anderen Faktoren können es nicht verwässern |
+| Beinahe-Treffer + niedrige Einreihungskonfidenz + fehlender Zollsatz zusammen | Landen bei "mittel" (`0,4989`), obwohl keiner allein bemerkenswert wäre |
+| Beschreibung ohne gemeinsamen Begriff mit irgendeinem Code, in einer Risikobewertung | Einreihungsfaktor bewertet maximales Risiko (`1,0`); Zoll wird übersprungen, nicht mit "Satz nicht gefunden" verwechselt |
+| Weder noch beide von `description`/`hs_code` bei `/assess-risk` angegeben | `InvalidQueryError` → HTTP `400` |
+| Ein Präferenzsatz an oder über der Risiko-Obergrenze (synthetisch 90 % in Tests) | Zollfaktor begrenzt sich auf `1,0`, überschreitet nie den dokumentierten 0–1-Vertrag |
 
 ---
 
@@ -921,7 +1029,7 @@ da nur dieses Werkzeug sie je bräuchte. Ein CSV-Export erübrigt sie vollständ
 
 ## 🗺️ Roadmap
 
-**Alle sieben Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
+**Alle acht Funktionen sind einsatzbereit — es bleibt kein Gerüst übrig**, und jedes Modul wird
 von der Abdeckungsschwelle gemessen:
 
 | Modul | Status | Funktionsumfang |
@@ -933,6 +1041,7 @@ von der Abdeckungsschwelle gemessen:
 | `review.py` | ✅ **Ausgeliefert** | Vier-Augen-Prüfprotokoll für alle drei Entscheidungen |
 | KN-Code-Versionierung (SCD Type 2) | ✅ **Ausgeliefert** | `hs_code_history` + `cn_code_versions`, bereitgestellt über `GET /codes/{code}/history` |
 | `dashboard.py` | ✅ **Ausgeliefert** | Schreibgeschützte Berichtsschicht über Phase 1 & 2, via `GET /dashboard/stats` |
+| `risk.py` | ✅ **Ausgeliefert** | Zusammengesetzter Sendungs-Risiko-Score über Einreihung, Prüfung und Zoll, via `GET /assess-risk` |
 
 Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
 Alias- und Transliterationsbehandlung für Entitätsnamen, Kontingent- und Antidumping-Komponenten
@@ -940,10 +1049,14 @@ auf der Zollberechnung, das Zwischenspeichern des Klassifikator-Index, sobald ei
 KN-Import den Neuaufbau pro Aufruf spürbar macht, **authentifizierte Prüfer mit RBAC** anstelle
 des Freitextfelds `reviewer_name` in `review.py` — der naheliegende nächste Schritt, sobald diese
 Demo echte Nachvollziehbarkeit pro Freigabe braucht — ein CLI-Befehl `history <code>`, der den
-API-Endpunkt spiegelt, sowie ein eigener, paginierter `GET /cn-imports`-Endpunkt zum vollständigen
+API-Endpunkt spiegelt, ein eigener, paginierter `GET /cn-imports`-Endpunkt zum vollständigen
 Durchsuchen des `cn_code_versions`-Protokolls (`/dashboard/stats` stellt die zuvor nicht
 exponierten `fetch_cn_import_runs`-Daten jetzt bereit, aber nur die jüngsten — für die vollständige
-Liste bleibt ein dedizierter, filterbarer Endpunkt offen).
+Liste bleibt ein dedizierter, filterbarer Endpunkt offen), ein CLI-`risk`-Pfad, der eine
+Freitextbeschreibung akzeptiert (heute nur auf den HS-Code-Pfad beschränkt — siehe
+[⚠️ Zusammengesetztes Risiko-Scoring](#️-zusammengesetztes-risiko-scoring)), sowie
+persistierte/prüfbare Risikobewertungen, falls ein echter Einsatz jemals den Score selbst und
+nicht nur die drei zusammengefassten Entscheidungen prüfen muss.
 
 ---
 
@@ -963,6 +1076,7 @@ CustomsIQ/
 │   │   ├── tariff_calculator.py # Zollsatzwahl + Berechnung
 │   │   ├── review.py            # Prüfprotokoll (Vier-Augen-Prinzip)
 │   │   ├── dashboard.py         # schreibgeschützte Aggregation über Phase 1 & 2
+│   │   ├── risk.py              # zusammengesetzter Sendungs-Risiko-Score
 │   │   ├── exceptions.py        # typisierte Fehlerhierarchie
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # gemeinsames Logging-Setup
@@ -971,7 +1085,7 @@ CustomsIQ/
 │   │   └── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
 ├── scripts/import_cn_codes.py   # offizielle KN-Datei → hs_codes, versioniert Änderungen (SCD Type 2)
-├── tests/                       # 154 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import, Dashboard
+├── tests/                       # 173 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import, Dashboard, Risiko
 │   └── fixtures/                # Beispiel-KN-Export für die Importer-Tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

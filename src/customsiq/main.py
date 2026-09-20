@@ -10,6 +10,7 @@ from src.customsiq.database import get_connection, seed
 from src.customsiq.embargo_screener import screen_entity
 from src.customsiq.exceptions import InvalidQueryError, RateNotFoundError
 from src.customsiq.logging_config import configure_logging
+from src.customsiq.risk import assess_shipment
 from src.customsiq.search import search
 from src.customsiq.tariff_calculator import calculate_duty
 
@@ -20,6 +21,7 @@ DUTY_COMMAND = "duty "
 CLASSIFY_COMMAND = "classify "
 REVIEW_HISTORY_COMMAND = "review-history"
 REVIEW_COMMAND = "review "
+RISK_COMMAND = "risk "
 
 
 def _run_search(conn: sqlite3.Connection, query: str) -> None:
@@ -152,6 +154,44 @@ def _run_review_history(conn: sqlite3.Connection) -> None:
         )
 
 
+def _run_risk(conn: sqlite3.Connection, arguments: str) -> None:
+    """Assess composite risk from a 'risk <hs_code> <country> <value> <party...>' command.
+
+    CLI-only limitation, not a silent gap: this supports the hs_code path, not
+    free-text description — a flat REPL line can't unambiguously hold two
+    separate free-text fields. The API and frontend support both.
+    """
+    parts = arguments.split()
+    if len(parts) < 4:
+        logger.warning("Usage: risk <hs_code> <country_of_origin> <customs_value> <party_name...>")
+        return
+    hs_code, country, raw_value, *name_parts = parts
+    try:
+        value = float(raw_value)
+    except ValueError:
+        logger.warning("%r is not a number.", raw_value)
+        return
+    party_name = " ".join(name_parts)
+
+    result = assess_shipment(conn, country, party_name, value, hs_code=hs_code)
+    logger.info(
+        "Risk for %s from %s, party %r: %s (%.4f)",
+        hs_code,
+        country,
+        party_name,
+        result.level.upper(),
+        result.composite_score,
+    )
+    for factor in result.factors:
+        logger.info(
+            "  %-15s %.4f (weight %.2f)  %s",
+            factor.name,
+            factor.score,
+            factor.weight,
+            factor.explanation,
+        )
+
+
 def run(db_path: str = settings.database_path) -> None:
     """Start an interactive loop offering search, screening and duty calculation.
 
@@ -167,7 +207,8 @@ def run(db_path: str = settings.database_path) -> None:
     logger.info("'screen <name>' to run a sanctions check,")
     logger.info("'duty <hs_code> <country> <value>' to calculate customs duty,")
     logger.info("'review <subject_type> <subject_reference> <decision> <reviewer> [comment]' to")
-    logger.info("record a sign-off, or 'review-history' to list recent decisions.")
+    logger.info("record a sign-off, 'review-history' to list recent decisions, or")
+    logger.info("'risk <hs_code> <country> <value> <party_name>' for a composite risk score.")
     while True:
         entry = input("\n> ").strip()
         if entry.lower() in {"quit", "exit"}:
@@ -185,6 +226,8 @@ def run(db_path: str = settings.database_path) -> None:
                 _run_review_history(conn)
             elif entry.lower().startswith(REVIEW_COMMAND):
                 _run_review(conn, entry[len(REVIEW_COMMAND) :].strip())
+            elif entry.lower().startswith(RISK_COMMAND):
+                _run_risk(conn, entry[len(RISK_COMMAND) :].strip())
             else:
                 _run_search(conn, entry)
         except (InvalidQueryError, RateNotFoundError) as exc:

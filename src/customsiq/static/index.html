@@ -524,6 +524,56 @@
 
   .dash-row:last-child { border-bottom: none; }
   .dash-row b { color: var(--text); font-weight: 600; }
+
+  /* ---------- risk assessment ---------- */
+  .panel-head.risk .rule { background: var(--amber); }
+
+  .risk-result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .risk-score {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--primary-dim);
+  }
+
+  .level-chip {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  .level-chip.low { background: #e7f5ec; color: var(--green); border: 1px solid var(--green); }
+  .level-chip.medium { background: #fdf3e6; color: #7a4a08; border: 1px solid var(--amber); }
+  .level-chip.high { background: #fbeceb; color: #8c2018; border: 1px solid var(--red); }
+
+  .risk-factor-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 50px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+
+  .risk-factor-row .bar span.screening { background: var(--accent-screen); }
+  .risk-factor-row .bar span.classification { background: var(--accent-classify); }
+  .risk-factor-row .bar span.duty { background: var(--accent-duty); }
+
+  .risk-factor-explain {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin: 0 0 10px 130px;
+  }
 </style>
 </head>
 <body>
@@ -657,6 +707,37 @@
     </div>
   </section>
 
+  <!-- ============ Shipment risk assessment ============ -->
+  <section class="panel wide">
+    <div class="panel-head risk">
+      <span class="rule"></span>
+      <h2 data-i18n="risk.title"></h2>
+    </div>
+    <div class="panel-body">
+      <p class="hint" data-i18n="risk.hint"></p>
+      <form id="risk-form">
+        <div class="field">
+          <label for="risk-subject" data-i18n="risk.subjectLabel"></label>
+          <input type="text" id="risk-subject" data-i18n-placeholder="risk.subjectPlaceholder" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="risk-origin" data-i18n="risk.originLabel"></label>
+          <input type="text" id="risk-origin" data-i18n-placeholder="risk.originPlaceholder" maxlength="2" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="risk-party" data-i18n="risk.partyLabel"></label>
+          <input type="text" id="risk-party" data-i18n-placeholder="risk.partyPlaceholder" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="risk-value" data-i18n="risk.valueLabel"></label>
+          <input type="text" id="risk-value" data-i18n-placeholder="risk.valuePlaceholder" inputmode="decimal" autocomplete="off">
+        </div>
+        <button type="submit" id="risk-btn" data-i18n="risk.button"></button>
+      </form>
+      <div class="results" id="risk-results" aria-live="polite"></div>
+    </div>
+  </section>
+
   <!-- ============ Review history ============ -->
   <section class="panel wide">
     <div class="panel-head">
@@ -748,6 +829,24 @@
         dutyLabel: "Duty",
         totalPayable: "Total payable",
         rateType: { standard: "standard", preferential: "preferential" },
+      },
+      risk: {
+        title: "Shipment Risk Assessment",
+        hint: "Combines classification, sanctions screening and duty into one composite score — enter either a product description or an HS code (either works).",
+        subjectLabel: "Product description or HS code",
+        subjectPlaceholder: "e.g. cotton t-shirt or 6109100000",
+        originLabel: "Country of origin",
+        originPlaceholder: "e.g. NO",
+        partyLabel: "Person or organisation",
+        partyPlaceholder: "e.g. Northwind Maritime",
+        valueLabel: "Customs value",
+        valuePlaceholder: "e.g. 1000",
+        button: "Assess risk",
+        busy: "Assessing…",
+        validationRequired: "Enter a description or HS code, a country of origin, a party name and a customs value.",
+        valueMustBeNumber: "Customs value must be a number.",
+        level: { low: "low", medium: "medium", high: "high" },
+        factor: { screening: "Screening", classification: "Classification", duty: "Duty" },
       },
       reviewHistory: {
         title: "Review History",
@@ -862,6 +961,24 @@
         totalPayable: "Ödenecek toplam",
         rateType: { standard: "standart", preferential: "tercihli" },
       },
+      risk: {
+        title: "Sevkiyat Risk Değerlendirmesi",
+        hint: "Sınıflandırma, yaptırım taraması ve vergiyi tek bir toplu skorda birleştirir — ürün açıklaması veya HS kodundan birini girin (ikisi de çalışır).",
+        subjectLabel: "Ürün açıklaması veya HS kodu",
+        subjectPlaceholder: "örn. pamuklu tişört veya 6109100000",
+        originLabel: "Menşe ülke",
+        originPlaceholder: "örn. NO",
+        partyLabel: "Kişi veya kuruluş",
+        partyPlaceholder: "örn. Northwind Maritime",
+        valueLabel: "Gümrük kıymeti",
+        valuePlaceholder: "örn. 1000",
+        button: "Riski değerlendir",
+        busy: "Değerlendiriliyor…",
+        validationRequired: "Bir açıklama veya HS kodu, menşe ülke, taraf ismi ve gümrük kıymeti girin.",
+        valueMustBeNumber: "Gümrük kıymeti sayısal olmalı.",
+        level: { low: "düşük", medium: "orta", high: "yüksek" },
+        factor: { screening: "Tarama", classification: "Sınıflandırma", duty: "Vergi" },
+      },
       reviewHistory: {
         title: "İnceleme Geçmişi",
         hint: "Sınıflandırma, tarama ve vergi sonuçlarına ilişkin onaylar — yalnızca eklenir, en yeni önce.",
@@ -974,6 +1091,24 @@
         dutyLabel: "Zoll",
         totalPayable: "Gesamtbetrag",
         rateType: { standard: "Regelsatz", preferential: "Präferenzsatz" },
+      },
+      risk: {
+        title: "Sendungs-Risikobewertung",
+        hint: "Kombiniert Einreihung, Sanktionsprüfung und Zoll zu einem einzigen Gesamtscore — geben Sie entweder eine Warenbeschreibung oder einen HS-Code ein (beides funktioniert).",
+        subjectLabel: "Warenbeschreibung oder HS-Code",
+        subjectPlaceholder: "z. B. Baumwoll-T-Shirt oder 6109100000",
+        originLabel: "Ursprungsland",
+        originPlaceholder: "z. B. NO",
+        partyLabel: "Person oder Organisation",
+        partyPlaceholder: "z. B. Northwind Maritime",
+        valueLabel: "Zollwert",
+        valuePlaceholder: "z. B. 1000",
+        button: "Risiko bewerten",
+        busy: "Wird bewertet…",
+        validationRequired: "Geben Sie eine Beschreibung oder einen HS-Code, ein Ursprungsland, einen Namen und einen Zollwert ein.",
+        valueMustBeNumber: "Der Zollwert muss eine Zahl sein.",
+        level: { low: "niedrig", medium: "mittel", high: "hoch" },
+        factor: { screening: "Prüfung", classification: "Einreihung", duty: "Zoll" },
       },
       reviewHistory: {
         title: "Prüfprotokoll",
@@ -1353,6 +1488,70 @@
             <span class="chip">${escapeHtml(r.country_of_origin)}</span>
             ${agreement}
             ${reviewControlsHtml("duty", r.subject_reference)}
+          </article>
+        `;
+      },
+    });
+  });
+
+  // ---------- Shipment risk assessment ----------
+  const riskBox = document.getElementById("risk-results");
+  const riskSubject = document.getElementById("risk-subject");
+  const riskOrigin = document.getElementById("risk-origin");
+  const riskParty = document.getElementById("risk-party");
+  const riskValue = document.getElementById("risk-value");
+
+  // A pure 8- or 10-digit field is treated as an HS/TARIC code; anything else
+  // is sent as a free-text description — mirrors validate_cn_code's shape
+  // without duplicating it, so the backend is still the one source of truth.
+  const looksLikeHsCode = (v) => /^\d{8}(\d{2})?$/.test(v);
+
+  document.getElementById("risk-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const subject = riskSubject.value.trim();
+    if (!subject || !riskOrigin.value.trim() || !riskParty.value.trim() || !riskValue.value.trim()) {
+      setState(riskBox, "error", t("risk.validationRequired"));
+      return;
+    }
+    if (isNaN(Number(riskValue.value.trim()))) {
+      setState(riskBox, "error", t("risk.valueMustBeNumber"));
+      return;
+    }
+
+    submit({
+      url: () => {
+        const params = new URLSearchParams({
+          country_of_origin: riskOrigin.value.trim(),
+          party_name: riskParty.value.trim(),
+          customs_value: riskValue.value.trim(),
+        });
+        params.set(looksLikeHsCode(subject) ? "hs_code" : "description", subject);
+        return `/assess-risk?${params.toString()}`;
+      },
+      input: riskSubject,
+      button: document.getElementById("risk-btn"),
+      box: riskBox,
+      busyLabel: t("risk.busy"),
+      idleLabel: t("risk.button"),
+      render: (r) => {
+        const codeChip = r.hs_code ? `<span class="chip mono">${escapeHtml(r.hs_code)}</span>` : "";
+        const factorRows = r.factors.map((f) => `
+          <div class="risk-factor-row">
+            <span>${escapeHtml(t(`risk.factor.${f.name}`))}</span>
+            <div class="bar"><span class="${f.name}" style="width:${Math.round(f.score * 100)}%"></span></div>
+            <span>${Math.round(f.score * 100)}%</span>
+          </div>
+          <p class="risk-factor-explain">${escapeHtml(f.explanation)}</p>
+        `).join("");
+        riskBox.innerHTML = `
+          <article class="card">
+            <div class="risk-result-header">
+              <span class="risk-score">${r.composite_score.toFixed(4)}</span>
+              <span class="level-chip ${r.level}">${escapeHtml(t(`risk.level.${r.level}`))}</span>
+            </div>
+            ${codeChip}
+            ${factorRows}
           </article>
         `;
       },

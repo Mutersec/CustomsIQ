@@ -267,3 +267,49 @@ def test_dashboard_stats_returns_the_expected_shape() -> None:
     assert body["import_run_count"] >= 0
     assert isinstance(body["recent_import_runs"], list)
     assert body["versioned_code_count"] >= 0
+
+
+def test_assess_risk_happy_path() -> None:
+    """A composite risk assessment returns the expected shape."""
+    response = client.get(
+        "/assess-risk",
+        params={
+            "description": "cotton t-shirt",
+            "country_of_origin": "NO",
+            "party_name": "Quokka Beachwear",
+            "customs_value": 1000,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["level"] in {"low", "medium", "high"}
+    assert body["hs_code"] == "6109100000"
+    assert {f["name"] for f in body["factors"]} == {"screening", "classification", "duty"}
+
+
+def test_assess_risk_rejects_neither_description_nor_hs_code() -> None:
+    """Omitting both description and hs_code surfaces as HTTP 400."""
+    response = client.get(
+        "/assess-risk",
+        params={
+            "country_of_origin": "NO",
+            "party_name": "Quokka Beachwear",
+            "customs_value": 1000,
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_assess_risk_rejects_both_description_and_hs_code() -> None:
+    """Giving both description and hs_code surfaces as HTTP 400."""
+    response = client.get(
+        "/assess-risk",
+        params={
+            "description": "cotton t-shirt",
+            "hs_code": "6109100000",
+            "country_of_origin": "NO",
+            "party_name": "Quokka Beachwear",
+            "customs_value": 1000,
+        },
+    )
+    assert response.status_code == 400

@@ -16,6 +16,7 @@ from src.customsiq.dashboard import get_dashboard_stats
 from src.customsiq.database import fetch_hs_code_history, get_by_code, get_connection, seed
 from src.customsiq.embargo_screener import screen_entity
 from src.customsiq.exceptions import HSCodeNotFoundError, InvalidQueryError, RateNotFoundError
+from src.customsiq.risk import assess_shipment
 from src.customsiq.search import search
 from src.customsiq.tariff_calculator import calculate_duty
 
@@ -154,6 +155,42 @@ def calculate_duty_for_consignment(
         "total_payable": float(result.total_payable),
         "explanation": result.explanation,
         "subject_reference": review.reference_for_duty(hs_code, country_of_origin, customs_value),
+    }
+
+
+@app.get("/assess-risk")
+def assess_risk(
+    country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
+    party_name: str = Query(..., description="Person or organisation to screen"),
+    customs_value: float = Query(..., description="Declared customs value"),
+    description: Optional[str] = Query(None, description="Free-text description of the goods"),
+    hs_code: Optional[str] = Query(None, description="CN-8 or TARIC-10 code, if already known"),
+) -> dict:
+    """Return a composite risk assessment combining classification, screening and duty.
+
+    Reuses `src.customsiq.risk.assess_shipment`, which itself only calls the
+    existing `classify`, `screen_entity` and `calculate_duty` functions — this
+    is a composing layer, not a new decision.
+    """
+    try:
+        result = assess_shipment(
+            _conn, country_of_origin, party_name, customs_value, description, hs_code
+        )
+    except InvalidQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "level": result.level,
+        "composite_score": result.composite_score,
+        "hs_code": result.hs_code,
+        "factors": [
+            {
+                "name": f.name,
+                "score": f.score,
+                "weight": f.weight,
+                "explanation": f.explanation,
+            }
+            for f in result.factors
+        ],
     }
 
 

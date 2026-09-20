@@ -110,3 +110,33 @@ def test_run_reports_no_review_history(monkeypatch: pytest.MonkeyPatch, capsys) 
     monkeypatch.setattr("builtins.input", _fake_input(["review-history", "quit"]))
     run(":memory:")
     assert "No review decisions recorded yet." in capsys.readouterr().out
+
+
+def test_run_assesses_shipment_risk(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """'risk <code> <country> <value> <party...>' prints the level and factors."""
+    monkeypatch.setattr(
+        "builtins.input",
+        _fake_input(["risk 6109100000 NO 1000 Northwind Maritime", "quit"]),
+    )
+    run(":memory:")
+    out = capsys.readouterr().out
+    assert "HIGH" in out
+    assert "screening" in out
+    assert "classification" in out
+    assert "duty" in out
+
+
+def test_run_rejects_a_malformed_risk_command(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Too few arguments explain the expected shape instead of crashing."""
+    monkeypatch.setattr("builtins.input", _fake_input(["risk 6109100000 NO", "quit"]))
+    run(":memory:")
+    assert "Usage: risk" in capsys.readouterr().out
+
+
+def test_run_rejects_a_non_numeric_risk_value(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """A non-numeric customs value explains itself instead of crashing."""
+    monkeypatch.setattr(
+        "builtins.input", _fake_input(["risk 6109100000 NO abc Quokka Beachwear", "quit"])
+    )
+    run(":memory:")
+    assert "not a number" in capsys.readouterr().out

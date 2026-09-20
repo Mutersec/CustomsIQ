@@ -76,6 +76,7 @@ not a black box that decides alone.
 | 📋 | **Human-review audit trail** | Approve/reject/flag any classification, screening or duty result — append-only |
 | 🕘 | **Versioned CN codes (SCD Type 2)** | Every changed description/category keeps its prior value, timestamped, via `GET /codes/{code}/history` |
 | 📊 | **Analytics dashboard** | Read-only overview of reference data, review activity and import runs via `GET /dashboard/stats` |
+| ⚠️ | **Composite risk scoring** | One explainable score combining classification confidence, screening and duty — `GET /assess-risk` |
 | 🖥️ | **Web UI** | Single-page frontend served at `/` — no build step, no framework, no CDN |
 | 📥 | **Real-data import** | Load the official EU CN nomenclature from a local file, versioning any changes |
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
@@ -97,7 +98,7 @@ validation logic exists in exactly one place and is never duplicated.
 flowchart LR
     subgraph Interfaces
         CLI["💻 main.py<br/>Interactive CLI"]
-        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats"]
+        API["🌐 api.py<br/>FastAPI /search · /classify<br/>· /screen · /calculate-duty · /review<br/>· /codes/{code}/history · /dashboard/stats<br/>· /assess-risk"]
         IMPORT["📥 import_cn_codes.py<br/>CLI import tool"]
     end
 
@@ -107,6 +108,7 @@ flowchart LR
     DUTY["💶 tariff_calculator.py<br/>select rate + compute"]
     REVIEW["📋 review.py<br/>submit + fetch decisions"]
     DASH["📊 dashboard.py<br/>aggregate stats"]
+    RISK["⚠️ risk.py<br/>composite assessment"]
     MATCH["🧩 matching.py<br/>validate + similarity"]
     DB[("🗄️ database.py<br/>SQLite · hs_codes · sanctioned_entities<br/>· tariff_rates · review_decisions<br/>· hs_code_history · cn_code_versions")]
     EXC["🚨 exceptions.py"]
@@ -117,15 +119,20 @@ flowchart LR
     CLI --> SCREEN
     CLI --> DUTY
     CLI --> REVIEW
+    CLI --> RISK
     API --> SEARCH
     API --> CLS
     API --> SCREEN
     API --> DUTY
     API --> REVIEW
     API --> DASH
+    API --> RISK
     API --> DB
     IMPORT --> DB
     DASH --> DB
+    RISK --> CLS
+    RISK --> SCREEN
+    RISK --> DUTY
     SEARCH --> MATCH
     CLS --> MATCH
     SCREEN --> MATCH
@@ -156,11 +163,12 @@ flowchart LR
 | `tariff_calculator.py` | Selects the applicable duty rate and computes what is owed |
 | `review.py` | Records and lists human reviewer sign-offs on past decisions (audit trail) |
 | `dashboard.py` | Read-only aggregation of reference data, review activity and CN imports for `/dashboard/stats` |
+| `risk.py` | Composes classify/screen/duty into one explainable composite risk score |
 | `exceptions.py` | `CustomsIQError` → `InvalidQueryError`, `HSCodeNotFoundError`, `RateNotFoundError` |
 | `config.py` | `pydantic-settings`; reads `CUSTOMSIQ_*` env vars and `.env` |
 | `logging_config.py` | Shared logging setup — plain formatter to stdout, no `print()` anywhere |
 | `main.py` | Interactive CLI entry point (search + `screen <name>`) |
-| `api.py` | FastAPI app: serves the frontend at `/`, plus `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/codes/{code}/history`, `/health` |
+| `api.py` | FastAPI app: serves the frontend at `/`, plus `/search`, `/classify`, `/screen`, `/calculate-duty`, `/review`, `/review/history`, `/codes/{code}/history`, `/dashboard/stats`, `/assess-risk`, `/health` |
 | `scripts/import_cn_codes.py` | CLI import tool: parses a CN export and versions any changes via `upsert_hs_codes_with_history()` |
 | `static/index.html` | The whole web frontend — inline CSS, vanilla `fetch()`, zero dependencies |
 
@@ -301,6 +309,46 @@ per import run, not a new/changed/unchanged split — that split existed only tr
 retroactively, the dashboard derives **changed vs. unchanged** per run from how many
 `hs_code_history` rows carry that run's `version_label` (one `GROUP BY` query, not three
 separate counts) — an honest reading of what was actually recorded, not a fabricated breakdown.
+
+### ⚠️ Composite risk scoring
+
+Real risk-based customs controls (SAP GTS "Legal Control" included) don't score
+classification, screening and duty independently — a shipment's overall risk is a function of
+all three together. `risk.py` adds `assess_shipment()`, which calls `classify()`,
+`screen_entity()` and `calculate_duty()` — their existing public signatures, nothing new — and
+combines the three into one composite score:
+
+```
+composite = 0.6 × screening + 0.25 × classification + 0.15 × duty      (each factor in [0, 1])
+level = "high" if composite ≥ 0.5, "medium" if ≥ 0.2, else "low"
+```
+
+| Factor | Weight | Rule | Why |
+|---|---|---|---|
+| **Screening** | 0.6 | Real hit → `1.0`; near-miss (a hit only at a lower watch threshold, `0.55` vs. the compliance threshold of `0.75`) → `0.4`; nothing → `0.0` | A real hit is disqualifying, not just risky — at 0.6 weight, a hit alone (`0.6`) already clears "high" on its own, regardless of how clean the other two factors are |
+| **Classification** | 0.25 | `1 − top_confidence`; no match at all → `1.0`; code given directly (nothing to infer) → `0.0` | Low confidence means the wrong HS code might get applied — a data-quality problem, not a compliance violation, hence well below screening's weight |
+| **Duty** | 0.15 | `min(rate_percent / 20, 1.0)`, `+0.15` if preferential, clamped to `1.0`; missing rate → flat `0.6` | 20% sits above every seeded standard rate (16.9%, footwear, is the highest); the preferential bump reflects a real fraud vector — a trade-agreement claim is exactly what gets re-verified in an audit, even at a low or zero resulting rate |
+
+Two things worth being explicit about, not left implicit:
+
+- **The duty factor is clamped**, `min(min(rate_percent/20, 1) + 0.15, 1.0)`, not just
+  `+ 0.15` unclamped. Nothing in the data model caps `TariffRate.rate_percent`, so a preferential
+  rate at or above the 20% ceiling is a real possibility the schema allows, even though today's
+  seed data doesn't happen to contain one — the clamp is correct on the data model's terms, not
+  just today's fixtures, and is covered by a dedicated test using a synthetic 90% rate.
+- **No audit record.** A risk assessment is not persisted and is not reviewable via
+  `review_decisions` — recomputing it is cheap (three existing function calls, no new I/O), and
+  making it reviewable would mean widening `review.py`'s closed `_VALID_SUBJECT_TYPES` set, which
+  this phase deliberately doesn't touch. A risk assessment isn't a new kind of decision anyway —
+  it's a lens over the three decisions that are already reviewable, telling a reviewer *which* of
+  those three to look at first, not adding a fourth thing to approve or reject.
+
+`InvalidQueryError` from any of the three underlying calls (a malformed HS code, bad country,
+negative value) is never caught and converted into a score — bad input is a request problem, and
+surfaces as HTTP `400` exactly like every other endpoint. The CLI's `risk` command only supports
+the HS-code path, not free-text description: a flat REPL line can't unambiguously hold two
+separate free-text fields (description and party name) the way `duty <code> <country> <value>`
+and `screen <name>` can each hold one. The API and frontend (structured form fields) support both.
 
 ### 🔗 Deterministic `subject_reference`
 
@@ -475,7 +523,17 @@ Recorded: approved 1 on duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d
 
 > review-history
 2026-01-01T12:00:00+00:00  duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e  approved  by alice  (confirmed correct)
+
+> risk 6109100000 NO 1000 Northwind Maritime
+Risk for 6109100000 from NO, party 'Northwind Maritime': HIGH (0.6609)
+  screening       1.0000 (weight 0.60)  real sanctions match: Northwind Maritime Holdings Ltd (1.00)
+  classification  0.0000 (weight 0.25)  HS code given directly
+  duty            0.1500 (weight 0.15)  preferential rate 0.0%
 ```
+
+The CLI's `risk` command only supports the HS-code path (`risk <hs_code> <country> <value>
+<party_name>`), not free-text description — see [⚠️ Composite risk scoring](#️-composite-risk-scoring)
+for why. The API and web UI support a description too.
 
 ### 🖥️ Web interface
 
@@ -542,6 +600,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/review/history` | Recorded review decisions, most recently reviewed first |
 | `GET` | `/codes/{code}/history` | One CN code's SCD Type 2 version timeline, oldest first |
 | `GET` | `/dashboard/stats` | Aggregate stats: reference data, review activity, CN import runs |
+| `GET` | `/assess-risk` | Composite risk score combining classification, screening and duty |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
 **`GET /search` parameters**
@@ -708,6 +767,45 @@ curl "http://localhost:8000/dashboard/stats"
 }
 ```
 
+**`GET /assess-risk`** — exactly one of `description`/`hs_code` is required (`400` if neither or
+both are given); `country_of_origin`, `party_name` and `customs_value` are always required.
+Combines `classify()`, `screen_entity()` and `calculate_duty()` — see
+[⚠️ Composite risk scoring](#️-composite-risk-scoring) for the weights and the reasoning behind
+them. This worked example is a real sanctions hit against otherwise clean classification/duty
+data — screening alone (weight 0.6) is enough to reach "high":
+
+```bash
+curl "http://localhost:8000/assess-risk?description=cotton+t-shirt&country_of_origin=NO&party_name=Northwind+Maritime&customs_value=1000"
+```
+
+```json
+{
+  "level": "high",
+  "composite_score": 0.6608770728095686,
+  "hs_code": "6109100000",
+  "factors": [
+    {
+      "name": "screening",
+      "score": 1.0,
+      "weight": 0.6,
+      "explanation": "real sanctions match: Northwind Maritime Holdings Ltd (1.00)"
+    },
+    {
+      "name": "classification",
+      "score": 0.1535082912382748,
+      "weight": 0.25,
+      "explanation": "top match 6109100000 at 84.65% confidence"
+    },
+    {
+      "name": "duty",
+      "score": 0.15,
+      "weight": 0.15,
+      "explanation": "preferential rate 0.0%"
+    }
+  ]
+}
+```
+
 ```bash
 curl "http://localhost:8000/calculate-duty?hs_code=6109100000&country_of_origin=NO&customs_value=1000"
 ```
@@ -777,11 +875,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | Module | Coverage |
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
-| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` | 🟢 100% |
+| `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` · `risk.py` | 🟢 100% |
 | `scripts/import_cn_codes.py` | 🟢 91% |
 | `logging_config.py` | 🟢 100% |
-| `main.py` | 🟢 97% |
-| **Total** | **🟢 98%** (154 tests, gate at 80%) — **no module is excluded from the gate** |
+| `main.py` | 🟢 98% |
+| **Total** | **🟢 98%** (173 tests, gate at 80%) — **no module is excluded from the gate** |
 
 ### Edge cases under test
 
@@ -812,6 +910,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | `GET /codes/{code}/history` for a seeded-but-never-versioned code | `200 []`, not an error |
 | `GET /codes/{code}/history` for an unknown code | `HSCodeNotFoundError` → HTTP `404` |
 | `GET /dashboard/stats` on a fresh database (no reviews, no imports) | All counts `0`, breakdown keys present not missing, empty lists — never `NaN%` on the frontend |
+| A real sanctions hit, otherwise clean classification/duty | Screening alone (`0.6 × 1.0`) reaches "high" — the other factors can't dilute it |
+| Near-miss + low classification confidence + missing tariff rate together | Land at "medium" (`0.4989`) though none alone would be remarkable |
+| Description sharing no term with any code, in a risk assessment | Classification factor scores maximum risk (`1.0`); duty is skipped, not conflated with "rate not found" |
+| Neither or both of `description`/`hs_code` given to `/assess-risk` | `InvalidQueryError` → HTTP `400` |
+| A preferential duty rate at or above the risk ceiling (synthetic 90% in tests) | Duty factor clamps to `1.0`, never exceeds the documented 0–1 contract |
 
 ---
 
@@ -946,7 +1049,7 @@ dependency, since only this tool would ever use it. Exporting the sheet to CSV a
 
 ## 🗺️ Roadmap
 
-**All seven features ship today — no scaffolds remain**, and every module is measured by the
+**All eight features ship today — no scaffolds remain**, and every module is measured by the
 coverage gate:
 
 | Module | Status | Scope |
@@ -958,16 +1061,21 @@ coverage gate:
 | `review.py` | ✅ **Shipped** | Four-eyes human-review audit trail on all three decisions |
 | CN code versioning (SCD Type 2) | ✅ **Shipped** | `hs_code_history` + `cn_code_versions`, surfaced at `GET /codes/{code}/history` |
 | `dashboard.py` | ✅ **Shipped** | Read-only reporting layer over Phases 1 & 2, via `GET /dashboard/stats` |
+| `risk.py` | ✅ **Shipped** | Composite shipment risk score over classification, screening and duty, via `GET /assess-risk` |
 
 Planned extensions: country-level embargo checks and product/destination restrictions, alias and
 transliteration handling for entity names, quota/anti-dumping components on top of the duty
 calculation, caching the classifier index once a full CN import makes the per-call rebuild
 noticeable, **authenticated reviewers with RBAC** in place of `review.py`'s free-text
 `reviewer_name` — the natural next step once this demo needs real accountability per sign-off —
-a CLI `history <code>` command mirroring the API endpoint, and a paginated `GET /cn-imports`
+a CLI `history <code>` command mirroring the API endpoint, a paginated `GET /cn-imports`
 endpoint for browsing the full `cn_code_versions` log (`/dashboard/stats` now surfaces the
 `fetch_cn_import_runs` data that used to be unexposed, but only the most recent handful — a
-dedicated, filterable endpoint is still open if the list needs to be browsed in full).
+dedicated, filterable endpoint is still open if the list needs to be browsed in full), a CLI
+`risk` path that accepts a free-text description (today limited to the HS-code path — see
+[⚠️ Composite risk scoring](#️-composite-risk-scoring)), and persisted/reviewable risk
+assessments if a real deployment ever needs to audit the score itself rather than just the
+three decisions it summarizes.
 
 ---
 
@@ -987,6 +1095,7 @@ CustomsIQ/
 │   │   ├── tariff_calculator.py # duty rate selection + calculation
 │   │   ├── review.py            # human-review audit trail (four-eyes)
 │   │   ├── dashboard.py         # read-only aggregation over Phases 1 & 2
+│   │   ├── risk.py              # composite shipment risk score
 │   │   ├── exceptions.py        # typed error hierarchy
 │   │   ├── config.py            # pydantic-settings / .env
 │   │   ├── logging_config.py    # shared logging setup
@@ -995,7 +1104,7 @@ CustomsIQ/
 │   │   └── static/index.html    # web frontend — single file, no build step
 │   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── scripts/import_cn_codes.py   # official CN file → hs_codes, versioning changes (SCD Type 2)
-├── tests/                       # 154 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard
+├── tests/                       # 173 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard, risk
 │   └── fixtures/                # sample CN export for the importer's tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt
