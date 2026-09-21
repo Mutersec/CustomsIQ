@@ -8,8 +8,8 @@ lists, and calculate the duty owed.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-115%20passing-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-197%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
@@ -82,6 +82,7 @@ not a black box that decides alone.
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
 | 🌐 | **REST API** | `GET /search` and `GET /screen` on FastAPI, with auto-generated `/docs` |
 | 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 codes + 18 mock entities |
+| 🐘 | **Dual backend** | The same SQL runs on PostgreSQL — opt in with one env var, SQLite stays the default |
 | ⚙️ | **Env-based config** | `pydantic-settings` reads `.env` — no hardcoded paths or thresholds |
 | 🚨 | **Typed errors** | `InvalidQueryError`, `HSCodeNotFoundError` → clean HTTP 400 / 404 semantics |
 | 🧪 | **Enforced quality** | ruff + black + mypy + 98% coverage, gated in CI on every push |
@@ -259,7 +260,7 @@ Swap `similarity()` in `matching.py` for `rapidfuzz.fuzz.WRatio` as soon as **an
 
 | Decision | Rationale | Upgrade path |
 |---|---|---|
-| **SQLite, not Postgres** | Single-node, read-mostly reference data; zero ops overhead | Swap the connection layer if multi-writer concurrency arrives |
+| **SQLite by default, Postgres optional** | Single-node, read-mostly reference data; zero ops overhead. The connection layer now speaks both — `CUSTOMSIQ_DATABASE_URL` switches backends without touching a module | Make Postgres the default if multi-writer concurrency or durable hosted state arrives |
 | **One shared connection** with `check_same_thread=False` | Simple, works with FastAPI's threadpool | Connection pool once concurrent writes appear |
 | **Logging, not `print()`** | Same output path for CLI and API; level controlled by config | — |
 | **No `EmbargoScreeningError`** | Screening's input validation is identical to search's, so it reuses `InvalidQueryError` rather than duplicating a class | Add one if screening grows a genuinely distinct failure mode |
@@ -370,6 +371,55 @@ doesn't apply to an existing service anyway. The one thing worth a human, one-ti
 the Render dashboard for this service and confirm Language/Runtime is still its current native
 setting, not "Docker" — a zero-cost confirmation given the reasoning above, not an expected
 problem, since I can't see that dashboard myself to verify it directly.
+
+### 🐘 Dual-backend: SQLite default, Postgres opt-in
+
+Postgres was added *alongside* SQLite, not instead of it, and the reasoning is a cost argument
+rather than a taste one.
+
+**Why not switch outright.** The whole suite runs against `:memory:` in well under a second with
+no server and no driver; a full switch would make every local `pytest` depend on a live
+PostgreSQL (or testcontainers) to test code whose behaviour is identical either way. The live
+demo gains nothing either — it intentionally serves mock data with fast cold starts on a
+filesystem that resets, so re-seeding is the design, not a defect Postgres would fix. And the
+hosting cost is real: **Render's free PostgreSQL expires 30 days after creation** (inaccessible
+unless upgraded to a paid plan, with a 14-day grace period before deletion, one free database per
+workspace, 1 GB) — [Render docs](https://render.com/docs/free). A portfolio link that quietly
+breaks every month is worse than one that stays up. Running one set of SQL on two backends also
+demonstrates more than picking either one: it shows the data layer is genuinely abstracted.
+
+**Why a ~150-line adapter and not SQLAlchemy Core.** Same test the `openpyxl` and scikit-learn
+calls got: does the dependency remove the problem? It doesn't. The hardest dialect difference
+here — `ON CONFLICT … DO UPDATE` — is *identical* on both backends, while Core's upsert is
+dialect-specific (`dialects.postgresql.insert` vs `dialects.sqlite.insert`), so the branch stays
+either way. Meanwhile Core would rewrite all ~18 statements on the SQLite path — the path the
+live site runs — and land a new import in every default test run. `src/customsiq/pg_adapter.py`
+is imported lazily, only inside `get_connection`'s Postgres branch, so `psycopg` stays an
+optional extra. Its ceiling is marked in the source: the `?` → `%s` translation is a naive
+replace, fine while no statement holds a literal `?` or `%` (there's a test sweeping all of them);
+past that, sqlglot or Core, not more regexes.
+
+**What actually differs, verified against a real `postgres:16` container — not assumed:**
+
+| | SQLite | PostgreSQL | Handling |
+|---|---|---|---|
+| Placeholders | `?` | `%s` | translated in the adapter |
+| `id` columns | `INTEGER PRIMARY KEY AUTOINCREMENT` | no equivalent | rewritten to `GENERATED ALWAYS AS IDENTITY` |
+| `rate_percent REAL` | 8-byte float | **4-byte `float4`** — `16.9` reads back as `16.899999618…` | rewritten to `DOUBLE PRECISION`; a test asserts `== 16.9` exactly |
+| New row id | `cursor.lastrowid` | psycopg has none | `… RETURNING id` on Postgres only; the SQLite path keeps its exact existing sequence |
+| `FROM (SELECT …)` | alias optional | alias required before PG 16 | added `AS changed_codes` (valid on both) |
+| Multi-statement `SCHEMA` | `executescript` | no such method | adapter splits and runs each statement |
+| Text `ORDER BY` | byte order | collation-dependent | the compose database is created with `--locale=C` |
+| Row shape | tuples | tuples *(psycopg's default)* | pinned explicitly to `tuple_row` — every row here is read positionally (`HSCode(*row)`), so `dict_row` would unpack column **names** into fields and silently succeed with garbage |
+
+Unordered `SELECT`s have no guaranteed row order on either backend, so ties in search ranking may
+come out in a different order there. No `ORDER BY` was added to "fix" that — it would change
+today's SQLite behaviour — and the parity tests deliberately assert no tie ordering.
+
+**The Postgres schema is derived from the single SQLite `SCHEMA` string**, not kept as a second
+copy, so the two backends cannot drift apart. The seven decision modules are unchanged down to
+their `sqlite3.Connection` annotations: none of them runs SQL, they only hand `conn` back to
+`database.py`, so the Postgres branch returns the wrapper via `cast`.
 
 ### 🔗 Deterministic `subject_reference`
 
@@ -494,6 +544,7 @@ All settings are read from environment variables or `.env`:
 | Variable | Default | Description |
 |---|---|---|
 | `CUSTOMSIQ_DATABASE_PATH` | `customsiq.db` | SQLite file path (`:memory:` for an ephemeral DB) |
+| `CUSTOMSIQ_DATABASE_URL` | *(unset)* | `postgresql://…` URL. **Takes precedence over `CUSTOMSIQ_DATABASE_PATH` when set**; unset or empty ⇒ SQLite, exactly as before. Any other scheme is rejected at startup |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, …) |
 | `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Minimum name-similarity score (0–1) for a screening hit |
 
@@ -504,9 +555,8 @@ Render's existing native Python deploy, unchanged by this.** No `render.yaml`, n
 repo has never told Render how to deploy, so adding a `Dockerfile` here doesn't touch that. See
 [🐳 Docker for local dev, not for Render (yet)](#-docker-for-local-dev-not-for-render-yet) below
 for the reasoning. Still worth having: environment parity for anyone reviewing or running this
-project without setting up a Python venv by hand, and it's the first concrete piece of the
-Postgres migration path planned for a future phase — `docker-compose.yml` already has a
-commented-out stub for it.
+project without setting up a Python venv by hand, and it's what the optional PostgreSQL
+service builds on — see [🐘 Running with PostgreSQL](#-running-with-postgresql) below.
 
 ```bash
 docker build -t customsiq .
@@ -527,6 +577,42 @@ machine's incidental local one) — the production image installs only the five 
 (`httpx`, needed solely by `fastapi.testclient.TestClient`). No hot-reload wired up — rebuild
 after code changes, a deliberate simplification for what "local dev" needed here, not an
 oversight.
+
+### 🐘 Running with PostgreSQL
+
+**Optional, local only. The [live demo](https://customsiq-gs0u.onrender.com/) stays on SQLite** —
+see [🐘 Dual-backend: SQLite default, Postgres opt-in](#-dual-backend-sqlite-default-postgres-opt-in)
+for why that's a deliberate call rather than an unfinished migration.
+
+`docker-compose.yml` carries a `postgres:16-alpine` service behind a **profile**, so a plain
+`docker compose up` is byte-for-byte the SQLite setup it has always been. Opt in with the profile
+*and* the URL:
+
+```bash
+CUSTOMSIQ_DATABASE_URL=postgresql://customsiq:customsiq@postgres:5432/customsiq \
+  docker compose --profile postgres up
+```
+
+Outside Docker, install the optional driver first (it is **not** in `requirements.txt`):
+
+```bash
+pip install -r requirements-postgres.txt
+CUSTOMSIQ_DATABASE_URL=postgresql://customsiq:customsiq@localhost:5432/customsiq \
+  uvicorn src.customsiq.api:app
+```
+
+The schema is created on first connect, the same way the SQLite file is. To run the PostgreSQL
+parity tests, point them at a database whose name contains `test` — the fixture drops every table
+and refuses to run otherwise:
+
+```bash
+docker compose --profile postgres up -d postgres
+docker exec customsiq-postgres-1 psql -U customsiq -d customsiq -c "CREATE DATABASE customsiq_test;"
+CUSTOMSIQ_TEST_POSTGRES_URL=postgresql://customsiq:customsiq@localhost:5432/customsiq_test \
+  pytest tests/test_postgres.py
+```
+
+Without that variable they skip, so the default `pytest` run stays fast and dependency-free.
 
 ---
 
@@ -931,7 +1017,11 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | `scripts/import_cn_codes.py` | 🟢 91% |
 | `logging_config.py` | 🟢 100% |
 | `main.py` | 🟢 98% |
-| **Total** | **🟢 98%** (173 tests, gate at 80%) — **no module is excluded from the gate** |
+| `pg_adapter.py` | 🟢 96% |
+| **Total** | **🟢 98.33%** (197 tests in 0.85 s, gate at 80%) — **no module is excluded from the gate** |
+
+The 13 PostgreSQL parity tests are *not* in that count: they skip unless `CUSTOMSIQ_TEST_POSTGRES_URL`
+points at a real server (CI sets it; a plain local `pytest` needs no Postgres and no driver).
 
 ### Edge cases under test
 
@@ -1127,7 +1217,10 @@ dedicated, filterable endpoint is still open if the list needs to be browsed in 
 `risk` path that accepts a free-text description (today limited to the HS-code path — see
 [⚠️ Composite risk scoring](#️-composite-risk-scoring)), and persisted/reviewable risk
 assessments if a real deployment ever needs to audit the score itself rather than just the
-three decisions it summarizes.
+three decisions it summarizes. Pointing the live deployment at PostgreSQL is deliberately *not*
+on this list — the backend already works (see
+[🐘 Dual-backend](#-dual-backend-sqlite-default-postgres-opt-in)); what's missing is a database
+that doesn't expire after 30 days on a free plan.
 
 ---
 
@@ -1137,13 +1230,15 @@ three decisions it summarizes.
 CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── Dockerfile                   # local-dev image — see 🐳 Running with Docker
-├── docker-compose.yml           # app + a commented Postgres stub for a future phase
+├── docker-compose.yml           # app + an optional Postgres service (--profile postgres)
 ├── .dockerignore
 ├── requirements-runtime.txt     # runtime-only subset of requirements.txt, used by Dockerfile
+├── requirements-postgres.txt    # optional psycopg driver — deliberately NOT in requirements.txt
 ├── src/
 │   ├── customsiq/
 │   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision + HSCodeVersion + ImportRun records
-│   │   ├── database.py          # SQLite layer + seed data + SCD Type 2 versioning
+│   │   ├── database.py          # SQLite/Postgres layer + seed data + SCD Type 2 versioning
+│   │   ├── pg_adapter.py        # PostgreSQL dialect adapter — imported only when a URL is set
 │   │   ├── matching.py          # shared validation + similarity scoring
 │   │   ├── search.py            # CN code ranking
 │   │   ├── cn_classifier.py     # TF-IDF classification + explanation
@@ -1160,7 +1255,8 @@ CustomsIQ/
 │   │   └── static/index.html    # web frontend — single file, no build step
 │   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── scripts/import_cn_codes.py   # official CN file → hs_codes, versioning changes (SCD Type 2)
-├── tests/                       # 173 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard, risk
+├── tests/                       # 197 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard, risk
+│                                #   + 13 Postgres parity tests, skipped unless a server is configured
 │   └── fixtures/                # sample CN export for the importer's tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

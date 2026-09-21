@@ -11,33 +11,49 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Same three keys as .env.example, wired through the existing
-      # pydantic-settings config (src/customsiq/config.py) — no new settings.
+      # Same keys as .env.example, wired through the existing pydantic-settings
+      # config (src/customsiq/config.py) — no new settings invented here.
       CUSTOMSIQ_DATABASE_PATH: /data/customsiq.db
       CUSTOMSIQ_LOG_LEVEL: INFO
       CUSTOMSIQ_SCREENING_THRESHOLD: "0.75"
+      # Empty by default => SQLite, exactly as before. Set it to opt into the
+      # postgres service below (which also needs --profile postgres):
+      #   CUSTOMSIQ_DATABASE_URL=postgresql://customsiq:customsiq@postgres:5432/customsiq \
+      #     docker compose --profile postgres up
+      CUSTOMSIQ_DATABASE_URL: ${CUSTOMSIQ_DATABASE_URL:-}
     volumes:
       # Named volume so the seeded database survives `docker compose down`/`up`
       # instead of resetting every time.
       - customsiq-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+        # Not required: without --profile postgres the service isn't started at
+        # all, and the app falls back to SQLite rather than failing to boot.
+        required: false
 
-  # ponytail: Phase 6 stub, deliberately inert. database.py only supports
-  # SQLite today (see src/customsiq/database.py) — an active Postgres
-  # container here would be dead weight, not a real option yet. Uncomment
-  # and wire CUSTOMSIQ_DATABASE_PATH (or a new DSN setting) to this when
-  # that migration lands.
-  #
-  # postgres:
-  #   image: postgres:16-alpine
-  #   environment:
-  #     POSTGRES_DB: customsiq
-  #     POSTGRES_USER: customsiq
-  #     POSTGRES_PASSWORD: customsiq
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - customsiq-postgres-data:/var/lib/postgresql/data
+  # Opt-in alternative backend: only started with `--profile postgres`, so a
+  # plain `docker compose up` stays on SQLite exactly as before.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: customsiq
+      POSTGRES_USER: customsiq
+      POSTGRES_PASSWORD: customsiq
+      # C collation keeps ORDER BY on the ISO-8601 timestamp strings byte-exact,
+      # matching SQLite's binary comparison instead of a locale's rules.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - customsiq-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U customsiq -d customsiq"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
 volumes:
   customsiq-data:
-  # customsiq-postgres-data:
+  customsiq-postgres-data:

@@ -328,7 +328,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     """
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("path", type=Path, help="Local CN reference file (.csv or .xlsx)")
-    parser.add_argument("--db", default=settings.database_path, help="Target SQLite database")
+    parser.add_argument("--db", default=settings.database_target, help="Target database")
     parser.add_argument("--code-column", help="Override the auto-detected code column")
     parser.add_argument("--description-column", help="Override the description column")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)

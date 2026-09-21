@@ -3,11 +3,11 @@
 # Local-development image, not wired to the live Render deploy (see the
 # "🐳 Docker for local dev, not for Render (yet)" section of the README).
 #
-# Multi-stage even though today's runtime deps are all pure-Python wheels —
-# no compiler is strictly needed yet — because it (a) keeps pip's build
-# metadata/cache out of the final image regardless, and (b) establishes the
-# pattern before a dependency that DOES need a build step (e.g. psycopg2 for
-# Phase 6's Postgres migration) shows up.
+# Multi-stage even though today's runtime deps are all pure-Python wheels or
+# prebuilt binaries (psycopg[binary] included) — no compiler is strictly
+# needed yet — because it keeps pip's build metadata/cache out of the final
+# image regardless, and the pattern is already there if a dependency that DOES
+# need a build step (e.g. plain psycopg without [binary]) ever shows up.
 
 # Pinned to match .github/workflows/ci.yml's actions/setup-python version —
 # the version this project actually verifies against on every push, not the
@@ -17,8 +17,12 @@
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
-COPY requirements-runtime.txt .
-RUN pip install --no-cache-dir --user -r requirements-runtime.txt
+COPY requirements-runtime.txt requirements-postgres.txt ./
+# The Postgres driver is installed here (not in requirements-runtime.txt) so
+# `docker compose --profile postgres` works out of the box, while a plain
+# `pip install -r requirements-runtime.txt` outside Docker — and the live
+# Render build, which uses requirements.txt — stays free of it.
+RUN pip install --no-cache-dir --user -r requirements-runtime.txt -r requirements-postgres.txt
 
 FROM python:3.11-slim
 

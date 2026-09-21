@@ -23,8 +23,17 @@ warn_unused_ignores = true
 module = ["openpyxl.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# psycopg is the optional, lazily-imported PostgreSQL driver (requirements-postgres.txt);
+# a dev environment on the default SQLite backend won't have it installed.
+module = ["psycopg.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "postgres: needs a real PostgreSQL server (set CUSTOMSIQ_TEST_POSTGRES_URL); skipped otherwise",
+]
 
 [tool.coverage.run]
 source = ["src/customsiq", "scripts"]

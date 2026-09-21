@@ -1,0 +1,7 @@
+# Optional PostgreSQL backend (see the README's "🐘 Running with PostgreSQL").
+# Deliberately NOT in requirements.txt: psycopg is only imported when
+# CUSTOMSIQ_DATABASE_URL is set, so the default SQLite path — including the
+# live deployment — never needs it, same treatment openpyxl gets in the importer.
+# Pinned to the 3.2 series: psycopg 3.3+ requires Python >= 3.10, while this
+# project still targets 3.9 (pyproject.toml).
+psycopg[binary]==3.2.13

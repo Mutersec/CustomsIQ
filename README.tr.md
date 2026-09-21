@@ -8,8 +8,8 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
-![Kapsam](https://img.shields.io/badge/kapsam-%9725-brightgreen)
-![Testler](https://img.shields.io/badge/testler-115%20ge%C3%A7ti-brightgreen)
+![Kapsam](https://img.shields.io/badge/kapsam-%9825-brightgreen)
+![Testler](https://img.shields.io/badge/testler-197%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
@@ -83,6 +83,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
 | 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
+| 🐘 | **Çift veritabanı desteği** | Aynı SQL PostgreSQL üzerinde de çalışır — tek bir ortam değişkeniyle açılır, varsayılan SQLite kalır |
 | ⚙️ | **Ortam tabanlı yapılandırma** | `pydantic-settings` `.env` dosyasını okur — sabit kodlanmış yol veya eşik yok |
 | 🚨 | **Tipli hatalar** | `InvalidQueryError`, `HSCodeNotFoundError` → temiz HTTP `400` / `404` semantiği |
 | 🧪 | **Zorunlu kalite** | ruff + black + mypy + %98 kapsam; her push'ta CI tarafından denetlenir |
@@ -262,7 +263,7 @@ Aşağıdakilerden **herhangi biri** gerçekleştiğinde `matching.py` içindeki
 
 | Karar | Gerekçe | Yükseltme yolu |
 |---|---|---|
-| **Postgres değil SQLite** | Tek düğümlü, ağırlıklı okuma yapılan referans verisi; sıfır operasyon yükü | Çoklu yazar eşzamanlılığı gerektiğinde bağlantı katmanı değiştirilir |
+| **Varsayılan SQLite, isteğe bağlı Postgres** | Tek düğümlü, ağırlıklı okuma yapılan referans verisi; sıfır operasyon yükü. Bağlantı katmanı artık her ikisini de konuşuyor — `CUSTOMSIQ_DATABASE_URL` hiçbir modüle dokunmadan arka ucu değiştirir | Çoklu yazar eşzamanlılığı veya kalıcı barındırılan durum gerekirse Postgres varsayılan yapılır |
 | **`check_same_thread=False` ile tek paylaşımlı bağlantı** | Basit; FastAPI'nin thread havuzuyla çalışır | Eşzamanlı yazmalar ortaya çıktığında bağlantı havuzu |
 | **`print()` değil loglama** | CLI ve API için aynı çıktı yolu; seviye yapılandırmayla kontrol edilir | — |
 | **Doğrulamanın `matching.py` içinde olması** | Arama, tarama, CLI ve API bunu devralır; yeni bir çağıran eklenerek atlanması imkânsızdır | — |
@@ -379,6 +380,57 @@ etmesi gereken tek şey: bu servis için Render dashboard'unu açıp Language/Ru
 mevcut yerel ayarında olduğunu, "Docker" olmadığını doğrulamak — yukarıdaki gerekçe göz önüne
 alındığında maliyetsiz bir doğrulama, beklenen bir sorun değil, çünkü o dashboard'u kendim
 görüp doğrudan doğrulayamıyorum.
+
+### 🐘 Çift arka uç: varsayılan SQLite, isteğe bağlı Postgres
+
+Postgres, SQLite'ın *yerine* değil *yanına* eklendi ve gerekçe bir zevk meselesi değil, bir maliyet
+argümanı.
+
+**Neden tamamen geçilmedi.** Tüm test paketi `:memory:` üzerinde, sunucusuz ve sürücüsüz, bir
+saniyenin çok altında çalışıyor; tam geçiş, davranışı her iki tarafta da aynı olan kodu test etmek
+için her yerel `pytest`'i canlı bir PostgreSQL'e (ya da testcontainers'a) bağımlı kılardı. Canlı demo
+da bir şey kazanmaz — bilinçli olarak kurgusal veriyle, hızlı soğuk başlatmayla ve sıfırlanan bir
+dosya sistemiyle çalışır; yeniden tohumlama tasarımın parçasıdır, Postgres'in düzelteceği bir kusur
+değil. Barındırma maliyeti de gerçek: **Render'ın ücretsiz PostgreSQL'i oluşturulmasından 30 gün
+sonra sona erer** (ücretli plana yükseltilmedikçe erişilemez; kalıcı silmeden önce 14 günlük ek
+süre, çalışma alanı başına bir ücretsiz veritabanı, 1 GB) — [Render belgeleri](https://render.com/docs/free).
+Her ay sessizce bozulan bir portföy bağlantısı, ayakta kalan birinden kötüdür. Tek bir SQL setini
+iki arka uçta çalıştırmak, birini seçmekten fazlasını da gösterir: veri katmanının gerçekten soyut
+olduğunu.
+
+**Neden ~150 satırlık bir adaptör, SQLAlchemy Core değil.** `openpyxl` ve scikit-learn kararlarıyla
+aynı test: bağımlılık, çözmesi beklenen sorunu ortadan kaldırıyor mu? Kaldırmıyor. Buradaki en zor
+lehçe farkı — `ON CONFLICT … DO UPDATE` — iki arka uçta *birebir aynı*; Core'un upsert'ü ise
+lehçeye özgü (`dialects.postgresql.insert` ile `dialects.sqlite.insert`), yani dallanma yine kalırdı.
+Buna karşılık Core, SQLite yolundaki ~18 ifadenin tamamını — yani canlı sitenin çalıştırdığı yolu —
+yeniden yazar ve her varsayılan test çalışmasına yeni bir import sokardı. `src/customsiq/pg_adapter.py`
+yalnızca `get_connection`'ın Postgres dalında, tembel biçimde içe aktarılır; böylece `psycopg` isteğe
+bağlı bir ek olarak kalır. Sınırı kaynakta işaretli: `?` → `%s` çevirisi naif bir değiştirmedir,
+hiçbir ifade düz `?` veya `%` içermediği sürece yeterlidir (hepsini tarayan bir test var); ötesinde
+daha fazla regex değil, sqlglot veya Core.
+
+**Gerçekte ne farklı — varsayılmadı, gerçek bir `postgres:16` konteynerine karşı doğrulandı:**
+
+| | SQLite | PostgreSQL | Ele alınışı |
+|---|---|---|---|
+| Yer tutucular | `?` | `%s` | adaptörde çevrilir |
+| `id` sütunları | `INTEGER PRIMARY KEY AUTOINCREMENT` | karşılığı yok | `GENERATED ALWAYS AS IDENTITY` olarak yeniden yazılır |
+| `rate_percent REAL` | 8 baytlık float | **4 baytlık `float4`** — `16.9` geri okunurken `16.899999618…` olur | `DOUBLE PRECISION`'a çevrilir; bir test tam olarak `== 16.9` olduğunu doğrular |
+| Yeni satır kimliği | `cursor.lastrowid` | psycopg'de yok | yalnızca Postgres'te `… RETURNING id`; SQLite yolu mevcut sırasını birebir korur |
+| `FROM (SELECT …)` | takma ad isteğe bağlı | PG 16 öncesi zorunlu | `AS changed_codes` eklendi (ikisinde de geçerli) |
+| Çok ifadeli `SCHEMA` | `executescript` | böyle bir metot yok | adaptör bölüp her ifadeyi çalıştırır |
+| Metin `ORDER BY` | bayt sırası | derlemeye (collation) bağlı | compose veritabanı `--locale=C` ile oluşturulur |
+| Satır biçimi | tuple | tuple *(psycopg'nin varsayılanı)* | açıkça `tuple_row`'a sabitlendi — buradaki her satır konumsal okunur (`HSCode(*row)`), `dict_row` ise sütun **adlarını** alanlara yerleştirip sessizce çöp üretirdi |
+
+Sıralanmamış `SELECT`'lerin satır sırası iki arka uçta da garanti değildir; bu nedenle arama
+sıralamasındaki eşitlikler farklı sırayla gelebilir. Bunu "düzeltmek" için `ORDER BY` eklenmedi —
+bugünkü SQLite davranışını değiştirirdi — ve parite testleri bilinçli olarak eşitlik sırası
+doğrulamaz.
+
+**Postgres şeması tek bir SQLite `SCHEMA` metninden türetilir**, ikinci bir kopya olarak tutulmaz;
+böylece iki arka uç birbirinden ayrışamaz. Yedi karar modülü, `sqlite3.Connection` tip
+açıklamalarına kadar değişmedi: hiçbiri SQL çalıştırmaz, yalnızca `conn`'u `database.py`'ye geri
+verir; bu yüzden Postgres dalı sarmalayıcıyı `cast` ile döndürür.
 
 ### 🔗 Deterministik `subject_reference`
 
@@ -506,6 +558,7 @@ Tüm ayarlar ortam değişkenlerinden veya `.env` dosyasından okunur:
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
 | `CUSTOMSIQ_DATABASE_PATH` | `customsiq.db` | SQLite dosya yolu (geçici veritabanı için `:memory:`) |
+| `CUSTOMSIQ_DATABASE_URL` | *(tanımsız)* | `postgresql://…` URL'i. **Tanımlıyken `CUSTOMSIQ_DATABASE_PATH`'e göre önceliklidir**; tanımsız veya boşsa eskisi gibi SQLite kullanılır. Başka bir şema açılışta reddedilir |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python log seviyesi (`DEBUG`, `INFO`, `WARNING`, …) |
 | `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Tarama eşleşmesi için asgari isim benzerlik skoru (0–1) |
 
@@ -517,8 +570,8 @@ mevcut yerel (native) Python dağıtımını kullanmaya devam ediyor, bundan etk
 söylemedi, dolayısıyla buraya bir `Dockerfile` eklemek onu etkilemiyor. Gerekçe için aşağıdaki
 [🐳 Docker: yerel geliştirme için, Render için değil (henüz)](#-docker-yerel-geli%C5%9Ftirme-i%C3%A7in-render-i%C3%A7in-de%C4%9Fil-hen%C3%BCz)
 bölümüne bakın. Yine de değerli: bu projeyi elle Python venv kurmadan inceleyen veya çalıştıran
-herkes için ortam paritesi, ve gelecekteki bir fazda planlanan Postgres göçünün ilk somut
-parçası — `docker-compose.yml`'de zaten yorum satırına alınmış bir taslak var.
+herkes için ortam paritesi, ve isteğe bağlı PostgreSQL servisinin üzerine kurulduğu temel —
+aşağıdaki [🐘 PostgreSQL ile çalıştırma](#-postgresql-ile-çalıştırma) bölümüne bakın.
 
 ```bash
 docker build -t customsiq .
@@ -541,6 +594,42 @@ verir. Çok aşamalı build, `python:3.11-slim` (bu makinenin rastgele yerel sü
 `fastapi.testclient.TestClient` için gerekli) asla kurmaz. Sıcak yeniden yükleme
 bağlanmamıştır — kod değişikliğinden sonra yeniden build edin; burada "yerel geliştirme"nin
 gerektirdiği bilinçli bir sadeleştirme, bir eksiklik değil.
+
+### 🐘 PostgreSQL ile çalıştırma
+
+**İsteğe bağlı, yalnızca yerel. [Canlı demo](https://customsiq-gs0u.onrender.com/) SQLite'ta
+kalıyor** — bunun yarım kalmış bir göç değil, bilinçli bir tercih olmasının nedeni için
+[🐘 Çift arka uç: varsayılan SQLite, isteğe bağlı Postgres](#-çift-arka-uç-varsayılan-sqlite-isteğe-bağlı-postgres)
+bölümüne bakın.
+
+`docker-compose.yml` bir `postgres:16-alpine` servisini bir **profil** arkasında taşır; böylece düz
+bir `docker compose up` her zamanki SQLite kurulumunun aynısıdır. Hem profil hem de URL ile açın:
+
+```bash
+CUSTOMSIQ_DATABASE_URL=postgresql://customsiq:customsiq@postgres:5432/customsiq \
+  docker compose --profile postgres up
+```
+
+Docker dışında önce isteğe bağlı sürücüyü kurun (`requirements.txt` içinde **yoktur**):
+
+```bash
+pip install -r requirements-postgres.txt
+CUSTOMSIQ_DATABASE_URL=postgresql://customsiq:customsiq@localhost:5432/customsiq \
+  uvicorn src.customsiq.api:app
+```
+
+Şema, SQLite dosyasında olduğu gibi ilk bağlantıda oluşturulur. PostgreSQL parite testlerini
+çalıştırmak için adında `test` geçen bir veritabanı gösterin — fixture tüm tabloları düşürür ve
+aksi hâlde çalışmayı reddeder:
+
+```bash
+docker compose --profile postgres up -d postgres
+docker exec customsiq-postgres-1 psql -U customsiq -d customsiq -c "CREATE DATABASE customsiq_test;"
+CUSTOMSIQ_TEST_POSTGRES_URL=postgresql://customsiq:customsiq@localhost:5432/customsiq_test \
+  pytest tests/test_postgres.py
+```
+
+Bu değişken olmadan atlanırlar; böylece varsayılan `pytest` çalışması hızlı ve bağımlılıksız kalır.
 
 ---
 
@@ -903,7 +992,12 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | `scripts/import_cn_codes.py` | 🟢 %91 |
 | `logging_config.py` | 🟢 %100 |
 | `main.py` | 🟢 %98 |
-| **Toplam** | **🟢 %98** (173 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+| `pg_adapter.py` | 🟢 %96 |
+| **Toplam** | **🟢 %98,33** (0,85 sn'de 197 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+
+13 PostgreSQL parite testi bu sayıya dahil değildir: `CUSTOMSIQ_TEST_POSTGRES_URL` gerçek bir
+sunucuyu göstermedikçe atlanırlar (CI bunu tanımlar; yerel düz bir `pytest` için ne Postgres ne de
+sürücü gerekir).
 
 ### Test edilen uç durumlar
 
@@ -1101,7 +1195,9 @@ ihtiyacı doğduğunda atılacak doğal bir sonraki adım — API uç noktasın�
 gezilecekse özel, filtrelenebilir bir uç nokta hâlâ açık), serbest metin açıklama kabul eden bir
 CLI `risk` yolu (bugün yalnızca HS kodu yoluyla sınırlı — bkz.
 [⚠️ Toplu risk skorlama](#️-toplu-risk-skorlama)), ve gerçek bir dağıtımın üç kararı değil skorun
-kendisini denetlemesi gerekirse kalıcı/incelenebilir risk değerlendirmeleri.
+kendisini denetlemesi gerekirse kalıcı/incelenebilir risk değerlendirmeleri. Canlı dağıtımı PostgreSQL'e
+yöneltmek bilinçli olarak bu listede *değil* — arka uç zaten çalışıyor (bkz. [🐘 Çift arka uç](#-çift-arka-uç-varsayılan-sqlite-isteğe-bağlı-postgres)); eksik olan, ücretsiz planda
+30 günde sona ermeyen bir veritabanı.
 
 ---
 
@@ -1111,13 +1207,15 @@ kendisini denetlemesi gerekirse kalıcı/incelenebilir risk değerlendirmeleri.
 CustomsIQ/
 ├── .github/workflows/ci.yml     # ruff → black → mypy → pytest
 ├── Dockerfile                   # yerel geliştirme imajı — bkz. 🐳 Docker ile çalıştırma
-├── docker-compose.yml           # app + gelecekteki bir faz için yorumlu Postgres taslağı
+├── docker-compose.yml           # app + isteğe bağlı Postgres servisi (--profile postgres)
 ├── .dockerignore
 ├── requirements-runtime.txt     # requirements.txt'nin yalnızca çalışma zamanı alt kümesi, Dockerfile'da kullanılır
+├── requirements-postgres.txt    # isteğe bağlı psycopg sürücüsü — bilinçli olarak requirements.txt'de DEĞİL
 ├── src/
 │   ├── customsiq/
 │   │   ├── models.py            # HSCode + SanctionedEntity + TariffRate + ReviewDecision + HSCodeVersion + ImportRun kayıtları
-│   │   ├── database.py          # SQLite katmanı + örnek veri + SCD Type 2 sürümleme
+│   │   ├── database.py          # SQLite/Postgres katmanı + örnek veri + SCD Type 2 sürümleme
+│   │   ├── pg_adapter.py        # PostgreSQL lehçe adaptörü — yalnızca URL tanımlıyken içe aktarılır
 │   │   ├── matching.py          # ortak doğrulama + benzerlik skorlaması
 │   │   ├── search.py            # CN kodu sıralaması
 │   │   ├── cn_classifier.py     # TF-IDF sınıflandırma + gerekçe
@@ -1134,7 +1232,8 @@ CustomsIQ/
 │   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── scripts/import_cn_codes.py   # resmî CN dosyası → hs_codes, değişiklikleri sürümler (SCD Type 2)
-├── tests/                       # 173 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli, risk
+├── tests/                       # 197 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli, risk
+│                                #   + sunucu tanımlı değilse atlanan 13 Postgres parite testi
 │   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage
 ├── requirements.txt

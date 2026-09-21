@@ -1,11 +1,18 @@
-"""SQLite persistence layer for HS/CN codes, sanctions records and tariff rates."""
+"""Persistence layer for HS/CN codes, sanctions records and tariff rates.
+
+SQLite is the default and the backend every test runs against. PostgreSQL is
+an opt-in alternative, selected by handing `get_connection` a `postgresql://`
+URL instead of a file path (see `src/customsiq/config.py` for precedence and
+`src/customsiq/pg_adapter.py` for the dialect differences). Every statement
+below is written once and shared by both backends.
+"""
 
 import logging
 import sqlite3
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NamedTuple, Optional, Union
+from typing import Any, NamedTuple, Optional, Union, cast
 
 from src.customsiq.exceptions import HSCodeNotFoundError
 from src.customsiq.models import (
@@ -16,6 +23,7 @@ from src.customsiq.models import (
     SanctionedEntity,
     TariffRate,
 )
+from src.customsiq.pg_adapter import is_postgres_url
 
 logger = logging.getLogger(__name__)
 
@@ -167,20 +175,50 @@ TARIFF_RATES: list[TariffRate] = [
 
 
 def get_connection(db_path: Union[str, Path] = ":memory:") -> sqlite3.Connection:
-    """Open a SQLite connection and ensure the schema exists.
+    """Open a database connection and ensure the schema exists.
 
     Args:
-        db_path: Path to the SQLite file, or ":memory:" for an in-memory database.
+        db_path: Path to the SQLite file, ":memory:" for an in-memory database,
+            or a `postgresql://` / `postgres://` URL for the opt-in Postgres
+            backend.
 
     Returns:
-        An open connection with all three tables ready.
+        An open connection with all six tables ready.
     """
+    # Postgres is imported lazily and only on this branch, so the SQLite path
+    # never touches the adapter and psycopg stays an optional extra.
+    if isinstance(db_path, str) and is_postgres_url(db_path):
+        from src.customsiq.pg_adapter import connect_postgres, to_postgres_ddl
+
+        pg_conn = connect_postgres(db_path)
+        pg_conn.executescript(to_postgres_ddl(SCHEMA))
+        # The seven decision modules only pass `conn` straight back into this
+        # module, so the duck-typed subset PgConnection implements is what
+        # actually matters; the cast keeps their annotations untouched.
+        return cast(sqlite3.Connection, pg_conn)
+
     # ponytail: single shared connection, check_same_thread=False so FastAPI's
     # threadpool can use it; move to a connection pool if concurrent writes appear.
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.executescript(SCHEMA)
     conn.commit()
     return conn
+
+
+def _insert_returning_id(conn: sqlite3.Connection, sql: str, parameters: Sequence[Any]) -> int:
+    """Run an INSERT and return the generated id, on either backend.
+
+    SQLite reads it off the cursor afterwards; psycopg has no `lastrowid`, so
+    Postgres asks for it in the statement itself with RETURNING.
+    """
+    if getattr(conn, "dialect", "sqlite") == "postgresql":
+        row = conn.execute(f"{sql} RETURNING id", parameters).fetchone()
+        return int(row[0])
+
+    cursor = conn.execute(sql, parameters)
+    conn.commit()
+    assert cursor.lastrowid is not None  # always set after a successful INSERT
+    return cursor.lastrowid
 
 
 def _seed_if_empty(
@@ -366,15 +404,13 @@ def insert_review_decision(
     Returns:
         The autoincrement id of the new row.
     """
-    cursor = conn.execute(
+    return _insert_returning_id(
+        conn,
         "INSERT INTO review_decisions "
         "(subject_type, subject_reference, decision, reviewer_name, comment, reviewed_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (subject_type, subject_reference, decision, reviewer_name, comment, reviewed_at),
     )
-    conn.commit()
-    assert cursor.lastrowid is not None  # always set after a successful INSERT
-    return cursor.lastrowid
 
 
 def fetch_review_decisions(
@@ -494,14 +530,12 @@ def record_cn_import(
     Returns:
         The autoincrement id of the new row.
     """
-    cursor = conn.execute(
+    return _insert_returning_id(
+        conn,
         "INSERT INTO cn_code_versions (version_label, source_description, imported_at, row_count) "
         "VALUES (?, ?, ?, ?)",
         (version_label, source_description, imported_at, row_count),
     )
-    conn.commit()
-    assert cursor.lastrowid is not None  # always set after a successful INSERT
-    return cursor.lastrowid
 
 
 def fetch_hs_code_history(conn: sqlite3.Connection, code: str) -> list[HSCodeVersion]:
@@ -566,12 +600,14 @@ def count_versioned_codes(conn: sqlite3.Connection) -> int:
     Returns:
         The number of distinct codes that have actually changed over time.
     """
+    # The subquery alias is optional on SQLite but required by PostgreSQL
+    # before 16 — harmless on both, so it's written once with the alias.
     row = conn.execute(
         "SELECT COUNT(*) FROM ("
         "SELECT code FROM hs_code_history GROUP BY code HAVING COUNT(*) > 1"
-        ")"
+        ") AS changed_codes"
     ).fetchone()
-    return row[0]
+    return int(row[0])
 
 
 def count_history_rows_by_version_label(conn: sqlite3.Connection) -> dict[str, int]:

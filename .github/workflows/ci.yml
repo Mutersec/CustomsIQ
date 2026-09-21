@@ -7,6 +7,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    services:
+      # Lets the opt-in PostgreSQL parity tests actually run in CI instead of
+      # rotting as permanently-skipped. The default local `pytest` (no
+      # CUSTOMSIQ_TEST_POSTGRES_URL) still skips them and needs no server.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: customsiq_test
+          POSTGRES_USER: customsiq
+          POSTGRES_PASSWORD: customsiq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U customsiq -d customsiq_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -17,6 +36,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install the optional PostgreSQL driver
+        run: pip install -r requirements-postgres.txt
+
       - name: Lint (ruff)
         run: ruff check .
 
@@ -26,5 +48,7 @@ jobs:
       - name: Type check (mypy)
         run: mypy src scripts
 
-      - name: Test with coverage
+      - name: Test with coverage (SQLite default + PostgreSQL parity)
+        env:
+          CUSTOMSIQ_TEST_POSTGRES_URL: postgresql://customsiq:customsiq@localhost:5432/customsiq_test
         run: pytest --cov --cov-report=term-missing --cov-fail-under=80

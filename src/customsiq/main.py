@@ -192,7 +192,7 @@ def _run_risk(conn: sqlite3.Connection, arguments: str) -> None:
         )
 
 
-def run(db_path: str = settings.database_path) -> None:
+def run(db_path: str = settings.database_target) -> None:
     """Start an interactive loop offering search, screening and duty calculation.
 
     Args:

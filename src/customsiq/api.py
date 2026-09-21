@@ -26,7 +26,7 @@ app = FastAPI(title="CustomsIQ")
 # may be started from anywhere, and a missing directory would raise on import.
 _STATIC_DIR = Path(__file__).parent / "static"
 
-_conn: sqlite3.Connection = get_connection(settings.database_path)
+_conn: sqlite3.Connection = get_connection(settings.database_target)
 seed(_conn)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
