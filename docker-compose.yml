@@ -16,6 +16,11 @@ services:
       CUSTOMSIQ_DATABASE_PATH: /data/customsiq.db
       CUSTOMSIQ_LOG_LEVEL: INFO
       CUSTOMSIQ_SCREENING_THRESHOLD: "0.75"
+      CUSTOMSIQ_PASSWORD_ITERATIONS: "600000"
+      CUSTOMSIQ_SESSION_TTL_HOURS: "12"
+      # Demo accounts (one per role, credentials in the README) are seeded only
+      # into an empty users table. Set to "false" for a real deployment.
+      CUSTOMSIQ_SEED_DEMO_USERS: "true"
       # Empty by default => SQLite, exactly as before. Set it to opt into the
       # postgres service below (which also needs --profile postgres):
       #   CUSTOMSIQ_DATABASE_URL=postgresql://customsiq:customsiq@postgres:5432/customsiq \

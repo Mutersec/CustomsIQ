@@ -16,6 +16,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from src.customsiq import auth
 from src.customsiq.dashboard import get_dashboard_stats
 from src.customsiq.database import (
     SAMPLE_DATA,
@@ -26,6 +27,7 @@ from src.customsiq.database import (
     fetch_all,
     fetch_all_entities,
     fetch_all_rates,
+    fetch_authored_review_ids,
     fetch_cn_import_runs,
     fetch_hs_code_history,
     fetch_rates_for_code,
@@ -36,6 +38,7 @@ from src.customsiq.database import (
     seed,
     upsert_hs_codes_with_history,
 )
+from src.customsiq.exceptions import InvalidQueryError
 from src.customsiq.models import HSCode
 from src.customsiq.review import reference_for_classification, submit_review
 from src.customsiq.risk import assess_shipment
@@ -57,6 +60,9 @@ _TABLES = (
     "review_decisions",
     "hs_code_history",
     "cn_code_versions",
+    "users",
+    "sessions",
+    "review_authorship",
 )
 
 
@@ -202,6 +208,43 @@ class TestVersioningParity:
         assert run.row_count == 10
         assert isinstance(run.id, int)
         assert count_history_rows_by_version_label(conn) == {"CN2026": 1}
+
+
+class TestAuthOnPostgres:
+    """Accounts, sessions and authorship work on the second backend too."""
+
+    def test_account_round_trip_and_login(self, conn) -> None:
+        user = auth.create_user(conn, "alice", "test-password-123", auth.COMPLIANCE_OFFICER)
+        assert user.id > 0
+        assert auth.authenticate(conn, "alice", "test-password-123").role == (
+            auth.COMPLIANCE_OFFICER
+        )
+
+    def test_duplicate_usernames_are_refused(self, conn) -> None:
+        """The UNIQUE constraint survives the DDL translation."""
+        auth.create_user(conn, "alice", "test-password-123")
+        with pytest.raises(InvalidQueryError, match="already taken"):
+            auth.create_user(conn, "alice", "test-password-123")
+
+    def test_session_create_resolve_and_logout(self, conn) -> None:
+        user = auth.create_user(conn, "alice", "test-password-123", auth.ANALYST)
+        token = auth.create_session(conn, user)
+        resolved = auth.user_for_token(conn, token)
+        assert resolved is not None and resolved.username == "alice"
+        auth.logout(conn, token)
+        assert auth.user_for_token(conn, token) is None
+
+    def test_authorship_separates_authenticated_from_legacy_rows(self, conn) -> None:
+        """The flag that keeps a free-text name from being claimed by an account."""
+        seed(conn)
+        user = auth.create_user(conn, "alice", "test-password-123", auth.ANALYST)
+        authored = submit_review(
+            conn, "duty", "ref-auth", "approved", user.username, None, reviewer_user_id=user.id
+        )
+        legacy = submit_review(conn, "duty", "ref-legacy", "approved", "alice", None)
+
+        ids = fetch_authored_review_ids(conn, [authored.id, legacy.id])
+        assert ids == {authored.id}
 
 
 class TestModulesOnPostgres:

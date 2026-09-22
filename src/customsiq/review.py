@@ -14,7 +14,9 @@ from src.customsiq import database
 from src.customsiq.exceptions import InvalidQueryError
 from src.customsiq.models import ReviewDecision
 
-_VALID_SUBJECT_TYPES = {"classification", "screening", "duty"}
+#: Public: the API reads this to reject an unknown subject type before
+#: it reaches the permission check, so a typo is a 400 and not a 403.
+VALID_SUBJECT_TYPES = {"classification", "screening", "duty"}
 _VALID_DECISIONS = {"approved", "rejected", "flagged"}
 
 
@@ -61,6 +63,7 @@ def submit_review(
     decision: str,
     reviewer_name: str,
     comment: Optional[str] = None,
+    reviewer_user_id: Optional[int] = None,
 ) -> ReviewDecision:
     """Record a reviewer's decision on a subject. Always inserts, never updates.
 
@@ -69,8 +72,14 @@ def submit_review(
         subject_type: "classification" | "screening" | "duty".
         subject_reference: The deterministic hash identifying what was reviewed.
         decision: "approved" | "rejected" | "flagged".
-        reviewer_name: Free text — stand-in until authenticated users exist.
+        reviewer_name: Who signed off. The API passes the authenticated user's
+            username here; the CLI still passes free text.
         comment: Optional free-text note.
+        reviewer_user_id: The authenticated author's `users.id`, when there is
+            one. Given, the row is linked in `review_authorship` and reads back
+            as authenticated; omitted (CLI, and every row written before
+            accounts existed), the name stands on its own and is reported as
+            unauthenticated rather than being matched to a user by name.
 
     Returns:
         The stored ReviewDecision, including its assigned id and timestamp.
@@ -78,9 +87,9 @@ def submit_review(
     Raises:
         InvalidQueryError: If subject_type, decision or reviewer_name is invalid.
     """
-    if subject_type not in _VALID_SUBJECT_TYPES:
+    if subject_type not in VALID_SUBJECT_TYPES:
         raise InvalidQueryError(
-            f"subject_type must be one of {sorted(_VALID_SUBJECT_TYPES)}, got {subject_type!r}"
+            f"subject_type must be one of {sorted(VALID_SUBJECT_TYPES)}, got {subject_type!r}"
         )
     if decision not in _VALID_DECISIONS:
         raise InvalidQueryError(
@@ -95,6 +104,8 @@ def submit_review(
     new_id = database.insert_review_decision(
         conn, subject_type, subject_reference, decision, reviewer_name, comment, reviewed_at
     )
+    if reviewer_user_id is not None:
+        database.insert_review_authorship(conn, new_id, reviewer_user_id)
     return ReviewDecision(
         id=new_id,
         subject_type=subject_type,
@@ -104,6 +115,16 @@ def submit_review(
         comment=comment,
         reviewed_at=reviewed_at,
     )
+
+
+def authored_review_ids(conn: sqlite3.Connection, decisions: list[ReviewDecision]) -> set:
+    """Return which of these decisions were signed off by an authenticated user.
+
+    One query for the whole page rather than one per row. Callers use it to
+    label the rest honestly as legacy/unauthenticated instead of implying an
+    account behind every historical name.
+    """
+    return database.fetch_authored_review_ids(conn, [decision.id for decision in decisions])
 
 
 def get_review_history(

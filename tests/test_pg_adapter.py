@@ -108,7 +108,7 @@ class TestDdlTranslation:
         """Postgres has no AUTOINCREMENT; identity columns replace it."""
         ddl = to_postgres_ddl(SCHEMA)
         assert "AUTOINCREMENT" not in ddl
-        assert ddl.count("INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY") == 3
+        assert ddl.count("INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY") == 4
 
     def test_real_becomes_double_precision(self) -> None:
         """REAL is 4-byte float4 on Postgres, which would corrupt 16.9."""
@@ -117,7 +117,7 @@ class TestDdlTranslation:
         assert "rate_percent DOUBLE PRECISION NOT NULL" in ddl
 
     def test_every_table_survives_translation(self) -> None:
-        """All six tables are still created, none dropped by the rewrite."""
+        """All nine tables are still created, none dropped by the rewrite."""
         ddl = to_postgres_ddl(SCHEMA)
         for table in (
             "hs_codes",
@@ -126,6 +126,9 @@ class TestDdlTranslation:
             "review_decisions",
             "hs_code_history",
             "cn_code_versions",
+            "users",
+            "sessions",
+            "review_authorship",
         ):
             assert f"CREATE TABLE IF NOT EXISTS {table}" in ddl
 
@@ -214,10 +217,17 @@ class TestConnectPostgres:
 class TestGetConnectionRouting:
     """get_connection picks a backend from the shape of its argument."""
 
-    def test_sqlite_targets_still_return_a_real_sqlite_connection(self) -> None:
-        """The default path is untouched by the Postgres branch existing."""
+    def test_sqlite_targets_return_a_thread_safe_sqlite_connection(self) -> None:
+        """The SQLite path returns the lock-guarded wrapper over a real connection.
+
+        Not a bare sqlite3.Connection: this machine's SQLite is built
+        THREADSAFE=2, so the shared connection has to serialize access itself
+        (see database._SerializedConnection).
+        """
         conn = get_connection(":memory:")
-        assert isinstance(conn, sqlite3.Connection)
+        assert isinstance(conn, database._SerializedConnection)
+        assert isinstance(conn._connection, sqlite3.Connection)
+        assert conn.dialect == "sqlite"
         conn.close()
 
     def test_postgres_url_goes_through_the_adapter(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -229,7 +239,7 @@ class TestGetConnectionRouting:
 
         assert isinstance(conn, PgConnection)
         created = [sql for sql, _ in inner.statements if sql.startswith("CREATE TABLE")]
-        assert len(created) == 6
+        assert len(created) == 9
         assert not any("AUTOINCREMENT" in sql for sql in created)
 
 

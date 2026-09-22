@@ -1,21 +1,35 @@
 """FastAPI HTTP surface for CN code search, sanctions screening and duty calculation."""
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.customsiq import review
+from src.customsiq import auth, review
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.dashboard import get_dashboard_stats
-from src.customsiq.database import fetch_hs_code_history, get_by_code, get_connection, seed
+from src.customsiq.database import (
+    fetch_hs_code_history,
+    fetch_users,
+    get_by_code,
+    get_connection,
+    seed,
+    update_user_role,
+)
 from src.customsiq.embargo_screener import screen_entity
-from src.customsiq.exceptions import HSCodeNotFoundError, InvalidQueryError, RateNotFoundError
+from src.customsiq.exceptions import (
+    AuthenticationError,
+    HSCodeNotFoundError,
+    InvalidQueryError,
+    RateNotFoundError,
+)
+from src.customsiq.models import User
 from src.customsiq.risk import assess_shipment
 from src.customsiq.search import search
 from src.customsiq.tariff_calculator import calculate_duty
@@ -28,8 +42,69 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 _conn: sqlite3.Connection = get_connection(settings.database_target)
 seed(_conn)
+if settings.seed_demo_users:
+    auth.seed_demo_users(_conn)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+SESSION_COOKIE = "customsiq_session"
+
+
+def current_user(request: Request) -> Optional[User]:
+    """Resolve the signed-in user from the session cookie, or None.
+
+    A dependency rather than middleware: most routes here are public, so
+    identity is something a handler asks for, not a gate every request pays.
+    """
+    return auth.user_for_token(_conn, request.cookies.get(SESSION_COOKIE))
+
+
+def require_permission(action: str) -> Callable[[Optional[User]], User]:
+    """Build a dependency that admits only users whose role covers `action`.
+
+    Returns 401 when nobody is signed in and 403 when someone is but ranks too
+    low — the distinction matters to a client deciding whether to show a login
+    form or an explanation.
+    """
+
+    def dependency(user: Optional[User] = Depends(current_user)) -> User:
+        if user is None:
+            raise HTTPException(status_code=401, detail="Sign in to perform this action.")
+        if not auth.can(user.role, action):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Role '{user.role}' is not permitted to perform this action.",
+            )
+        return user
+
+    return dependency
+
+
+def _set_session_cookie(request: Request, response: Response, token: str) -> None:
+    """Attach the session cookie.
+
+    HttpOnly so script can't read it, SameSite=Lax so a cross-site POST never
+    carries it (which is this app's CSRF defence), and Secure only when the
+    request actually arrived over HTTPS — checked via X-Forwarded-Proto first,
+    because the live deployment terminates TLS at a proxy and the app itself
+    sees plain HTTP. A hardcoded Secure would break http://localhost.
+    """
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    is_https = (forwarded or request.url.scheme) == "https"
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=settings.session_ttl_hours * 3600,
+        httponly=True,
+        samesite="lax",
+        secure=is_https,
+        path="/",
+    )
+
+
+def _user_payload(user: User) -> dict:
+    """Serialize a user for a response. The password hash isn't on this record."""
+    return {"username": user.username, "role": user.role, "created_at": user.created_at}
 
 
 @app.get("/", response_class=FileResponse, include_in_schema=False)
@@ -220,31 +295,128 @@ def code_history(code: str) -> list[dict]:
     ]
 
 
+class Credentials(BaseModel):
+    """Body of a POST /auth/register or /auth/login request."""
+
+    username: str
+    password: str
+
+
+class RoleChange(BaseModel):
+    """Body of a POST /auth/users/{username}/role request."""
+
+    role: str
+
+
+@app.post("/auth/register")
+def register(body: Credentials, request: Request, response: Response) -> dict:
+    """Create an account and sign it in.
+
+    New accounts get `auth.SELF_REGISTRATION_ROLE`. That default is a demo
+    affordance: a real trade-compliance system grants roles administratively
+    rather than letting a signup form choose one (see the README).
+    """
+    try:
+        user = auth.create_user(_conn, body.username, body.password)
+    except InvalidQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _set_session_cookie(request, response, auth.create_session(_conn, user))
+    return _user_payload(user)
+
+
+@app.post("/auth/login")
+def login(body: Credentials, request: Request, response: Response) -> dict:
+    """Verify credentials and start a session."""
+    try:
+        user = auth.authenticate(_conn, body.username, body.password)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    _set_session_cookie(request, response, auth.create_session(_conn, user))
+    return _user_payload(user)
+
+
+@app.post("/auth/logout")
+def logout(request: Request, response: Response) -> dict:
+    """End the current session. Safe to call when not signed in."""
+    auth.logout(_conn, request.cookies.get(SESSION_COOKIE))
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"signed_out": True}
+
+
+@app.get("/auth/me")
+def whoami(user: Optional[User] = Depends(current_user)) -> dict:
+    """Return the signed-in user, or `{"user": null}`.
+
+    Deliberately 200 rather than 401 when anonymous: the frontend calls this on
+    every page load, including for visitors who never intend to sign in.
+    """
+    return {"user": _user_payload(user) if user else None}
+
+
+@app.get("/auth/users")
+def list_users(_: User = Depends(require_permission("users:manage"))) -> list[dict]:
+    """List every account. Admins only."""
+    return [_user_payload(u) for u in fetch_users(_conn)]
+
+
+@app.post("/auth/users/{username}/role")
+def change_role(
+    username: str,
+    body: RoleChange,
+    _: User = Depends(require_permission("users:manage")),
+) -> dict:
+    """Change one account's role. Admins only."""
+    if body.role not in auth.ROLE_ORDER:
+        raise HTTPException(status_code=400, detail=f"role must be one of {list(auth.ROLE_ORDER)}")
+    if not update_user_role(_conn, username.strip().lower(), body.role):
+        raise HTTPException(status_code=404, detail=f"No user named '{username}'")
+    return {"username": username.strip().lower(), "role": body.role}
+
+
 class ReviewSubmission(BaseModel):
-    """Body of a POST /review request."""
+    """Body of a POST /review request.
+
+    There is no `reviewer_name` field: the reviewer is whoever the session cookie
+    says it is. It was removed rather than accepted-and-ignored, so a client can
+    never believe it set the name on an audit row.
+    """
 
     subject_type: str
     subject_reference: str
     decision: str
-    reviewer_name: str
     comment: Optional[str] = None
 
 
 @app.post("/review")
-def submit_review(body: ReviewSubmission) -> dict:
+def submit_review(body: ReviewSubmission, user: Optional[User] = Depends(current_user)) -> dict:
     """Record a human reviewer's decision on a past classification, screening or duty result.
 
     Reuses `src.customsiq.review.submit_review`, the same function the CLI calls.
     Append-only: this never updates an existing decision, only adds a new one.
+
+    The permission depends on *what* is being signed off, so it's checked here
+    rather than by a route-level dependency: screening sign-offs need a
+    compliance officer, classification and duty need an analyst.
     """
+    action = f"review:{body.subject_type}"
+    if action not in auth.PERMISSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"subject_type must be one of {sorted(review.VALID_SUBJECT_TYPES)}, "
+            f"got {body.subject_type!r}",
+        )
+    require_permission(action)(user)
+    assert user is not None  # require_permission raises when there is no user
+
     try:
         result = review.submit_review(
             _conn,
             body.subject_type,
             body.subject_reference,
             body.decision,
-            body.reviewer_name,
+            user.username,
             body.comment,
+            reviewer_user_id=user.id,
         )
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -256,17 +428,12 @@ def submit_review(body: ReviewSubmission) -> dict:
         "reviewer_name": result.reviewer_name,
         "comment": result.comment,
         "reviewed_at": result.reviewed_at,
+        "authenticated": True,
     }
 
 
-@app.get("/review/history")
-def review_history(
-    subject_type: Optional[str] = Query(None),
-    subject_reference: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-) -> list[dict]:
-    """Return recorded review decisions, most recently reviewed first."""
-    results = review.get_review_history(_conn, subject_type, subject_reference, limit)
+def _review_payload(decisions: list, authored: set) -> list[dict]:
+    """Serialize review rows, flagging which have an authenticated author."""
     return [
         {
             "id": r.id,
@@ -276,20 +443,49 @@ def review_history(
             "reviewer_name": r.reviewer_name,
             "comment": r.comment,
             "reviewed_at": r.reviewed_at,
+            "authenticated": r.id in authored,
         }
-        for r in results
+        for r in decisions
     ]
 
 
+@app.get("/review/history")
+def review_history(
+    subject_type: Optional[str] = Query(None),
+    subject_reference: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    user: Optional[User] = Depends(current_user),
+) -> list[dict]:
+    """Return recorded review decisions, most recently reviewed first.
+
+    One result's own trail (`subject_reference` given) stays public — that is
+    the four-eyes story a visitor should see on the card they just generated.
+    Browsing every reviewer's activity at once is the audit log, and needs a
+    signed-in account.
+    """
+    if subject_reference is None:
+        require_permission("audit:read")(user)
+    results = review.get_review_history(_conn, subject_type, subject_reference, limit)
+    return _review_payload(results, review.authored_review_ids(_conn, results))
+
+
 @app.get("/dashboard/stats")
-def dashboard_stats() -> dict:
+def dashboard_stats(user: Optional[User] = Depends(current_user)) -> dict:
     """Return aggregate stats over reference data, review activity and CN imports.
 
     Reuses `src.customsiq.dashboard.get_dashboard_stats`, which itself only
     composes existing `database.py` reads — this is a reporting view, not a
     new decision. No input, so nothing here can be invalid.
+
+    Every count is public — that's the demo. The `recent_reviews` array is not:
+    it carries reviewer identities and their free-text comments, so anonymous
+    callers get it empty with `recent_reviews_restricted` set. The redaction
+    happens here; `dashboard.py` is not involved.
     """
     stats = get_dashboard_stats(_conn)
+    may_read_audit = user is not None and auth.can(user.role, "audit:read")
+    visible_reviews = stats.recent_reviews if may_read_audit else []
+    authored = review.authored_review_ids(_conn, visible_reviews)
     return {
         "hs_code_count": stats.hs_code_count,
         "sanctioned_entity_count": stats.sanctioned_entity_count,
@@ -297,18 +493,8 @@ def dashboard_stats() -> dict:
         "review_total": stats.review_total,
         "review_by_decision": stats.review_by_decision,
         "review_by_subject_type": stats.review_by_subject_type,
-        "recent_reviews": [
-            {
-                "id": r.id,
-                "subject_type": r.subject_type,
-                "subject_reference": r.subject_reference,
-                "decision": r.decision,
-                "reviewer_name": r.reviewer_name,
-                "comment": r.comment,
-                "reviewed_at": r.reviewed_at,
-            }
-            for r in stats.recent_reviews
-        ],
+        "recent_reviews": _review_payload(visible_reviews, authored),
+        "recent_reviews_restricted": not may_read_audit,
         "import_run_count": stats.import_run_count,
         "recent_import_runs": [
             {

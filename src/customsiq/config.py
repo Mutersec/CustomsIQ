@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     screening_threshold: float = 0.75
 
+    # PBKDF2-HMAC-SHA256 work factor. 600_000 is OWASP's current recommendation
+    # for SHA-256 and costs ~160 ms per hash here; the test suite lowers it in
+    # tests/conftest.py so 40+ auth tests don't spend ten seconds in the KDF.
+    password_iterations: int = 600_000
+    session_ttl_hours: int = 12
+    seed_demo_users: bool = True
+
     @field_validator("database_url")
     @classmethod
     def _postgres_url_only(cls, value: Optional[str]) -> Optional[str]:

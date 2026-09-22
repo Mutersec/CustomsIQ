@@ -9,6 +9,7 @@ below is written once and shared by both backends.
 
 import logging
 import sqlite3
+import threading
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from src.customsiq.models import (
     ReviewDecision,
     SanctionedEntity,
     TariffRate,
+    User,
 )
 from src.customsiq.pg_adapter import is_postgres_url
 
@@ -77,6 +79,26 @@ CREATE TABLE IF NOT EXISTS cn_code_versions (
     source_description TEXT,
     imported_at TEXT NOT NULL,
     row_count INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS review_authorship (
+    review_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL
 );
 """
 
@@ -174,6 +196,86 @@ TARIFF_RATES: list[TariffRate] = [
 ]
 
 
+class _Result:
+    """One statement's already-fetched rows, plus the cursor fields we use.
+
+    Returned instead of a live `sqlite3.Cursor` so that nothing reads from the
+    database after `_SerializedConnection` has released its lock — a cursor
+    fetched later would be doing exactly the concurrent access the lock exists
+    to prevent.
+    """
+
+    def __init__(self, rows: list, lastrowid: Optional[int], rowcount: int) -> None:
+        self._rows = rows
+        self.lastrowid = lastrowid
+        self.rowcount = rowcount
+
+    def fetchone(self) -> Any:
+        """Return the first row, or None if the statement produced none."""
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list:
+        """Return every row."""
+        return self._rows
+
+
+class _SerializedConnection:
+    """A `sqlite3.Connection` that is actually safe to share between threads.
+
+    The app keeps one connection for the process and FastAPI runs its sync
+    routes in a threadpool, so several requests really do touch this object at
+    once. That is not allowed: this machine's SQLite is built with
+    `SQLITE_THREADSAFE=2` (multi-thread — one connection per thread), and
+    Python reports `sqlite3.threadsafety == 1`, meaning threads may share the
+    module but *not* a connection. Sharing one anyway produced exactly the
+    symptoms you would predict — a garbled read ("Could not decode to UTF-8
+    column 'username'") and then a segfault — once RBAC put a session lookup on
+    every request and made concurrent access routine.
+
+    So every statement runs under one lock, and its rows are fetched before the
+    lock is released. Only the narrow surface this module uses is implemented,
+    the same approach `pg_adapter.PgConnection` takes for Postgres.
+
+    # ponytail: one global lock, which is the right size for a read-mostly
+    # single-node demo — SQLite serializes writes anyway. A connection pool (or
+    # a thread-local connection) is the upgrade path if read concurrency ever
+    # actually matters.
+    """
+
+    dialect = "sqlite"
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self._lock = threading.Lock()
+
+    def _run(self, method: str, *args: Any) -> _Result:
+        with self._lock:
+            cursor = getattr(self._connection, method)(*args)
+            return _Result(cursor.fetchall(), cursor.lastrowid, cursor.rowcount)
+
+    def execute(self, sql: str, parameters: Sequence[Any] = ()) -> _Result:
+        """Run one statement and return its already-fetched result."""
+        return self._run("execute", sql, parameters)
+
+    def executemany(self, sql: str, seq_of_parameters: Iterable[Sequence[Any]]) -> _Result:
+        """Run one statement once per parameter row."""
+        return self._run("executemany", sql, list(seq_of_parameters))
+
+    def executescript(self, script: str) -> _Result:
+        """Run a multi-statement script."""
+        return self._run("executescript", script)
+
+    def commit(self) -> None:
+        """Commit the open transaction."""
+        with self._lock:
+            self._connection.commit()
+
+    def close(self) -> None:
+        """Close the underlying connection."""
+        with self._lock:
+            self._connection.close()
+
+
 def get_connection(db_path: Union[str, Path] = ":memory:") -> sqlite3.Connection:
     """Open a database connection and ensure the schema exists.
 
@@ -183,7 +285,7 @@ def get_connection(db_path: Union[str, Path] = ":memory:") -> sqlite3.Connection
             backend.
 
     Returns:
-        An open connection with all six tables ready.
+        An open connection with all nine tables ready.
     """
     # Postgres is imported lazily and only on this branch, so the SQLite path
     # never touches the adapter and psycopg stays an optional extra.
@@ -197,12 +299,12 @@ def get_connection(db_path: Union[str, Path] = ":memory:") -> sqlite3.Connection
         # actually matters; the cast keeps their annotations untouched.
         return cast(sqlite3.Connection, pg_conn)
 
-    # ponytail: single shared connection, check_same_thread=False so FastAPI's
-    # threadpool can use it; move to a connection pool if concurrent writes appear.
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.executescript(SCHEMA)
     conn.commit()
-    return conn
+    # check_same_thread=False only silences Python's guard; it doesn't make the
+    # connection safe to share. Hence the lock — see _SerializedConnection.
+    return cast(sqlite3.Connection, _SerializedConnection(conn))
 
 
 def _insert_returning_id(conn: sqlite3.Connection, sql: str, parameters: Sequence[Any]) -> int:
@@ -446,6 +548,175 @@ def fetch_review_decisions(
         params,
     ).fetchall()
     return [ReviewDecision(*row) for row in rows]
+
+
+def insert_review_authorship(conn: sqlite3.Connection, review_id: int, user_id: int) -> None:
+    """Record that an authenticated user wrote one review row.
+
+    A review row with no entry here was written without authentication — the
+    CLI, or any row predating accounts. The link is by row id on purpose: a
+    historical free-text `reviewer_name` can never be claimed by someone who
+    later registers that same username.
+
+    Args:
+        conn: An open database connection.
+        review_id: The `review_decisions` row this authorship belongs to.
+        user_id: The authenticated author's `users.id`.
+    """
+    conn.execute(
+        "INSERT INTO review_authorship (review_id, user_id) VALUES (?, ?)",
+        (review_id, user_id),
+    )
+    conn.commit()
+
+
+def fetch_authored_review_ids(conn: sqlite3.Connection, review_ids: Sequence[int]) -> set:
+    """Return which of the given review ids were written by an authenticated user.
+
+    Args:
+        conn: An open database connection.
+        review_ids: Review row ids to look up.
+
+    Returns:
+        The subset of `review_ids` that has an authorship record.
+    """
+    if not review_ids:
+        return set()
+    # Placeholders are generated from the id count, never from caller strings;
+    # every value itself is still bound.
+    placeholders = ", ".join("?" for _ in review_ids)
+    rows = conn.execute(
+        f"SELECT review_id FROM review_authorship WHERE review_id IN ({placeholders})",
+        tuple(review_ids),
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def insert_user(
+    conn: sqlite3.Connection, username: str, password_hash: str, role: str, created_at: str
+) -> int:
+    """Create one account.
+
+    Args:
+        conn: An open database connection.
+        username: Unique login name.
+        password_hash: The encoded PBKDF2 hash — never a plaintext password.
+        role: One of the roles in `auth.ROLE_ORDER`.
+        created_at: ISO 8601 timestamp.
+
+    Returns:
+        The autoincrement id of the new row.
+    """
+    return _insert_returning_id(
+        conn,
+        "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+        (username, password_hash, role, created_at),
+    )
+
+
+def get_user_by_username(conn: sqlite3.Connection, username: str) -> Optional[User]:
+    """Return the account with this username, or None if there is none."""
+    row = conn.execute(
+        "SELECT id, username, role, created_at FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    return User(*row) if row else None
+
+
+def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> Optional[User]:
+    """Return the account with this id, or None if there is none."""
+    row = conn.execute(
+        "SELECT id, username, role, created_at FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    return User(*row) if row else None
+
+
+def get_password_hash(conn: sqlite3.Connection, username: str) -> Optional[str]:
+    """Return one account's stored password hash, or None if the user is unknown.
+
+    Deliberately separate from `get_user_by_username`: the hash is needed by
+    exactly one function (login verification) and has no business riding along
+    inside the `User` records that routes hand back to clients.
+    """
+    row = conn.execute(
+        "SELECT password_hash FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
+def fetch_users(conn: sqlite3.Connection) -> list[User]:
+    """Return every account, oldest first."""
+    rows = conn.execute("SELECT id, username, role, created_at FROM users ORDER BY id").fetchall()
+    return [User(*row) for row in rows]
+
+
+def count_users(conn: sqlite3.Connection) -> int:
+    """Return how many accounts exist."""
+    row = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+    return int(row[0])
+
+
+def update_user_role(conn: sqlite3.Connection, username: str, role: str) -> bool:
+    """Set one account's role.
+
+    Args:
+        conn: An open database connection.
+        username: The account to change.
+        role: The new role.
+
+    Returns:
+        True if an account was updated, False if the username is unknown.
+    """
+    cursor = conn.execute("UPDATE users SET role = ? WHERE username = ?", (role, username))
+    conn.commit()
+    return bool(cursor.rowcount)
+
+
+def insert_session(
+    conn: sqlite3.Connection, token_hash: str, user_id: int, created_at: str, expires_at: str
+) -> None:
+    """Store one session.
+
+    Only the hash of the token is stored, never the token itself, so a leaked
+    database yields no usable session.
+    """
+    conn.execute(
+        "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (token_hash, user_id, created_at, expires_at),
+    )
+    conn.commit()
+
+
+def fetch_session_user_id(conn: sqlite3.Connection, token_hash: str, now: str) -> Optional[int]:
+    """Return the user id behind an unexpired session token hash, else None.
+
+    Args:
+        conn: An open database connection.
+        token_hash: SHA-256 hex digest of the presented token.
+        now: ISO 8601 timestamp to compare `expires_at` against. ISO 8601 in
+            UTC sorts lexicographically, which is why a string compare is
+            correct here on both backends.
+    """
+    row = conn.execute(
+        "SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > ?",
+        (token_hash, now),
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def delete_session(conn: sqlite3.Connection, token_hash: str) -> None:
+    """Remove one session, making its token immediately unusable."""
+    conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+    conn.commit()
+
+
+def delete_expired_sessions(conn: sqlite3.Connection, now: str) -> int:
+    """Delete sessions that have expired, returning how many were removed."""
+    cursor = conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
+    conn.commit()
+    return int(cursor.rowcount)
 
 
 class ImportStats(NamedTuple):

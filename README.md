@@ -9,7 +9,7 @@ lists, and calculate the duty owed.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-197%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-301%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
@@ -82,6 +82,7 @@ not a black box that decides alone.
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
 | 🌐 | **REST API** | `GET /search` and `GET /screen` on FastAPI, with auto-generated `/docs` |
 | 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 codes + 18 mock entities |
+| 🔐 | **RBAC** | Four roles over real accounts — sanctions sign-off needs a compliance officer, and the audit trail names the session, not a text box |
 | 🐘 | **Dual backend** | The same SQL runs on PostgreSQL — opt in with one env var, SQLite stays the default |
 | ⚙️ | **Env-based config** | `pydantic-settings` reads `.env` — no hardcoded paths or thresholds |
 | 🚨 | **Typed errors** | `InvalidQueryError`, `HSCodeNotFoundError` → clean HTTP 400 / 404 semantics |
@@ -204,9 +205,36 @@ CREATE TABLE review_decisions (
     subject_type       TEXT NOT NULL,   -- "classification" | "screening" | "duty"
     subject_reference  TEXT NOT NULL,   -- sha256(subject_type + normalized input), see below
     decision           TEXT NOT NULL,   -- "approved" | "rejected" | "flagged"
-    reviewer_name      TEXT NOT NULL,   -- free text — stand-in until authenticated users exist
+    reviewer_name      TEXT NOT NULL,   -- the authenticated username (API), or free text (CLI/pre-RBAC)
     comment            TEXT,            -- optional note
     reviewed_at        TEXT NOT NULL    -- ISO 8601 timestamp
+);
+
+-- Who signed off, when the signer was an authenticated account. A review row
+-- with no entry here was written without authentication (the CLI, or before
+-- accounts existed) and is reported as such. Keyed by row id, never by name,
+-- so a historical free-text "alice" can't be claimed by someone registering
+-- that username later. A separate table rather than a column on
+-- review_decisions for the same reason hs_code_history is separate: CREATE
+-- TABLE IF NOT EXISTS never alters an existing database.
+CREATE TABLE review_authorship (
+    review_id  INTEGER PRIMARY KEY,  -- the review_decisions row
+    user_id    INTEGER NOT NULL      -- the authenticated author
+);
+
+CREATE TABLE users (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    username       TEXT NOT NULL UNIQUE,  -- case-folded on the way in
+    password_hash  TEXT NOT NULL,         -- pbkdf2_sha256$<iterations>$<salt>$<hash>
+    role           TEXT NOT NULL,         -- viewer | analyst | compliance_officer | admin
+    created_at     TEXT NOT NULL
+);
+
+CREATE TABLE sessions (
+    token_hash  TEXT PRIMARY KEY,  -- sha256 of the token; the token itself is never stored
+    user_id     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL      -- checked on read, so logout and expiry are immediate
 );
 
 CREATE TABLE hs_code_history (
@@ -266,7 +294,7 @@ Swap `similarity()` in `matching.py` for `rapidfuzz.fuzz.WRatio` as soon as **an
 | **No `EmbargoScreeningError`** | Screening's input validation is identical to search's, so it reuses `InvalidQueryError` rather than duplicating a class | Add one if screening grows a genuinely distinct failure mode |
 | **Validation inside `matching.py`** | Search, screening, CLI and API all inherit it; impossible to bypass by adding a new caller | — |
 | **`review_decisions` uses `INTEGER PRIMARY KEY AUTOINCREMENT`**, unlike the other three tables | Audit rows aren't naturally unique — the same `subject_reference` can legitimately get several decisions over time | — |
-| **`review_decisions` is append-only** | Models the four-eyes / human-review principle common in trade compliance tools like SAP GTS: a corrected decision is a new row, never an edit, so the history is never lost. `reviewer_name` is free text in this demo; a production system would tie this to authenticated users (see Roadmap) | Add authenticated users + RBAC |
+| **`review_decisions` is append-only** | Models the four-eyes / human-review principle common in trade compliance tools like SAP GTS: a corrected decision is a new row, never an edit, so the history is never lost. `reviewer_name` is now the authenticated account for anything submitted through the API (see [🔐 Authentication](#-authentication-without-a-dependency)); CLI and pre-RBAC rows keep their free text and are labelled as unauthenticated rather than reinterpreted | Tie accounts to an external IdP (SSO/SCIM) instead of local passwords |
 | **CN code history lives in a separate `hs_code_history` table**, not `valid_from`/`valid_to` columns added onto `hs_codes` itself | `hs_codes` keeps its existing `code TEXT PRIMARY KEY` and its two read functions (`fetch_all`, `get_by_code`) stay byte-for-byte unchanged — nothing to filter, nothing to forget. It's also the only migration-safe option: this project has no schema migrations, and `CREATE TABLE IF NOT EXISTS` never alters an existing table, so columns added to `hs_codes` would never appear in anyone's existing `customsiq.db` file | Backfill an opening history row per pre-existing code if a real deployment needs full-depth history from day one |
 
 ### 🕘 Versioned CN codes (SCD Type 2)
@@ -351,6 +379,29 @@ the HS-code path, not free-text description: a flat REPL line can't unambiguousl
 separate free-text fields (description and party name) the way `duty <code> <country> <value>`
 and `screen <name>` can each hold one. The API and frontend (structured form fields) support both.
 
+### ☁️ What RBAC needs on Render: nothing
+
+**No new environment variable is required for login to work on the live demo, and
+nothing in `requirements.txt` changed** — so Render's build is byte-identical to the
+one before this phase, and no dashboard action is needed. That is a direct consequence
+of the session design: opaque tokens stored in the database need no signing secret, so
+there is no `SECRET_KEY` to set, rotate or leak. (A JWT or Starlette's signed-cookie
+middleware would have required exactly that variable to be configured by hand before
+login worked live.)
+
+Two honest caveats, both consequences of the free tier this demo already documents:
+
+- **Accounts are ephemeral.** The filesystem resets, so registrations and role changes
+  disappear on restart and the demo accounts are re-seeded — the same behaviour the
+  rest of the seeded data already has. Don't reuse a real password.
+- **`Secure` on the session cookie is derived, not hardcoded**, from `X-Forwarded-Proto`
+  (Render terminates TLS at a proxy, so the app itself sees plain HTTP). Hardcoding it
+  would have broken `http://localhost`; ignoring it would have sent the cookie in the
+  clear.
+
+As after Phases 5 and 6, the one thing worth a human glance: confirm the service's
+Runtime and build command are unchanged. Nothing here should have touched them.
+
 ### 🐳 Docker for local dev, not for Render (yet)
 
 Adding a `Dockerfile` to a repo whose Render service was never configured with one is exactly
@@ -371,6 +422,30 @@ doesn't apply to an existing service anyway. The one thing worth a human, one-ti
 the Render dashboard for this service and confirm Language/Runtime is still its current native
 setting, not "Docker" — a zero-cost confirmation given the reasoning above, not an expected
 problem, since I can't see that dashboard myself to verify it directly.
+
+### 🧵 One shared SQLite connection, now actually thread-safe
+
+Found while building this phase, and worth writing down because the symptom was
+alarming and the cause was latent long before RBAC: the app keeps **one** SQLite
+connection for the process and FastAPI runs sync routes in a threadpool, so several
+requests genuinely touch it at once. `check_same_thread=False` only silences Python's
+guard — it does not make sharing safe. This machine's SQLite is compiled
+`SQLITE_THREADSAFE=2` (multi-thread: one connection per thread) and Python reports
+`sqlite3.threadsafety == 1`, meaning threads may share the module but **not** a
+connection.
+
+Before this phase the app got away with it because concurrent database work was rare.
+RBAC put a session lookup on *every* request, and the latent race became routine:
+first a garbled read (`Could not decode to UTF-8 column 'username'`), then a
+segfault — a `SIGSEGV` that took the whole server down mid-login.
+
+The fix is a lock-guarded proxy (`database._SerializedConnection`), the same shape
+`pg_adapter.PgConnection` already uses for Postgres: every statement runs under one
+lock, and its rows are **fetched before the lock is released** — returning a live
+cursor would have moved the unsafe read outside the lock and fixed nothing. A
+regression test drives 24 parallel signed-in request rounds through a threadpool; with
+the wrapper removed it reproduces the segfault, so the guard is verified rather than
+assumed. The Postgres path is untouched (psycopg handles this itself).
 
 ### 🐘 Dual-backend: SQLite default, Postgres opt-in
 
@@ -420,6 +495,114 @@ today's SQLite behaviour — and the parity tests deliberately assert no tie ord
 copy, so the two backends cannot drift apart. The seven decision modules are unchanged down to
 their `sqlite3.Connection` annotations: none of them runs SQL, they only hand `conn` back to
 `database.py`, so the Postgres branch returns the wrapper via `cast`.
+
+### 🔐 Authentication without a dependency
+
+`reviewer_name` used to be whatever the client typed. Five places in this repo said
+so and promised this phase; it is now the signed-in account, and the whole thing
+adds **zero packages** — `requirements.txt` is untouched, so the live deployment's
+build is byte-identical.
+
+**Sessions, not JWTs.** A session is an opaque `secrets.token_urlsafe(32)` in an
+`HttpOnly` cookie; the database stores only its SHA-256, so a database leak yields
+no usable session. Plain SHA-256 is right *here* and nowhere else in the auth code:
+the token is 256 bits of CSPRNG output, and a slow KDF buys nothing against a secret
+that isn't guessable. The reason to prefer this over a JWT is revocation — logout and
+role changes take effect on the very next request, where a self-contained token stays
+valid until it expires unless you bolt on a denylist, which is a sessions table
+wearing a hat. Starlette's own `SessionMiddleware` was not used: it is signed-cookie
+based and needs `itsdangerous` (verified: not installed) — a new dependency for a
+weaker model. CSRF is covered by `SameSite=Lax`, which keeps the cookie off
+cross-site POSTs; `Secure` is set from `X-Forwarded-Proto` (Render terminates TLS at
+a proxy) so `http://localhost` still works.
+
+**Passwords: `hashlib.pbkdf2_hmac`, 600,000 iterations.** Same scrutiny the
+scikit-learn and openpyxl calls got — and settled by a measurement rather than taste:
+
+| Option | Verdict |
+|---|---|
+| `argon2-cffi` (argon2id) | The best algorithm, memory-hard, OWASP's first choice. Rejected: a C-extension dependency on the **production** path, to guard mock-data passwords on a demo. |
+| `bcrypt` / `passlib` | C extension too; passlib 1.7.4 (2020) is effectively unmaintained and breaks against bcrypt 4.x, and bcrypt silently truncates at 72 bytes. |
+| `hashlib.scrypt` | The stdlib memory-hard option and my first choice — **but it does not exist on this project's own interpreter.** Measured: this venv's Python 3.9.6 links LibreSSL 2.8.3, where `hasattr(hashlib, "scrypt")` is `False`. It would work in CI and Docker and fail on the maintainer's laptop. Disqualified on portability, not merit. |
+| **`hashlib.pbkdf2_hmac` ✅** | Always present, zero dependencies, OWASP's recommended 600,000 iterations for SHA-256. Measured here: 600k ≈ **160 ms**, 210k ≈ 57 ms. |
+
+The honest cost: **PBKDF2 is not memory-hard**, so an attacker with GPUs gets a
+better cost ratio against it than against argon2id. What makes that cheap to revisit
+is the storage format — `pbkdf2_sha256$600000$<salt>$<hash>`, Django-style — so the
+algorithm and work factor are read back per row and can be upgraded on a user's next
+login with no migration. A login for an unknown username still runs the KDF against a
+dummy hash, so timing can't enumerate accounts, and the "wrong password" and "no such
+user" errors are the same string.
+
+`Settings.password_iterations` keeps the suite fast (`tests/conftest.py` lowers it,
+the way Django documents for its own test settings) while one test asserts the
+production default really is 600,000 and hashes once at full cost.
+
+### 🛡️ Permission matrix
+
+Four roles, ordered `viewer < analyst < compliance_officer < admin`. The set earns
+its keep because one split is real rather than decorative: **denied-party screening
+is the regulated sign-off**, so it needs a compliance officer, while classification
+and duty are analyst work — a distinction that maps onto the three existing
+`subject_type` values instead of inventing new concepts.
+
+Every compute endpoint stays **public**. That is the demo's whole point, and none of
+it needs an identity. Authentication guards writes, the firehose read of who-reviewed-what,
+and account administration.
+
+| Endpoint | anonymous | viewer | analyst | compliance officer | admin |
+|---|:--:|:--:|:--:|:--:|:--:|
+| `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /dashboard/stats` — counts | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /dashboard/stats` — `recent_reviews` (names + comments) | ❌ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` (one result's trail) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history` (full audit log) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
+| `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
+| `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
+| `POST /auth/register` · `/auth/login` · `/auth/logout` · `GET /auth/me` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /auth/users` · `POST /auth/users/{username}/role` | ❌ 401 | ❌ 403 | ❌ 403 | ❌ 403 | ✅ |
+
+`401` means "not signed in" and `403` means "signed in, wrong role" — a client needs
+to tell those apart to decide between showing a login form and showing an
+explanation, so they are never interchangeable. Anonymous callers get
+`/dashboard/stats` with `recent_reviews: []` and `recent_reviews_restricted: true`;
+the counts stay public. Permissions live in one dict in `auth.py`, and an unknown
+role or action always denies — a typo can't grant. `dashboard.py` is not involved in
+any of this: the redaction happens in the route.
+
+### 👤 Self-registration grants `analyst` — a demo choice, not a model of real onboarding
+
+Signing up gives you the `analyst` role immediately, so a visitor can approve a
+classification *and* be refused a sanctions sign-off without anyone provisioning an
+account for them. **This is not how RBAC onboarding works in a real trade-compliance
+system, and it isn't meant to be.** There, roles are *granted*, never chosen: an
+administrator or an IdP/HR group mapping assigns one after the person is verified,
+and self-registration either doesn't exist or lands in a pending, no-privileges state
+until someone approves it. Handing a signup form the power to sign off on customs
+classifications would be a finding in any real audit.
+
+The production-shaped version is one line — set `auth.SELF_REGISTRATION_ROLE` to
+`VIEWER`, and new accounts can read the audit trail and nothing else until an admin
+promotes them through `POST /auth/users/{username}/role`, which already exists and is
+already admin-only. The same reasoning covers the demo accounts publishing their
+passwords below: appropriate for a mock-data portfolio demo, indefensible anywhere else.
+
+### 🕰️ Historical free-text reviewers are left alone
+
+Rows written before accounts existed — and rows the CLI still writes — carry a name
+nobody can vouch for. They are kept exactly as they are, and labelled: the API reports
+`"authenticated": false` and the UI shows a neutral **legacy** badge next to the name.
+
+Three things this deliberately does **not** do:
+
+- It doesn't backfill, guess, or delete them.
+- It doesn't match on name. `review_authorship` is keyed by **row id**, so a legacy
+  row reading `alice` is *not* attributed to someone who later registers as `alice` —
+  impersonation-by-registration is impossible by construction, not by policy. There is
+  a test that registers the exact legacy name and asserts the row stays unauthenticated.
+- It doesn't pretend the CLI is authenticated. Anyone who can run the CLI can already
+  write to the database file, so a password prompt there would be theater; its rows
+  are labelled like any other unauthenticated row.
 
 ### 🔗 Deterministic `subject_reference`
 
@@ -547,6 +730,49 @@ All settings are read from environment variables or `.env`:
 | `CUSTOMSIQ_DATABASE_URL` | *(unset)* | `postgresql://…` URL. **Takes precedence over `CUSTOMSIQ_DATABASE_PATH` when set**; unset or empty ⇒ SQLite, exactly as before. Any other scheme is rejected at startup |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, …) |
 | `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Minimum name-similarity score (0–1) for a screening hit |
+| `CUSTOMSIQ_PASSWORD_ITERATIONS` | `600000` | PBKDF2-HMAC-SHA256 work factor (OWASP's figure; ≈160 ms per hash) |
+| `CUSTOMSIQ_SESSION_TTL_HOURS` | `12` | How long a session cookie stays valid |
+| `CUSTOMSIQ_SEED_DEMO_USERS` | `true` | Seed the four published demo accounts into an **empty** users table. Set `false` for a real deployment |
+
+### 🔐 Signing in
+
+Reading and computing needs no account. Recording a review does.
+
+Four demo accounts are seeded on first start — one per role, so the permission model
+can actually be tried rather than just read about:
+
+| Username | Password | Role | Can |
+|---|---|---|---|
+| `demo_viewer` | `viewer-demo-2026` | viewer | Read the full audit log; sign off on nothing |
+| `demo_analyst` | `analyst-demo-2026` | analyst | Sign off on classification and duty results |
+| `demo_officer` | `officer-demo-2026` | compliance officer | Also sign off on sanctions screening |
+| `demo_admin` | `admin-demo-2026` | admin | Everything, plus `/auth/users` and role changes |
+
+> **These are public credentials on mock data.** Never reuse a real password here.
+> They are seeded only when the `users` table is empty, so a deployment with real
+> accounts can't be handed them by a restart, and `CUSTOMSIQ_SEED_DEMO_USERS=false`
+> turns them off entirely.
+
+Registering gives you `analyst` — see [why that's a demo choice](#-self-registration-grants-analyst--a-demo-choice-not-a-model-of-real-onboarding).
+
+```bash
+# sign in (or register), keeping the session cookie
+curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "demo_officer", "password": "officer-demo-2026"}'
+
+# the cookie is what authorises a sign-off
+curl -b cookies.txt -X POST "http://localhost:8000/review" \
+  -H "Content-Type: application/json" \
+  -d '{"subject_type": "screening", "subject_reference": "<from the /screen response>", "decision": "flagged"}'
+
+curl -b cookies.txt "http://localhost:8000/auth/me"
+curl -b cookies.txt -X POST "http://localhost:8000/auth/logout"
+```
+
+In the browser this is the **Sign in** panel; once signed in, the header shows your
+username and role, and review controls appear on exactly the results your role may
+sign off on. Everything is translated (EN/TR/DE) like the rest of the UI.
 
 ### 🐳 Running with Docker
 
@@ -811,13 +1037,20 @@ tariff data is not a duty-free import.
 | `subject_type` | `str` | *required* | `classification` \| `screening` \| `duty` | What kind of result is being reviewed |
 | `subject_reference` | `str` | *required* | not blank | The `subject_reference` from that result — never re-typed, always the value the API already returned |
 | `decision` | `str` | *required* | `approved` \| `rejected` \| `flagged` | The reviewer's verdict |
-| `reviewer_name` | `str` | *required* | not blank | Free text — stand-in until authenticated users exist |
 | `comment` | `str \| null` | `null` | — | Optional free-text note |
+
+There is no `reviewer_name` field any more: the reviewer is whoever the session
+cookie says it is. It was **removed** rather than accepted-and-ignored, so no client
+can believe it set the name on an audit row. Requires a signed-in account —
+`analyst` for `classification` and `duty`, `compliance_officer` for `screening`
+(see the [permission matrix](#-permission-matrix)); anonymous callers get `401`
+and under-ranked ones `403`.
 
 ```bash
 curl -X POST "http://localhost:8000/review" \
   -H "Content-Type: application/json" \
-  -d '{"subject_type": "duty", "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e", "decision": "approved", "reviewer_name": "alice", "comment": "confirmed correct"}'
+  -H "Cookie: customsiq_session=$TOKEN" \
+  -d '{"subject_type": "duty", "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e", "decision": "approved", "comment": "confirmed correct"}'
 ```
 
 ```json
@@ -828,7 +1061,8 @@ curl -X POST "http://localhost:8000/review" \
   "decision": "approved",
   "reviewer_name": "alice",
   "comment": "confirmed correct",
-  "reviewed_at": "2026-01-01T12:00:00+00:00"
+  "reviewed_at": "2026-01-01T12:00:00+00:00",
+  "authenticated": true
 }
 ```
 
@@ -1018,7 +1252,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | `logging_config.py` | 🟢 100% |
 | `main.py` | 🟢 98% |
 | `pg_adapter.py` | 🟢 96% |
-| **Total** | **🟢 98.33%** (197 tests in 0.85 s, gate at 80%) — **no module is excluded from the gate** |
+| `auth.py` | 🟢 100% |
+| **Total** | **🟢 98.63%** (301 tests in 1.7 s, gate at 80%) — **no module is excluded from the gate** |
 
 The 13 PostgreSQL parity tests are *not* in that count: they skip unless `CUSTOMSIQ_TEST_POSTGRES_URL`
 points at a real server (CI sets it; a plain local `pytest` needs no Postgres and no driver).
@@ -1204,13 +1439,15 @@ coverage gate:
 | CN code versioning (SCD Type 2) | ✅ **Shipped** | `hs_code_history` + `cn_code_versions`, surfaced at `GET /codes/{code}/history` |
 | `dashboard.py` | ✅ **Shipped** | Read-only reporting layer over Phases 1 & 2, via `GET /dashboard/stats` |
 | `risk.py` | ✅ **Shipped** | Composite shipment risk score over classification, screening and duty, via `GET /assess-risk` |
+| `auth.py` (RBAC) | ✅ **Shipped** | Accounts, sessions and four roles; `reviewer_name` now comes from the session |
 
 Planned extensions: country-level embargo checks and product/destination restrictions, alias and
 transliteration handling for entity names, quota/anti-dumping components on top of the duty
 calculation, caching the classifier index once a full CN import makes the per-call rebuild
-noticeable, **authenticated reviewers with RBAC** in place of `review.py`'s free-text
-`reviewer_name` — the natural next step once this demo needs real accountability per sign-off —
-a CLI `history <code>` command mirroring the API endpoint, a paginated `GET /cn-imports`
+noticeable, **single sign-on against an external identity provider** (SSO/SCIM) in place of
+the local password store now that [RBAC ships](#-authentication-without-a-dependency),
+per-account lockout or rate limiting on repeated failed logins (today the 160 ms KDF is the
+only brake), a CLI `history <code>` command mirroring the API endpoint, a paginated `GET /cn-imports`
 endpoint for browsing the full `cn_code_versions` log (`/dashboard/stats` now surfaces the
 `fetch_cn_import_runs` data that used to be unexposed, but only the most recent handful — a
 dedicated, filterable endpoint is still open if the list needs to be browsed in full), a CLI
@@ -1245,6 +1482,7 @@ CustomsIQ/
 │   │   ├── embargo_screener.py  # sanctions name screening
 │   │   ├── tariff_calculator.py # duty rate selection + calculation
 │   │   ├── review.py            # human-review audit trail (four-eyes)
+│   │   ├── auth.py              # accounts, sessions, roles — stdlib only, no new deps
 │   │   ├── dashboard.py         # read-only aggregation over Phases 1 & 2
 │   │   ├── risk.py              # composite shipment risk score
 │   │   ├── exceptions.py        # typed error hierarchy
@@ -1255,7 +1493,9 @@ CustomsIQ/
 │   │   └── static/index.html    # web frontend — single file, no build step
 │   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── scripts/import_cn_codes.py   # official CN file → hs_codes, versioning changes (SCD Type 2)
-├── tests/                       # 197 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard, risk
+├── tests/                       # 301 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard, risk, auth/RBAC
+│   ├── conftest.py              #   lowers the password work factor for the suite
+│   ├── helpers.py               #   signed-in TestClient helpers
 │                                #   + 13 Postgres parity tests, skipped unless a server is configured
 │   └── fixtures/                # sample CN export for the importer's tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage

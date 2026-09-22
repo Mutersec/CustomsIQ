@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.customsiq.api import app
+from tests.helpers import signed_in_client
 
 client = TestClient(app)
 
@@ -174,22 +175,23 @@ def test_duty_endpoint_includes_subject_reference() -> None:
 
 
 def test_review_endpoint_records_a_decision() -> None:
-    """POST /review stores a decision and returns it."""
+    """POST /review stores a decision and returns it, attributed to the session."""
     subject_reference = f"test-ref-{uuid.uuid4()}"
-    response = client.post(
-        "/review",
-        json={
-            "subject_type": "duty",
-            "subject_reference": subject_reference,
-            "decision": "approved",
-            "reviewer_name": "alice",
-            "comment": "looks fine",
-        },
-    )
+    with signed_in_client("analyst") as reviewer:
+        response = reviewer.post(
+            "/review",
+            json={
+                "subject_type": "duty",
+                "subject_reference": subject_reference,
+                "decision": "approved",
+                "comment": "looks fine",
+            },
+        )
     assert response.status_code == 200
     body = response.json()
     assert body["decision"] == "approved"
-    assert body["reviewer_name"] == "alice"
+    assert body["reviewer_name"].startswith("analyst-")  # the signed-in account
+    assert body["authenticated"] is True
 
     history = client.get("/review/history", params={"subject_reference": subject_reference})
     assert history.status_code == 200
@@ -198,30 +200,30 @@ def test_review_endpoint_records_a_decision() -> None:
 
 def test_review_endpoint_rejects_invalid_decision() -> None:
     """An unknown decision value surfaces as HTTP 400."""
-    response = client.post(
-        "/review",
-        json={
-            "subject_type": "duty",
-            "subject_reference": f"test-ref-{uuid.uuid4()}",
-            "decision": "maybe",
-            "reviewer_name": "alice",
-        },
-    )
+    with signed_in_client("analyst") as reviewer:
+        response = reviewer.post(
+            "/review",
+            json={
+                "subject_type": "duty",
+                "subject_reference": f"test-ref-{uuid.uuid4()}",
+                "decision": "maybe",
+            },
+        )
     assert response.status_code == 400
 
 
 def test_review_history_filters_by_subject_type() -> None:
     """GET /review/history only returns decisions of the requested type."""
     subject_reference = f"test-ref-{uuid.uuid4()}"
-    client.post(
-        "/review",
-        json={
-            "subject_type": "screening",
-            "subject_reference": subject_reference,
-            "decision": "flagged",
-            "reviewer_name": "bob",
-        },
-    )
+    with signed_in_client("compliance_officer") as reviewer:
+        reviewer.post(
+            "/review",
+            json={
+                "subject_type": "screening",
+                "subject_reference": subject_reference,
+                "decision": "flagged",
+            },
+        )
     response = client.get(
         "/review/history",
         params={"subject_type": "screening", "subject_reference": subject_reference},

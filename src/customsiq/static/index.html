@@ -356,24 +356,81 @@
   footer strong { color: #8a5a05; }
   footer a { color: var(--primary); }
 
-  /* ---------- reviewer field ---------- */
-  .reviewer-field {
+  /* ---------- account chip + auth panel ---------- */
+  .auth-chip {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     font-size: 12.5px;
     color: var(--text-dim);
   }
 
-  .reviewer-field input {
-    width: 140px;
-    padding: 5px 8px;
+  .auth-chip button {
+    padding: 5px 10px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--text);
     font-size: 12.5px;
+    font-weight: 600;
     font-family: inherit;
+    cursor: pointer;
+  }
+
+  .auth-user { display: flex; align-items: center; gap: 6px; }
+  .auth-user strong { color: var(--text); font-weight: 600; }
+
+  .role-badge {
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .auth-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+
+  .auth-tabs button {
+    padding: 5px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .auth-tabs button.active {
+    background: var(--primary-soft);
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+
+  .demo-accounts {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+
+  .demo-accounts table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  .demo-accounts td { padding: 3px 6px 3px 0; }
+  .demo-accounts code { color: var(--text); }
+
+  .legacy-badge {
+    padding: 1px 6px;
+    margin-left: 5px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 10.5px;
+    font-weight: 600;
   }
 
   /* ---------- review controls ---------- */
@@ -583,9 +640,12 @@
     <h1>Customs<span class="accent">IQ</span></h1>
     <span class="tagline" data-i18n="tagline"></span>
     <span class="header-links">
-      <span class="reviewer-field">
-        <label for="reviewer-name" data-i18n="reviewerLabel"></label>
-        <input type="text" id="reviewer-name" data-i18n-placeholder="reviewerPlaceholder" autocomplete="off">
+      <span class="auth-chip" id="auth-chip">
+        <span class="auth-user" id="auth-user" hidden>
+          <strong id="auth-username"></strong>
+          <span class="role-badge" id="auth-role"></span>
+        </span>
+        <button type="button" id="auth-toggle" data-i18n="auth.signIn"></button>
       </span>
       <span class="lang-switch" role="group" aria-label="Language">
         <button type="button" class="lang-btn" data-lang="en">EN</button>
@@ -598,6 +658,49 @@
 </header>
 
 <main>
+  <!-- ============ Sign in / register ============ -->
+  <section class="panel wide" id="auth-panel" hidden>
+    <div class="panel-head">
+      <span class="rule"></span>
+      <h2 data-i18n="auth.title"></h2>
+    </div>
+    <div class="panel-body">
+      <p class="hint" data-i18n="auth.hint"></p>
+
+      <div class="auth-tabs" role="group">
+        <button type="button" class="auth-tab active" data-mode="login" data-i18n="auth.loginTab"></button>
+        <button type="button" class="auth-tab" data-mode="register" data-i18n="auth.registerTab"></button>
+      </div>
+
+      <form id="auth-form">
+        <div class="field">
+          <label for="auth-username-input" data-i18n="auth.username"></label>
+          <input type="text" id="auth-username-input" autocomplete="username"
+                 data-i18n-placeholder="auth.usernamePlaceholder">
+        </div>
+        <div class="field">
+          <label for="auth-password-input" data-i18n="auth.password"></label>
+          <input type="password" id="auth-password-input" autocomplete="current-password"
+                 data-i18n-placeholder="auth.passwordPlaceholder">
+        </div>
+        <button type="submit" id="auth-submit" data-i18n="auth.loginTab"></button>
+      </form>
+
+      <div class="results" id="auth-results" aria-live="polite"></div>
+
+      <div class="demo-accounts">
+        <span data-i18n="auth.demoIntro"></span>
+        <table>
+          <tr><td><code>demo_viewer</code></td><td><code>viewer-demo-2026</code></td><td data-i18n="auth.roles.viewer"></td></tr>
+          <tr><td><code>demo_analyst</code></td><td><code>analyst-demo-2026</code></td><td data-i18n="auth.roles.analyst"></td></tr>
+          <tr><td><code>demo_officer</code></td><td><code>officer-demo-2026</code></td><td data-i18n="auth.roles.compliance_officer"></td></tr>
+          <tr><td><code>demo_admin</code></td><td><code>admin-demo-2026</code></td><td data-i18n="auth.roles.admin"></td></tr>
+        </table>
+        <p class="hint" data-i18n="auth.demoWarning"></p>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ Dashboard ============ -->
   <section class="panel wide">
     <div class="panel-head">
@@ -760,9 +863,34 @@
   const STRINGS = {
     en: {
       tagline: "EU trade compliance toolkit — search, classification, screening & duty",
-      reviewerLabel: "Reviewer",
-      reviewerPlaceholder: "your name",
       apiReference: "API reference →",
+      auth: {
+        title: "Sign in",
+        hint: "Review sign-offs are recorded against your account, so the audit trail names a real reviewer rather than whatever was typed into a box.",
+        loginTab: "Sign in",
+        registerTab: "Create account",
+        username: "Username",
+        usernamePlaceholder: "e.g. demo_analyst",
+        password: "Password",
+        passwordPlaceholder: "at least 8 characters",
+        signIn: "Sign in",
+        signOut: "Sign out",
+        signedIn: (name) => `Signed in as ${name}.`,
+        registered: (name) => `Account created. Signed in as ${name}.`,
+        signedOut: "Signed out.",
+        failed: "Sign-in failed.",
+        demoIntro: "Demo accounts — one per role, for trying the permission model:",
+        demoWarning: "Public demo credentials on mock data. Never reuse a real password here; accounts reset whenever the free instance restarts.",
+        loginToReview: "Sign in to review this result.",
+        roleCannotReview: (role) => `Your role (${role}) cannot sign off on this result.`,
+        restricted: "Sign in to see who reviewed what.",
+        roles: {
+          viewer: "Read-only: sees the audit trail, signs off on nothing",
+          analyst: "Signs off on classification and duty results",
+          compliance_officer: "Also signs off on sanctions screening",
+          admin: "Everything, plus managing accounts and roles",
+        },
+      },
       dashboard: {
         title: "Dashboard",
         hint: "A read-only overview of everything recorded in this system so far — reference data, review activity and CN import runs.",
@@ -853,6 +981,9 @@
         hint: "Sign-offs recorded against classification, screening and duty results — append-only, most recent first.",
         empty: "No review decisions recorded yet.",
         couldNotLoad: "Could not load review history.",
+        legacy: "legacy",
+        legacyTitle: "Recorded before accounts existed, or via the CLI — the name is free text and is not tied to an account.",
+        restricted: "Sign in to browse the full audit log.",
       },
       history: {
         viewLink: "View history",
@@ -867,7 +998,6 @@
         reject: "Reject",
         flag: "Flag",
         commentPlaceholder: "Optional comment",
-        enterName: "Enter your name in the Reviewer field first.",
         submitting: "Submitting…",
         recorded: (decision) => `Recorded: ${decision}`,
         couldNotRecord: "Could not record review.",
@@ -891,9 +1021,34 @@
     },
     tr: {
       tagline: "AB dış ticaret uyum araç seti — arama, sınıflandırma, yaptırım taraması ve vergi",
-      reviewerLabel: "İnceleyici",
-      reviewerPlaceholder: "adınız",
       apiReference: "API referansı →",
+      auth: {
+        title: "Oturum aç",
+        hint: "İnceleme onayları hesabınıza kaydedilir; böylece denetim izi bir kutuya yazılan metni değil, gerçek bir inceleyiciyi gösterir.",
+        loginTab: "Oturum aç",
+        registerTab: "Hesap oluştur",
+        username: "Kullanıcı adı",
+        usernamePlaceholder: "örn. demo_analyst",
+        password: "Parola",
+        passwordPlaceholder: "en az 8 karakter",
+        signIn: "Oturum aç",
+        signOut: "Çıkış yap",
+        signedIn: (name) => `${name} olarak oturum açıldı.`,
+        registered: (name) => `Hesap oluşturuldu. ${name} olarak oturum açıldı.`,
+        signedOut: "Oturum kapatıldı.",
+        failed: "Oturum açılamadı.",
+        demoIntro: "Demo hesapları — izin modelini denemek için her rolden bir tane:",
+        demoWarning: "Kurgusal veri üzerinde herkese açık demo bilgileri. Buraya asla gerçek bir parola girmeyin; ücretsiz sunucu her yeniden başladığında hesaplar sıfırlanır.",
+        loginToReview: "Bu sonucu incelemek için oturum açın.",
+        roleCannotReview: (role) => `Rolünüz (${role}) bu sonucu onaylayamaz.`,
+        restricted: "Kimin neyi incelediğini görmek için oturum açın.",
+        roles: {
+          viewer: "Salt okunur: denetim izini görür, hiçbir şeyi onaylamaz",
+          analyst: "Sınıflandırma ve vergi sonuçlarını onaylar",
+          compliance_officer: "Ayrıca yaptırım taramalarını da onaylar",
+          admin: "Her şey, ayrıca hesap ve rol yönetimi",
+        },
+      },
       dashboard: {
         title: "Gösterge Paneli",
         hint: "Bu sistemde şimdiye kadar kaydedilen her şeyin salt-okunur bir özeti — referans veriler, inceleme faaliyeti ve CN içe aktarma çalıştırmaları.",
@@ -984,6 +1139,9 @@
         hint: "Sınıflandırma, tarama ve vergi sonuçlarına ilişkin onaylar — yalnızca eklenir, en yeni önce.",
         empty: "Henüz kayıtlı bir inceleme kararı yok.",
         couldNotLoad: "İnceleme geçmişi yüklenemedi.",
+        legacy: "eski kayıt",
+        legacyTitle: "Hesaplar var olmadan önce ya da komut satırından kaydedildi — ad serbest metindir ve bir hesaba bağlı değildir.",
+        restricted: "Tüm denetim kaydına göz atmak için oturum açın.",
       },
       history: {
         viewLink: "Geçmişi görüntüle",
@@ -998,7 +1156,6 @@
         reject: "Reddet",
         flag: "İşaretle",
         commentPlaceholder: "İsteğe bağlı not",
-        enterName: "Önce İnceleyici alanına adınızı girin.",
         submitting: "Gönderiliyor…",
         recorded: (decision) => `Kaydedildi: ${decision}`,
         couldNotRecord: "İnceleme kaydedilemedi.",
@@ -1022,9 +1179,34 @@
     },
     de: {
       tagline: "EU-Compliance-Toolkit für den Außenhandel — Suche, Einreihung, Sanktionsprüfung & Zoll",
-      reviewerLabel: "Prüfer",
-      reviewerPlaceholder: "Ihr Name",
       apiReference: "API-Referenz →",
+      auth: {
+        title: "Anmelden",
+        hint: "Freigaben werden Ihrem Konto zugeordnet, damit das Prüfprotokoll eine echte Person nennt und nicht das, was jemand ins Feld getippt hat.",
+        loginTab: "Anmelden",
+        registerTab: "Konto erstellen",
+        username: "Benutzername",
+        usernamePlaceholder: "z. B. demo_analyst",
+        password: "Passwort",
+        passwordPlaceholder: "mindestens 8 Zeichen",
+        signIn: "Anmelden",
+        signOut: "Abmelden",
+        signedIn: (name) => `Angemeldet als ${name}.`,
+        registered: (name) => `Konto erstellt. Angemeldet als ${name}.`,
+        signedOut: "Abgemeldet.",
+        failed: "Anmeldung fehlgeschlagen.",
+        demoIntro: "Demo-Konten — eines je Rolle, zum Ausprobieren des Berechtigungsmodells:",
+        demoWarning: "Öffentliche Demo-Zugangsdaten auf fiktiven Daten. Verwenden Sie hier nie ein echtes Passwort; bei jedem Neustart der kostenlosen Instanz werden die Konten zurückgesetzt.",
+        loginToReview: "Zum Prüfen dieses Ergebnisses bitte anmelden.",
+        roleCannotReview: (role) => `Ihre Rolle (${role}) darf dieses Ergebnis nicht freigeben.`,
+        restricted: "Melden Sie sich an, um zu sehen, wer was geprüft hat.",
+        roles: {
+          viewer: "Nur lesend: sieht das Prüfprotokoll, gibt nichts frei",
+          analyst: "Gibt Einreihungs- und Zollergebnisse frei",
+          compliance_officer: "Gibt zusätzlich Sanktionsprüfungen frei",
+          admin: "Alles, dazu Konten- und Rollenverwaltung",
+        },
+      },
       dashboard: {
         title: "Dashboard",
         hint: "Ein schreibgeschützter Überblick über alles, was in diesem System bisher erfasst wurde — Referenzdaten, Prüfaktivität und KN-Importläufe.",
@@ -1115,6 +1297,9 @@
         hint: "Freigaben zu Einreihungs-, Prüf- und Zollergebnissen — nur anhängend, neueste zuerst.",
         empty: "Noch keine Prüfentscheidungen erfasst.",
         couldNotLoad: "Prüfprotokoll konnte nicht geladen werden.",
+        legacy: "Altbestand",
+        legacyTitle: "Erfasst, bevor es Konten gab, oder über die CLI — der Name ist Freitext und keinem Konto zugeordnet.",
+        restricted: "Zum Durchsuchen des vollständigen Prüfprotokolls bitte anmelden.",
       },
       history: {
         viewLink: "Verlauf anzeigen",
@@ -1129,7 +1314,6 @@
         reject: "Ablehnen",
         flag: "Markieren",
         commentPlaceholder: "Optionale Notiz",
-        enterName: "Bitte zuerst Ihren Namen im Feld Prüfer eintragen.",
         submitting: "Wird gesendet…",
         recorded: (decision) => `Erfasst: ${decision}`,
         couldNotRecord: "Prüfung konnte nicht gespeichert werden.",
@@ -1194,12 +1378,134 @@
       lang = btn.dataset.lang;
       localStorage.setItem("customsiq_lang", lang);
       applyStaticTranslations();
+      renderAuthChip();
+      setAuthMode(authMode);
       loadReviewHistory();
       loadDashboard();
     });
   });
 
   applyStaticTranslations();
+
+  // ---------- account state ----------
+  // Mirrors the server's src/customsiq/auth.py PERMISSIONS table. The server
+  // is the authority — this copy only decides what to *offer*, so a stale copy
+  // can annoy a user but never grant them anything.
+  const ROLE_ORDER = ["viewer", "analyst", "compliance_officer", "admin"];
+  const REVIEW_REQUIRES = {
+    classification: "analyst",
+    duty: "analyst",
+    screening: "compliance_officer",
+  };
+
+  let currentUser = null;
+  let authMode = "login";
+
+  const authPanel = document.getElementById("auth-panel");
+  const authResults = document.getElementById("auth-results");
+  const authUserEl = document.getElementById("auth-user");
+  const authToggle = document.getElementById("auth-toggle");
+  const authUsernameInput = document.getElementById("auth-username-input");
+  const authPasswordInput = document.getElementById("auth-password-input");
+
+  function canReview(subjectType) {
+    const required = REVIEW_REQUIRES[subjectType];
+    if (!currentUser || !required) return false;
+    return ROLE_ORDER.indexOf(currentUser.role) >= ROLE_ORDER.indexOf(required);
+  }
+
+  function legacyBadge(row) {
+    if (row.authenticated) return "";
+    return `<span class="legacy-badge" title="${escapeHtml(t("reviewHistory.legacyTitle"))}">${escapeHtml(t("reviewHistory.legacy"))}</span>`;
+  }
+
+  function renderAuthChip() {
+    authUserEl.hidden = !currentUser;
+    if (currentUser) {
+      document.getElementById("auth-username").textContent = currentUser.username;
+      document.getElementById("auth-role").textContent = currentUser.role.replace(/_/g, " ");
+    }
+    authToggle.textContent = currentUser ? t("auth.signOut") : t("auth.signIn");
+  }
+
+  function setCurrentUser(user) {
+    currentUser = user;
+    renderAuthChip();
+    loadReviewHistory();
+    loadDashboard();
+  }
+
+  function setAuthMode(mode) {
+    authMode = mode;
+    document.querySelectorAll(".auth-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.mode === mode);
+    });
+    const label = mode === "login" ? t("auth.loginTab") : t("auth.registerTab");
+    document.getElementById("auth-submit").textContent = label;
+    authPasswordInput.autocomplete = mode === "login" ? "current-password" : "new-password";
+  }
+
+  document.querySelectorAll(".auth-tab").forEach((tab) => {
+    tab.addEventListener("click", () => setAuthMode(tab.dataset.mode));
+  });
+
+  authToggle.addEventListener("click", async () => {
+    if (!currentUser) {
+      authPanel.hidden = false;
+      setAuthMode(authMode);
+      authUsernameInput.focus();
+      authPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    await fetch("/auth/logout", { method: "POST" });
+    setCurrentUser(null);
+    setState(authResults, "", t("auth.signedOut"));
+    authPanel.hidden = false;
+  });
+
+  document.getElementById("auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const username = authUsernameInput.value.trim();
+    const password = authPasswordInput.value;
+    if (!username || !password) {
+      setState(authResults, "error", t("common.enterValue"));
+      return;
+    }
+    const submitBtn = document.getElementById("auth-submit");
+    submitBtn.disabled = true;
+    try {
+      const response = await fetch(authMode === "login" ? "/auth/login" : "/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setState(authResults, "error", payload.detail || t("auth.failed"));
+        return;
+      }
+      authPasswordInput.value = "";
+      setCurrentUser(payload);
+      const message = authMode === "login" ? t("auth.signedIn") : t("auth.registered");
+      setState(authResults, "", message(payload.username));
+      authPanel.hidden = true;
+    } catch (err) {
+      setState(authResults, "error", t("common.couldNotReach"));
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  async function loadCurrentUser() {
+    try {
+      const response = await fetch("/auth/me");
+      const payload = await response.json();
+      currentUser = response.ok ? payload.user : null;
+    } catch (err) {
+      currentUser = null;
+    }
+    renderAuthChip();
+  }
 
   // ---------- shared helpers ----------
   const pct = (score) => Math.round(score * 100);
@@ -1221,6 +1527,14 @@
    * link back to the exact same audit subject.
    */
   function reviewControlsHtml(subjectType, subjectReference) {
+    // One gate for all five panels: the server enforces this too (401/403),
+    // this just avoids offering a button that is going to be refused.
+    if (!currentUser) {
+      return `<div class="review"><div class="review-status">${escapeHtml(t("auth.loginToReview"))}</div></div>`;
+    }
+    if (!canReview(subjectType)) {
+      return `<div class="review"><div class="review-status">${escapeHtml(t("auth.roleCannotReview")(currentUser.role))}</div></div>`;
+    }
     return `
       <div class="review" data-subject-type="${escapeHtml(subjectType)}" data-subject-reference="${escapeHtml(subjectReference)}">
         <div class="review-btns">
@@ -1565,6 +1879,10 @@
     try {
       const response = await fetch("/review/history?limit=20");
       const rows = await response.json();
+      if (response.status === 401) {
+        setState(reviewHistoryBox, "", t("reviewHistory.restricted"));
+        return;
+      }
       if (!response.ok) {
         setState(reviewHistoryBox, "error", rows.detail || t("reviewHistory.couldNotLoad"));
         return;
@@ -1580,7 +1898,7 @@
             <span class="score">${escapeHtml(r.reviewed_at)}</span>
           </div>
           <p class="meta">${escapeHtml(r.subject_type)} · ${escapeHtml(r.subject_reference)}</p>
-          <span class="chip">${escapeHtml(r.reviewer_name)}</span>
+          <span class="chip">${escapeHtml(r.reviewer_name)}</span>${legacyBadge(r)}
           ${r.comment ? `<p class="card-desc">${escapeHtml(r.comment)}</p>` : ""}
         </article>
       `).join("");
@@ -1595,12 +1913,9 @@
 
     const wrap = btn.closest(".review");
     const statusEl = wrap.querySelector(".review-status");
-    const reviewerInput = document.getElementById("reviewer-name");
-    const reviewerName = reviewerInput.value.trim();
-    if (!reviewerName) {
-      statusEl.textContent = t("review.enterName");
+    if (!currentUser) {
+      statusEl.textContent = t("auth.loginToReview");
       statusEl.className = "review-status error-text";
-      reviewerInput.focus();
       return;
     }
 
@@ -1617,7 +1932,6 @@
           subject_type: wrap.dataset.subjectType,
           subject_reference: wrap.dataset.subjectReference,
           decision: btn.dataset.decision,
-          reviewer_name: reviewerName,
           comment: commentInput.value.trim() || null,
         }),
       });
@@ -1638,7 +1952,9 @@
     }
   });
 
-  loadReviewHistory();
+  // Identity first: the review controls and the audit log both render
+  // differently depending on it, so one await here avoids a visible reflow.
+  loadCurrentUser().then(loadReviewHistory);
 
   // ---------- Dashboard ----------
   async function loadDashboard() {
@@ -1698,12 +2014,16 @@
       `<span class="chip">${escapeHtml(label)}: ${stats.review_by_subject_type[key]}</span>`
     ).join("");
 
-    document.getElementById("dash-recent-reviews").innerHTML = !stats.recent_reviews.length
+    // Counts stay public; who reviewed what does not — the server sends this
+    // array empty with recent_reviews_restricted for anonymous visitors.
+    document.getElementById("dash-recent-reviews").innerHTML = stats.recent_reviews_restricted
+      ? `<div class="dash-row">${escapeHtml(t("auth.restricted"))}</div>`
+      : !stats.recent_reviews.length
       ? `<div class="dash-row">${escapeHtml(t("dashboard.noReviews"))}</div>`
       : stats.recent_reviews.map((r) => `
           <div class="dash-row">
             <b>${escapeHtml(r.decision)}</b> · ${escapeHtml(r.subject_type)} ·
-            ${escapeHtml(r.reviewer_name)} · ${escapeHtml(r.reviewed_at)}
+            ${escapeHtml(r.reviewer_name)}${legacyBadge(r)} · ${escapeHtml(r.reviewed_at)}
           </div>
         `).join("");
 

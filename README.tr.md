@@ -9,7 +9,7 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Kapsam](https://img.shields.io/badge/kapsam-%9825-brightgreen)
-![Testler](https://img.shields.io/badge/testler-197%20ge%C3%A7ti-brightgreen)
+![Testler](https://img.shields.io/badge/testler-301%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
@@ -83,6 +83,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
 | 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
+| 🔐 | **RBAC** | Gerçek hesaplar üzerinde dört rol — yaptırım onayı uyum yetkilisi gerektirir ve denetim izi bir metin kutusunu değil, oturumu adlandırır |
 | 🐘 | **Çift veritabanı desteği** | Aynı SQL PostgreSQL üzerinde de çalışır — tek bir ortam değişkeniyle açılır, varsayılan SQLite kalır |
 | ⚙️ | **Ortam tabanlı yapılandırma** | `pydantic-settings` `.env` dosyasını okur — sabit kodlanmış yol veya eşik yok |
 | 🚨 | **Tipli hatalar** | `InvalidQueryError`, `HSCodeNotFoundError` → temiz HTTP `400` / `404` semantiği |
@@ -205,9 +206,36 @@ CREATE TABLE review_decisions (
     subject_type       TEXT NOT NULL,   -- "classification" | "screening" | "duty"
     subject_reference  TEXT NOT NULL,   -- sha256(subject_type + normalize edilmiş girdi)
     decision           TEXT NOT NULL,   -- "approved" | "rejected" | "flagged"
-    reviewer_name      TEXT NOT NULL,   -- serbest metin — kimlik doğrulama gelene kadar geçici
+    reviewer_name      TEXT NOT NULL,   -- kimlik doğrulanmış kullanıcı adı (API) ya da serbest metin (CLI/RBAC öncesi)
     comment            TEXT,            -- opsiyonel not
     reviewed_at        TEXT NOT NULL    -- ISO 8601 zaman damgası
+);
+
+-- İmzalayan kimlik doğrulanmış bir hesapsa, kimin onayladığı. Burada kaydı
+-- olmayan bir inceleme satırı kimlik doğrulaması olmadan yazılmıştır (CLI ya da
+-- hesaplar var olmadan önce) ve öyle raporlanır. Adla değil, satır kimliğiyle
+-- eşlenir; böylece geçmişteki serbest metin "alice", sonradan o kullanıcı adını
+-- alan biri tarafından sahiplenilemez. review_decisions üzerine sütun yerine ayrı
+-- bir tablo olmasının nedeni hs_code_history ile aynı: CREATE TABLE IF NOT EXISTS
+-- mevcut bir veritabanını asla değiştirmez.
+CREATE TABLE review_authorship (
+    review_id  INTEGER PRIMARY KEY,  -- review_decisions satırı
+    user_id    INTEGER NOT NULL      -- kimlik doğrulanmış yazar
+);
+
+CREATE TABLE users (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    username       TEXT NOT NULL UNIQUE,  -- girişte küçük harfe çevrilir
+    password_hash  TEXT NOT NULL,         -- pbkdf2_sha256$<yineleme>$<tuz>$<özet>
+    role           TEXT NOT NULL,         -- viewer | analyst | compliance_officer | admin
+    created_at     TEXT NOT NULL
+);
+
+CREATE TABLE sessions (
+    token_hash  TEXT PRIMARY KEY,  -- jetonun sha256'sı; jetonun kendisi asla saklanmaz
+    user_id     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL      -- okurken kontrol edilir; çıkış ve süre dolumu anında etkilidir
 );
 
 CREATE TABLE hs_code_history (
@@ -269,7 +297,7 @@ Aşağıdakilerden **herhangi biri** gerçekleştiğinde `matching.py` içindeki
 | **Doğrulamanın `matching.py` içinde olması** | Arama, tarama, CLI ve API bunu devralır; yeni bir çağıran eklenerek atlanması imkânsızdır | — |
 | **`EmbargoScreeningError` eklenmemesi** | Taramanın girdi doğrulaması aramanınkiyle birebir aynı; yeni sınıf yerine `InvalidQueryError` yeniden kullanılır | Tarama gerçekten farklı bir hata durumu kazanırsa eklenir |
 | **`review_decisions`, diğer üç tablonun aksine `INTEGER PRIMARY KEY AUTOINCREMENT` kullanır** | Denetim kayıtlarının doğal bir benzersizliği yok — aynı `subject_reference` zaman içinde birden çok karara sahip olabilir | — |
-| **`review_decisions` yalnızca ekleme yapılır (append-only)** | SAP GTS gibi gümrük uyum araçlarında yaygın olan dört-göz / insan-onayı ilkesini modeller: düzeltilmiş bir karar bir güncelleme değil, yeni bir satırdır, böylece geçmiş asla kaybolmaz. `reviewer_name` bu demoda serbest metindir; üretim sistemi bunu kimlik doğrulanmış kullanıcılara bağlar (bkz. Yol haritası) | Kimlik doğrulanmış kullanıcılar + RBAC eklenir |
+| **`review_decisions` yalnızca ekleme yapılır (append-only)** | SAP GTS gibi gümrük uyum araçlarında yaygın olan dört-göz / insan-onayı ilkesini modeller: düzeltilmiş bir karar bir güncelleme değil, yeni bir satırdır, böylece geçmiş asla kaybolmaz. `reviewer_name` artık API üzerinden gönderilen her şey için kimlik doğrulanmış hesaptır (bkz. [🔐 Kimlik doğrulama](#-bağımlılıksız-kimlik-doğrulama)); CLI ve RBAC öncesi satırlar serbest metnini korur ve yeniden yorumlanmak yerine kimliği doğrulanmamış olarak etiketlenir | Yerel parolalar yerine harici bir kimlik sağlayıcıya (SSO/SCIM) bağlanır |
 | **CN kodu geçmişi `hs_codes`'a eklenen `valid_from`/`valid_to` sütunları yerine ayrı bir `hs_code_history` tablosunda tutulur** | `hs_codes` mevcut `code TEXT PRIMARY KEY` yapısını ve iki okuma fonksiyonunu (`fetch_all`, `get_by_code`) birebir aynı korur — süzülecek, unutulacak bir şey yok. Ayrıca göç açısından güvenli tek seçenek: bu projede şema göçü yok ve `CREATE TABLE IF NOT EXISTS` mevcut bir tabloyu asla değiştirmez, dolayısıyla `hs_codes`'a eklenen sütunlar mevcut hiçbir `customsiq.db` dosyasında görünmezdi | Gerçek bir dağıtım ilk günden tam derinlikli geçmiş istiyorsa mevcut her kod için açılış geçmiş satırı geri doldurulur |
 
 ### 🕘 Sürümlü CN kodları (SCD Type 2)
@@ -358,6 +386,29 @@ destekler, serbest metin açıklamayı değil: düz bir REPL satırı iki ayrı 
 `screen <isim>`'in her birinin tek bir alan tutabildiği gibi. API ve frontend (yapılandırılmış
 form alanları) ikisini de destekler.
 
+### ☁️ RBAC'ın Render'da gerektirdiği şey: hiçbir şey
+
+**Canlı demoda girişin çalışması için yeni bir ortam değişkeni gerekmiyor ve
+`requirements.txt` değişmedi** — yani Render'ın derlemesi bu fazdan öncekiyle birebir
+aynı ve panelde hiçbir işlem yapılması gerekmiyor. Bu doğrudan oturum tasarımının bir
+sonucu: veritabanında saklanan opak jetonlar imza anahtarı gerektirmez, dolayısıyla
+ayarlanacak, döndürülecek veya sızdırılacak bir `SECRET_KEY` yoktur. (JWT ya da
+Starlette'in imzalı çerez ara katmanı, giriş canlıda çalışmadan önce tam da böyle bir
+değişkenin elle tanımlanmasını gerektirirdi.)
+
+Bu demonun zaten belgelediği ücretsiz katmandan doğan iki dürüst uyarı:
+
+- **Hesaplar kalıcı değildir.** Dosya sistemi sıfırlanır; kayıtlar ve rol değişiklikleri
+  yeniden başlatmada kaybolur, demo hesapları yeniden oluşturulur — tohumlanan diğer
+  verinin zaten sahip olduğu davranışın aynısı. Gerçek bir parolayı burada kullanmayın.
+- **Oturum çerezindeki `Secure` sabit değil, türetilmiştir**: `X-Forwarded-Proto`'dan
+  (Render TLS'i bir vekil sunucuda sonlandırır, uygulama düz HTTP görür). Sabitlemek
+  `http://localhost`'u bozardı; yok saymak çerezi açık metin üzerinden gönderirdi.
+
+Faz 5 ve 6'dan sonra olduğu gibi, insan gözüyle bakılmaya değer tek şey: servisin
+Runtime ve derleme komutunun değişmediğini doğrulamak. Buradaki hiçbir şey onlara
+dokunmuş olmamalı.
+
 ### 🐳 Docker: yerel geliştirme için, Render için değil (henüz)
 
 Render servisi hiç Dockerfile ile yapılandırılmamış bir repoya Dockerfile eklemek, yapmadan önce
@@ -380,6 +431,30 @@ etmesi gereken tek şey: bu servis için Render dashboard'unu açıp Language/Ru
 mevcut yerel ayarında olduğunu, "Docker" olmadığını doğrulamak — yukarıdaki gerekçe göz önüne
 alındığında maliyetsiz bir doğrulama, beklenen bir sorun değil, çünkü o dashboard'u kendim
 görüp doğrudan doğrulayamıyorum.
+
+### 🧵 Tek paylaşılan SQLite bağlantısı, artık gerçekten iş parçacığı güvenli
+
+Bu faz sırasında bulundu; belirtisi ürkütücü, nedeni ise RBAC'tan çok önce gizliden
+gizliye orada olduğu için yazmaya değer: uygulama süreç başına **tek bir** SQLite
+bağlantısı tutar ve FastAPI senkron uç noktaları bir iş parçacığı havuzunda çalıştırır;
+yani birden çok istek bu nesneye gerçekten aynı anda dokunur. `check_same_thread=False`
+yalnızca Python'un kontrolünü susturur — paylaşımı güvenli hâle getirmez. Bu makinedeki
+SQLite `SQLITE_THREADSAFE=2` (çok iş parçacıklı: bağlantı başına tek iş parçacığı) ile
+derlenmiştir ve Python `sqlite3.threadsafety == 1` bildirir; yani iş parçacıkları modülü
+paylaşabilir ama bağlantıyı **paylaşamaz**.
+
+Bu fazdan önce eşzamanlı veritabanı işi seyrek olduğu için sorun görünmüyordu. RBAC her
+isteğe bir oturum araması ekledi ve gizli yarış sıradanlaştı: önce bozuk bir okuma
+(`Could not decode to UTF-8 column 'username'`), ardından bir segfault — giriş sırasında
+tüm sunucuyu düşüren bir `SIGSEGV`.
+
+Çözüm, kilitle korunan bir sarmalayıcı (`database._SerializedConnection`);
+`pg_adapter.PgConnection`'ın Postgres için zaten kullandığı biçimin aynısı: her ifade tek
+bir kilit altında çalışır ve satırları **kilit bırakılmadan önce alınır** — canlı bir
+imleç döndürmek, güvensiz okumayı kilidin dışına taşır ve hiçbir şeyi düzeltmezdi. Bir
+regresyon testi, bir iş parçacığı havuzunda 24 paralel oturumlu istek turu sürer;
+sarmalayıcı kaldırıldığında segfault'u yeniden üretir, yani koruma varsayılmış değil
+doğrulanmıştır. Postgres yolu değişmedi (psycopg bunu kendi hallediyor).
 
 ### 🐘 Çift arka uç: varsayılan SQLite, isteğe bağlı Postgres
 
@@ -431,6 +506,116 @@ doğrulamaz.
 böylece iki arka uç birbirinden ayrışamaz. Yedi karar modülü, `sqlite3.Connection` tip
 açıklamalarına kadar değişmedi: hiçbiri SQL çalıştırmaz, yalnızca `conn`'u `database.py`'ye geri
 verir; bu yüzden Postgres dalı sarmalayıcıyı `cast` ile döndürür.
+
+### 🔐 Bağımlılıksız kimlik doğrulama
+
+`reviewer_name` eskiden istemcinin yazdığı şeydi. Bu depodaki beş ayrı yer bunu
+söylüyor ve bu fazı vaat ediyordu; artık oturum açmış hesap. Üstelik tamamı **sıfır
+paketle** geldi — `requirements.txt` değişmedi, dolayısıyla canlı dağıtımın derlemesi
+birebir aynı.
+
+**JWT değil, oturum.** Oturum, `HttpOnly` bir çerezdeki opak `secrets.token_urlsafe(32)`
+değeridir; veritabanında yalnızca SHA-256'sı saklanır, böylece veritabanı sızsa bile
+kullanılabilir bir oturum ele geçmez. Düz SHA-256 *burada* doğrudur, bu modülün başka
+hiçbir yerinde değil: jeton 256 bitlik CSPRNG çıktısıdır ve tahmin edilemeyen bir sırra
+karşı yavaş bir KDF hiçbir şey kazandırmaz. JWT yerine bunu seçmenin nedeni iptal
+edilebilirlik: çıkış ve rol değişiklikleri bir sonraki istekte geçerli olur; kendi içinde
+taşınan bir jeton ise siz bir kara liste eklemedikçe süresi dolana dek geçerli kalır — o
+kara liste de şapka takmış bir oturum tablosudur. Starlette'in `SessionMiddleware`'i
+kullanılmadı: imzalı çereze dayanır ve `itsdangerous` ister (doğrulandı: kurulu değil) —
+daha zayıf bir model için yeni bir bağımlılık. CSRF'yi `SameSite=Lax` karşılar; `Secure`
+ise `X-Forwarded-Proto`'dan türetilir (Render TLS'i bir vekil sunucuda sonlandırır),
+böylece `http://localhost` çalışmaya devam eder.
+
+**Parolalar: `hashlib.pbkdf2_hmac`, 600.000 yineleme.** scikit-learn ve openpyxl
+kararlarındaki titizliğin aynısı — ve alışılmadık biçimde, tercihle değil ölçümle
+karara bağlandı:
+
+| Seçenek | Karar |
+|---|---|
+| `argon2-cffi` (argon2id) | En iyi algoritma; bellek-yoğun, OWASP'ın ilk tercihi. Reddedildi: kurgusal veriyi koruyan bir demo parolası için **üretim** yoluna C uzantılı bir bağımlılık. |
+| `bcrypt` / `passlib` | Bu da C uzantısı; passlib 1.7.4 (2020) fiilen bakımsız ve bcrypt 4.x ile bozuluyor, ayrıca bcrypt 72 baytta sessizce kesiyor. |
+| `hashlib.scrypt` | Standart kütüphanedeki bellek-yoğun seçenek ve ilk tercihim — **ama bu projenin kendi yorumlayıcısında yok.** Ölçüldü: bu venv'in Python 3.9.6'sı LibreSSL 2.8.3'e bağlı ve `hasattr(hashlib, "scrypt")` `False`. CI ve Docker'da çalışır, geliştiricinin dizüstünde çalışmazdı. Değeri değil, taşınabilirliği nedeniyle elendi. |
+| **`hashlib.pbkdf2_hmac` ✅** | Her zaman mevcut, sıfır bağımlılık, SHA-256 için OWASP'ın önerdiği 600.000 yineleme. Burada ölçüldü: 600k ≈ **160 ms**, 210k ≈ 57 ms. |
+
+Dürüst bedeli: **PBKDF2 bellek-yoğun değildir**; yani GPU'su olan bir saldırgan buna
+karşı argon2id'ye kıyasla daha iyi bir maliyet oranı yakalar. Bunu sonradan değiştirmeyi
+ucuzlatan şey saklama biçimi: Django tarzı `pbkdf2_sha256$600000$<tuz>$<özet>` — algoritma
+ve iş faktörü her satırdan geri okunur ve kullanıcının bir sonraki girişinde, göç olmadan
+yükseltilebilir. Bilinmeyen bir kullanıcı adı için de KDF sahte bir hash üzerinde yine
+çalıştırılır; böylece zamanlamayla hesap taraması yapılamaz ve "yanlış parola" ile
+"böyle bir kullanıcı yok" aynı metni döndürür.
+
+`Settings.password_iterations` test paketini hızlı tutar (`tests/conftest.py` değeri
+düşürür — Django'nun kendi test ayarları için belgelediği yöntem), bir test ise üretim
+varsayılanının gerçekten 600.000 olduğunu doğrular ve tam maliyetle bir kez hash alır.
+
+### 🛡️ İzin matrisi
+
+`viewer < analyst < compliance_officer < admin` sıralı dört rol. Bu küme hakkını
+veriyor; çünkü ayrımlardan biri süs değil, gerçek: **yasaklı taraf taraması düzenlemeye
+tabi onaydır**, dolayısıyla uyum yetkilisi gerektirir; sınıflandırma ve vergi ise analist
+işidir — bu ayrım, yeni kavramlar icat etmek yerine mevcut üç `subject_type` değerine
+birebir oturur.
+
+Hesaplama yapan her uç nokta **herkese açık** kalır. Demonun bütün amacı budur ve
+hiçbiri kimlik gerektirmez. Kimlik doğrulama; yazmaları, kimin neyi incelediğine dair
+toplu okumayı ve hesap yönetimini korur.
+
+| Uç nokta | anonim | viewer | analyst | uyum yetkilisi | admin |
+|---|:--:|:--:|:--:|:--:|:--:|
+| `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /dashboard/stats` — sayımlar | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /dashboard/stats` — `recent_reviews` (adlar + notlar) | ❌ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` (tek sonucun izi) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history` (tüm denetim kaydı) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
+| `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
+| `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
+| `POST /auth/register` · `/auth/login` · `/auth/logout` · `GET /auth/me` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /auth/users` · `POST /auth/users/{username}/role` | ❌ 401 | ❌ 403 | ❌ 403 | ❌ 403 | ✅ |
+
+`401` "oturum açılmamış", `403` ise "oturum açılmış ama rol yetersiz" demektir; bir
+istemcinin giriş formu göstermekle açıklama göstermek arasında karar verebilmesi için
+bu ikisi asla birbirinin yerine geçmez. Anonim çağrılar `/dashboard/stats` yanıtını
+`recent_reviews: []` ve `recent_reviews_restricted: true` ile alır; sayımlar herkese
+açık kalır. İzinler `auth.py` içindeki tek bir sözlükte durur ve bilinmeyen bir rol ya
+da eylem her zaman reddeder — yazım hatası yetki veremez. `dashboard.py` bunların
+hiçbirine karışmaz: gizleme uç noktada yapılır.
+
+### 👤 Kayıt olan `analyst` olur — demo tercihi, gerçek işleyişin modeli değil
+
+Kayıt olduğunuzda anında `analyst` rolü verilir; böylece bir ziyaretçi, kimse hesap
+tanımlamadan hem bir sınıflandırmayı onaylayabilir hem de bir yaptırım onayında
+reddedilebilir. **Gerçek bir gümrük uyum sisteminde RBAC işe alım süreci böyle işlemez
+ve böyle işlemesi de amaçlanmıyor.** Orada roller seçilmez, *verilir*: kişi doğrulandıktan
+sonra bir yönetici ya da bir IdP/İK grup eşlemesi rolü atar; kendi kendine kayıt ya hiç
+yoktur ya da biri onaylayana kadar yetkisiz/bekleyen bir durumda kalır. Bir kayıt formuna
+gümrük sınıflandırmalarını onaylama yetkisi vermek, gerçek bir denetimde bulgu olurdu.
+
+Üretime uygun sürümü tek satır: `auth.SELF_REGISTRATION_ROLE` değerini `VIEWER` yapın;
+yeni hesaplar bir yönetici `POST /auth/users/{username}/role` ile yükseltene kadar
+denetim izini okumaktan başka bir şey yapamaz — o uç nokta zaten var ve zaten yalnızca
+admin'e açık. Aşağıdaki demo hesaplarının parolalarının yayımlanmış olması da aynı
+gerekçeye dayanır: kurgusal veriyle çalışan bir portföy demosu için uygun, başka her yerde
+savunulamaz.
+
+### 🕰️ Geçmişteki serbest metin inceleyiciler olduğu gibi bırakıldı
+
+Hesaplar var olmadan önce yazılan satırlar — ve CLI'ın hâlâ yazdığı satırlar — kimsenin
+kefil olamayacağı bir ad taşır. Bunlar aynen korunur ve etiketlenir: API
+`"authenticated": false` döndürür, arayüz adın yanında nötr bir **eski kayıt** rozeti
+gösterir.
+
+Bilinçli olarak **yapılmayan** üç şey:
+
+- Geriye dönük doldurma, tahmin ya da silme yok.
+- Ada göre eşleme yok. `review_authorship` **satır kimliğiyle** eşlenir; yani `alice`
+  yazan eski bir satır, sonradan `alice` kullanıcı adını alan kişiye *atfedilmez* —
+  kayıt yoluyla kimliğe bürünme politikayla değil, tasarımla imkânsızdır. Tam da o eski
+  adı kaydeden ve satırın kimliği doğrulanmamış kaldığını doğrulayan bir test var.
+- CLI'ın kimliği doğrulanmış gibi gösterilmesi yok. CLI'ı çalıştırabilen zaten veritabanı
+  dosyasına yazabilir; oradaki bir parola istemi tiyatro olurdu. Onun satırları da diğer
+  kimliği doğrulanmamış satırlar gibi etiketlenir.
 
 ### 🔗 Deterministik `subject_reference`
 
@@ -561,6 +746,49 @@ Tüm ayarlar ortam değişkenlerinden veya `.env` dosyasından okunur:
 | `CUSTOMSIQ_DATABASE_URL` | *(tanımsız)* | `postgresql://…` URL'i. **Tanımlıyken `CUSTOMSIQ_DATABASE_PATH`'e göre önceliklidir**; tanımsız veya boşsa eskisi gibi SQLite kullanılır. Başka bir şema açılışta reddedilir |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python log seviyesi (`DEBUG`, `INFO`, `WARNING`, …) |
 | `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Tarama eşleşmesi için asgari isim benzerlik skoru (0–1) |
+| `CUSTOMSIQ_PASSWORD_ITERATIONS` | `600000` | PBKDF2-HMAC-SHA256 iş faktörü (OWASP değeri; hash başına ≈160 ms) |
+| `CUSTOMSIQ_SESSION_TTL_HOURS` | `12` | Oturum çerezinin geçerlilik süresi |
+| `CUSTOMSIQ_SEED_DEMO_USERS` | `true` | Dört demo hesabını **boş** bir users tablosuna ekler. Gerçek dağıtımda `false` yapın |
+
+### 🔐 Oturum açma
+
+Okumak ve hesaplamak için hesap gerekmez. İnceleme kaydetmek için gerekir.
+
+İlk çalıştırmada her rolden bir tane olmak üzere dört demo hesabı oluşturulur; böylece
+izin modeli okunmakla kalmaz, denenebilir:
+
+| Kullanıcı adı | Parola | Rol | Yapabildikleri |
+|---|---|---|---|
+| `demo_viewer` | `viewer-demo-2026` | viewer | Tüm denetim kaydını okur; hiçbir şeyi onaylayamaz |
+| `demo_analyst` | `analyst-demo-2026` | analyst | Sınıflandırma ve vergi sonuçlarını onaylar |
+| `demo_officer` | `officer-demo-2026` | uyum yetkilisi | Ayrıca yaptırım taramalarını da onaylar |
+| `demo_admin` | `admin-demo-2026` | admin | Her şey, ayrıca `/auth/users` ve rol değişiklikleri |
+
+> **Bunlar kurgusal veri üzerinde herkese açık kimlik bilgileridir.** Buraya asla gerçek
+> bir parola girmeyin. Yalnızca `users` tablosu boşken oluşturulurlar; böylece gerçek
+> hesapları olan bir dağıtıma yeniden başlatma yoluyla verilemezler ve
+> `CUSTOMSIQ_SEED_DEMO_USERS=false` bunları tamamen kapatır.
+
+Kayıt olmak size `analyst` verir — [bunun neden bir demo tercihi olduğuna](#-kayıt-olan-analyst-olur--demo-tercihi-gerçek-işleyişin-modeli-değil) bakın.
+
+```bash
+# oturum açın (ya da kayıt olun), çerezi saklayın
+curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "demo_officer", "password": "officer-demo-2026"}'
+
+# onayı yetkilendiren şey çerezdir
+curl -b cookies.txt -X POST "http://localhost:8000/review" \
+  -H "Content-Type: application/json" \
+  -d '{"subject_type": "screening", "subject_reference": "</screen yanıtından>", "decision": "flagged"}'
+
+curl -b cookies.txt "http://localhost:8000/auth/me"
+curl -b cookies.txt -X POST "http://localhost:8000/auth/logout"
+```
+
+Tarayıcıda bu, **Oturum aç** panelidir; giriş yaptıktan sonra başlıkta kullanıcı adınız
+ve rolünüz görünür, inceleme denetimleri ise tam olarak rolünüzün onaylayabileceği
+sonuçlarda belirir. Arayüzün geri kalanı gibi her şey çevrilidir (EN/TR/DE).
 
 ### 🐳 Docker ile çalıştırma
 
@@ -805,13 +1033,19 @@ boşluk, vergisiz ithalat anlamına gelmez.
 | `subject_type` | `str` | *zorunlu* | `classification` \| `screening` \| `duty` | İncelenen sonucun türü |
 | `subject_reference` | `str` | *zorunlu* | boş olamaz | O sonucun `subject_reference` değeri — asla yeniden yazılmaz, API'nin döndürdüğü değer kullanılır |
 | `decision` | `str` | *zorunlu* | `approved` \| `rejected` \| `flagged` | İnceleyicinin kararı |
-| `reviewer_name` | `str` | *zorunlu* | boş olamaz | Serbest metin — kimlik doğrulama gelene kadar geçici |
 | `comment` | `str \| null` | `null` | — | Opsiyonel not |
+
+Artık `reviewer_name` alanı yok: inceleyici, oturum çerezinin söylediği kişidir. Alan
+yok sayılmak yerine **kaldırıldı**; böylece hiçbir istemci bir denetim satırındaki adı
+kendisinin belirlediğini sanamaz. Oturum açmış bir hesap gerekir — `classification` ve
+`duty` için `analyst`, `screening` için `compliance_officer`
+([izin matrisi](#️-izin-matrisi)); anonim çağrılar `401`, yetkisi yetmeyenler `403` alır.
 
 ```bash
 curl -X POST "http://localhost:8000/review" \
   -H "Content-Type: application/json" \
-  -d '{"subject_type": "duty", "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e", "decision": "approved", "reviewer_name": "alice", "comment": "confirmed correct"}'
+  -H "Cookie: customsiq_session=$TOKEN" \
+  -d '{"subject_type": "duty", "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e", "decision": "approved", "comment": "confirmed correct"}'
 ```
 
 ```json
@@ -822,7 +1056,8 @@ curl -X POST "http://localhost:8000/review" \
   "decision": "approved",
   "reviewer_name": "alice",
   "comment": "confirmed correct",
-  "reviewed_at": "2026-01-01T12:00:00+00:00"
+  "reviewed_at": "2026-01-01T12:00:00+00:00",
+  "authenticated": true
 }
 ```
 
@@ -993,7 +1228,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | `logging_config.py` | 🟢 %100 |
 | `main.py` | 🟢 %98 |
 | `pg_adapter.py` | 🟢 %96 |
-| **Toplam** | **🟢 %98,33** (0,85 sn'de 197 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+| `auth.py` | 🟢 %100 |
+| **Toplam** | **🟢 %98,63** (1,7 sn'de 301 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
 
 13 PostgreSQL parite testi bu sayıya dahil değildir: `CUSTOMSIQ_TEST_POSTGRES_URL` gerçek bir
 sunucuyu göstermedikçe atlanırlar (CI bunu tanımlar; yerel düz bir `pytest` için ne Postgres ne de
@@ -1182,13 +1418,15 @@ eşiğiyle ölçülüyor:
 | CN kodu sürümleme (SCD Type 2) | ✅ **Tamamlandı** | `hs_code_history` + `cn_code_versions`, `GET /codes/{code}/history` üzerinden sunulur |
 | `dashboard.py` | ✅ **Tamamlandı** | Faz 1 ve 2 üzerine salt-okunur raporlama, `GET /dashboard/stats` üzerinden |
 | `risk.py` | ✅ **Tamamlandı** | Sınıflandırma, tarama ve vergi üzerinden toplu sevkiyat risk skoru, `GET /assess-risk` üzerinden |
+| `auth.py` (RBAC) | ✅ **Tamamlandı** | Hesaplar, oturumlar ve dört rol; `reviewer_name` artık oturumdan gelir |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
 isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
 bileşenleri, tam CN içe aktarımı her sorgudaki yeniden kurulumu hissedilir hâle getirdiğinde
-sınıflandırıcı indeksinin önbelleğe alınması, `review.py`'nin serbest metin `reviewer_name`
-alanı yerine **kimlik doğrulanmış inceleyiciler + RBAC** — bu demonun gerçek hesap verebilirlik
-ihtiyacı doğduğunda atılacak doğal bir sonraki adım — API uç noktasını yansıtan bir CLI
+sınıflandırıcı indeksinin önbelleğe alınması, [RBAC tamamlandığına](#-bağımlılıksız-kimlik-doğrulama)
+göre yerel parola deposu yerine **harici bir kimlik sağlayıcıyla çoklu oturum açma** (SSO/SCIM),
+art arda başarısız girişlerde hesap bazlı kilitleme veya hız sınırlama (bugün tek fren 160 ms'lik
+KDF), API uç noktasını yansıtan bir CLI
 `history <code>` komutu, tam `cn_code_versions` günlüğünü sayfalayarak gezmek için ayrı bir
 `GET /cn-imports` uç noktası (`/dashboard/stats` artık daha önce dışa açılmamış olan
 `fetch_cn_import_runs` verisini sunuyor, ama yalnızca son birkaçını — liste tam olarak
@@ -1222,6 +1460,7 @@ CustomsIQ/
 │   │   ├── embargo_screener.py  # yaptırım isim taraması
 │   │   ├── tariff_calculator.py # vergi oranı seçimi + hesaplama
 │   │   ├── review.py            # insan onayı denetim izi (dört göz)
+│   │   ├── auth.py              # hesaplar, oturumlar, roller — yalnızca stdlib, yeni bağımlılık yok
 │   │   ├── dashboard.py         # Faz 1 ve 2 üzerine salt-okunur toplulaştırma
 │   │   ├── risk.py              # toplu sevkiyat risk skoru
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
@@ -1232,7 +1471,9 @@ CustomsIQ/
 │   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── scripts/import_cn_codes.py   # resmî CN dosyası → hs_codes, değişiklikleri sürümler (SCD Type 2)
-├── tests/                       # 197 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli, risk
+├── tests/                       # 301 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli, risk, kimlik/RBAC
+│   ├── conftest.py              #   test paketi için parola iş faktörünü düşürür
+│   ├── helpers.py               #   oturum açmış TestClient yardımcıları
 │                                #   + sunucu tanımlı değilse atlanan 13 Postgres parite testi
 │   └── fixtures/                # içe aktarıcı testleri için örnek CN dosyası
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage

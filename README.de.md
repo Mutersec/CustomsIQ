@@ -9,7 +9,7 @@ prüfen und den fälligen Zoll berechnen.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Testabdeckung](https://img.shields.io/badge/Testabdeckung-98%25-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-197%20bestanden-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-301%20bestanden-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/Linting-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/Stil-black-000000)
@@ -84,6 +84,7 @@ entscheidet.
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
 | 🌐 | **REST-API** | `GET /search` und `GET /screen` über FastAPI, mit erzeugter `/docs`-Oberfläche |
 | 🗄️ | **Speicherung ohne Einrichtungsaufwand** | SQLite aus der Standardbibliothek, vorbefüllt mit 20 Codes + 18 fiktiven Einträgen |
+| 🔐 | **RBAC** | Vier Rollen über echte Konten — Sanktionsfreigaben brauchen einen Compliance-Officer, und das Prüfprotokoll nennt die Sitzung, nicht ein Textfeld |
 | 🐘 | **Zwei Backends** | Dasselbe SQL läuft auch auf PostgreSQL — per Umgebungsvariable zuschaltbar, Standard bleibt SQLite |
 | ⚙️ | **Konfiguration über Umgebung** | `pydantic-settings` liest `.env` — keine fest codierten Pfade oder Schwellenwerte |
 | 🚨 | **Typisierte Fehler** | `InvalidQueryError`, `HSCodeNotFoundError` → saubere HTTP-`400`/`404`-Semantik |
@@ -206,9 +207,36 @@ CREATE TABLE review_decisions (
     subject_type       TEXT NOT NULL,   -- "classification" | "screening" | "duty"
     subject_reference  TEXT NOT NULL,   -- sha256(subject_type + normalisierte Eingabe)
     decision           TEXT NOT NULL,   -- "approved" | "rejected" | "flagged"
-    reviewer_name      TEXT NOT NULL,   -- Freitext — Platzhalter bis es authentifizierte Nutzer gibt
+    reviewer_name      TEXT NOT NULL,   -- der authentifizierte Benutzername (API) oder Freitext (CLI/vor RBAC)
     comment            TEXT,            -- optionale Notiz
     reviewed_at        TEXT NOT NULL    -- ISO-8601-Zeitstempel
+);
+
+-- Wer freigegeben hat, sofern das ein authentifiziertes Konto war. Eine
+-- Prüfzeile ohne Eintrag hier wurde ohne Authentifizierung geschrieben (CLI,
+-- oder bevor es Konten gab) und wird auch so ausgewiesen. Verknüpft über die
+-- Zeilen-ID, nie über den Namen: ein historisches "alice" kann damit niemand
+-- für sich reklamieren, indem er sich später so registriert. Eine eigene
+-- Tabelle statt einer Spalte an review_decisions, aus demselben Grund wie bei
+-- hs_code_history: CREATE TABLE IF NOT EXISTS ändert eine bestehende Datenbank nie.
+CREATE TABLE review_authorship (
+    review_id  INTEGER PRIMARY KEY,  -- die review_decisions-Zeile
+    user_id    INTEGER NOT NULL      -- der authentifizierte Urheber
+);
+
+CREATE TABLE users (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    username       TEXT NOT NULL UNIQUE,  -- beim Anlegen kleingeschrieben
+    password_hash  TEXT NOT NULL,         -- pbkdf2_sha256$<Iterationen>$<Salt>$<Hash>
+    role           TEXT NOT NULL,         -- viewer | analyst | compliance_officer | admin
+    created_at     TEXT NOT NULL
+);
+
+CREATE TABLE sessions (
+    token_hash  TEXT PRIMARY KEY,  -- SHA-256 des Tokens; das Token selbst wird nie gespeichert
+    user_id     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL      -- beim Lesen geprüft, daher wirken Abmeldung und Ablauf sofort
 );
 
 CREATE TABLE hs_code_history (
@@ -270,7 +298,7 @@ Punkte zutrifft:
 | **Validierung in `matching.py`** | Suche, Prüfung, CLI und API erben sie; ein neuer Aufrufer kann sie nicht versehentlich umgehen | — |
 | **Kein `EmbargoScreeningError`** | Die Eingabevalidierung der Prüfung ist identisch mit der der Suche, daher wird `InvalidQueryError` wiederverwendet statt eine Klasse zu duplizieren | Ergänzen, sobald die Prüfung einen wirklich eigenen Fehlerfall bekommt |
 | **`review_decisions` nutzt `INTEGER PRIMARY KEY AUTOINCREMENT`**, anders als die anderen drei Tabellen | Prüfdatensätze sind nicht von Natur aus eindeutig — dieselbe `subject_reference` kann im Lauf der Zeit mehrere Entscheidungen erhalten | — |
-| **`review_decisions` ist nur anhängend (append-only)** | Modelliert das Vier-Augen-/Freigabeprinzip, wie es in Compliance-Tools wie SAP GTS üblich ist: eine korrigierte Entscheidung ist eine neue Zeile, keine Bearbeitung, sodass der Verlauf nie verloren geht. `reviewer_name` ist in dieser Demo Freitext; ein Produktivsystem würde dies an authentifizierte Nutzer binden (siehe Roadmap) | Authentifizierte Nutzer + RBAC ergänzen |
+| **`review_decisions` ist nur anhängend (append-only)** | Modelliert das Vier-Augen-/Freigabeprinzip, wie es in Compliance-Tools wie SAP GTS üblich ist: eine korrigierte Entscheidung ist eine neue Zeile, keine Bearbeitung, sodass der Verlauf nie verloren geht. `reviewer_name` ist jetzt für alles über die API Eingereichte das authentifizierte Konto (siehe [🔐 Authentifizierung](#-authentifizierung-ohne-abhängigkeit)); CLI-Zeilen und Zeilen von vor RBAC behalten ihren Freitext und werden als nicht authentifiziert gekennzeichnet statt umgedeutet | Konten an einen externen Identity Provider (SSO/SCIM) binden statt an lokale Passwörter |
 | **KN-Code-Historie liegt in einer separaten `hs_code_history`-Tabelle**, nicht in `valid_from`/`valid_to`-Spalten auf `hs_codes` selbst | `hs_codes` behält sein bestehendes `code TEXT PRIMARY KEY` und seine beiden Lesefunktionen (`fetch_all`, `get_by_code`) bleiben byte-für-byte unverändert — nichts zu filtern, nichts zu vergessen. Es ist zudem die einzige migrationssichere Option: Dieses Projekt hat keine Schema-Migrationen, und `CREATE TABLE IF NOT EXISTS` ändert nie eine bestehende Tabelle, also würden Spalten auf `hs_codes` in keiner bestehenden `customsiq.db`-Datei je erscheinen | Bei einem Produktivbetrieb, der von Tag eins volle Historientiefe braucht, eine einmalige Eröffnungszeile pro bestehendem Code nachträglich befüllen |
 
 ### 🕘 Versionierte KN-Codes (SCD Type 2)
@@ -363,6 +391,30 @@ Freitextbeschreibung: Eine flache REPL-Zeile kann nicht eindeutig zwei separate 
 `screen <name>`, die jeweils eines enthalten können. API und Frontend (strukturierte
 Formularfelder) unterstützen beides.
 
+### ☁️ Was RBAC auf Render braucht: nichts
+
+**Damit die Anmeldung in der Live-Demo funktioniert, ist keine neue Umgebungsvariable
+nötig, und an `requirements.txt` hat sich nichts geändert** — Renders Build ist also
+identisch mit dem vor dieser Phase, und im Dashboard ist nichts zu tun. Das folgt direkt
+aus dem Sitzungsentwurf: undurchsichtige, in der Datenbank abgelegte Tokens brauchen
+keinen Signaturschlüssel, es gibt also keinen `SECRET_KEY` zum Setzen, Rotieren oder
+Verlieren. (Ein JWT oder Starlettes Middleware mit signierten Cookies hätte genau so eine
+Variable verlangt, bevor die Anmeldung live überhaupt funktioniert hätte.)
+
+Zwei ehrliche Einschränkungen, beide Folge des ohnehin dokumentierten kostenlosen Tarifs:
+
+- **Konten sind flüchtig.** Das Dateisystem wird zurückgesetzt, Registrierungen und
+  Rollenwechsel verschwinden beim Neustart, die Demo-Konten werden neu angelegt — genau
+  das Verhalten, das die übrigen eingesäten Daten schon haben. Verwenden Sie hier kein
+  echtes Passwort.
+- **`Secure` am Session-Cookie ist abgeleitet, nicht fest verdrahtet**, nämlich aus
+  `X-Forwarded-Proto` (Render terminiert TLS an einem Proxy, die App selbst sieht reines
+  HTTP). Fest verdrahtet hätte es `http://localhost` zerstört; ignoriert hätte es das
+  Cookie im Klartext verschickt.
+
+Wie nach Phase 5 und 6 lohnt genau eine menschliche Kontrolle: dass Runtime und
+Build-Befehl des Dienstes unverändert sind. Nichts hier sollte sie berührt haben.
+
 ### 🐳 Docker für die lokale Entwicklung, nicht für Render (noch nicht)
 
 Ein `Dockerfile` zu einem Repo hinzuzufügen, dessen Render-Service nie mit einem konfiguriert
@@ -386,6 +438,31 @@ die einen einmaligen menschlichen Blick wert ist: das Render-Dashboard für dies
 und bestätigen, dass Language/Runtime noch auf der heutigen nativen Einstellung steht, nicht auf
 "Docker" — angesichts der obigen Begründung eine kostenlose Bestätigung, kein erwartetes
 Problem, da ich dieses Dashboard nicht selbst einsehen kann, um es direkt zu verifizieren.
+
+### 🧵 Eine geteilte SQLite-Verbindung, jetzt wirklich threadsicher
+
+Beim Bau dieser Phase gefunden, und festhaltenswert, weil das Symptom alarmierend war und
+die Ursache lange vor RBAC schlummerte: die App hält **eine** SQLite-Verbindung pro
+Prozess, und FastAPI führt synchrone Routen in einem Threadpool aus — mehrere Requests
+fassen dieses Objekt also tatsächlich gleichzeitig an. `check_same_thread=False` bringt
+nur Pythons Wächter zum Schweigen, macht das Teilen aber nicht sicher. Das SQLite dieses
+Rechners ist mit `SQLITE_THREADSAFE=2` übersetzt (Multi-Thread: eine Verbindung pro
+Thread), und Python meldet `sqlite3.threadsafety == 1` — Threads dürfen das Modul teilen,
+eine Verbindung aber **nicht**.
+
+Vor dieser Phase ging das gut, weil gleichzeitige Datenbankarbeit selten war. RBAC legte
+auf *jeden* Request eine Sitzungsabfrage, und aus dem latenten Rennen wurde der Normalfall:
+erst ein verstümmelter Lesevorgang (`Could not decode to UTF-8 column 'username'`), dann
+ein Segfault — ein `SIGSEGV`, der den Server mitten in der Anmeldung mitnahm.
+
+Die Lösung ist ein per Lock geschützter Wrapper (`database._SerializedConnection`), in
+derselben Form, die `pg_adapter.PgConnection` für PostgreSQL bereits nutzt: jedes Statement
+läuft unter einem Lock, und seine Zeilen werden **geholt, bevor das Lock freigegeben wird** —
+einen lebenden Cursor zurückzugeben hätte den unsicheren Lesevorgang nach draußen verlagert
+und nichts behoben. Ein Regressionstest schickt 24 parallele angemeldete Request-Runden
+durch einen Threadpool; ohne den Wrapper reproduziert er den Segfault, die Absicherung ist
+also verifiziert und nicht bloß angenommen. Der PostgreSQL-Pfad bleibt unberührt (psycopg
+regelt das selbst).
 
 ### 🐘 Zwei Backends: SQLite als Standard, PostgreSQL optional
 
@@ -441,6 +518,120 @@ Kopie gepflegt; die beiden Backends können also nicht auseinanderlaufen. Die si
 Entscheidungsmodule blieben unverändert, bis hin zu ihren `sqlite3.Connection`-Annotationen: Keines
 führt SQL aus, sie reichen `conn` nur an `database.py` zurück — deshalb gibt der PostgreSQL-Zweig
 den Wrapper per `cast` zurück.
+
+### 🔐 Authentifizierung ohne Abhängigkeit
+
+`reviewer_name` war bisher das, was der Client hineingeschrieben hat. Fünf Stellen in
+diesem Repo sagten das und versprachen diese Phase; jetzt ist es das angemeldete Konto —
+und das Ganze kommt mit **null zusätzlichen Paketen**: `requirements.txt` ist unverändert,
+der Build des Live-Deployments also Byte für Byte derselbe.
+
+**Sitzungen statt JWTs.** Eine Sitzung ist ein undurchsichtiges
+`secrets.token_urlsafe(32)` in einem `HttpOnly`-Cookie; gespeichert wird nur dessen
+SHA-256, ein Datenbankleck liefert also keine nutzbare Sitzung. Schlichtes SHA-256 ist
+*hier* richtig und sonst nirgends in diesem Modul: das Token besteht aus 256 Bit
+CSPRNG-Ausgabe, und gegen ein nicht erratbares Geheimnis bringt eine langsame KDF
+nichts. Der Grund, das einem JWT vorzuziehen, ist Widerrufbarkeit: Abmeldung und
+Rollenwechsel greifen beim nächsten Request, während ein selbsttragendes Token bis zum
+Ablauf gültig bleibt, sofern man keine Sperrliste anbaut — und eine Sperrliste ist genau
+diese Sitzungstabelle mit Hut. Starlettes `SessionMiddleware` kam nicht infrage: sie
+basiert auf signierten Cookies und braucht `itsdangerous` (geprüft: nicht installiert) —
+eine neue Abhängigkeit für ein schwächeres Modell. CSRF deckt `SameSite=Lax` ab; `Secure`
+wird aus `X-Forwarded-Proto` abgeleitet (Render terminiert TLS an einem Proxy), damit
+`http://localhost` weiter funktioniert.
+
+**Passwörter: `hashlib.pbkdf2_hmac` mit 600.000 Iterationen.** Dieselbe Prüfung wie bei
+scikit-learn und openpyxl — und ungewöhnlicherweise durch eine Messung entschieden, nicht
+durch Geschmack:
+
+| Option | Urteil |
+|---|---|
+| `argon2-cffi` (argon2id) | Der beste Algorithmus, speicherhart, OWASPs erste Wahl. Abgelehnt: eine C-Extension-Abhängigkeit auf dem **Produktionspfad**, für Passwörter, die fiktive Daten schützen. |
+| `bcrypt` / `passlib` | Ebenfalls C-Extension; passlib 1.7.4 (2020) ist faktisch unbetreut und bricht mit bcrypt 4.x, und bcrypt schneidet bei 72 Bytes stillschweigend ab. |
+| `hashlib.scrypt` | Die speicherharte stdlib-Option und meine erste Wahl — **existiert aber auf dem Interpreter dieses Projekts nicht.** Gemessen: das venv-Python 3.9.6 ist gegen LibreSSL 2.8.3 gelinkt, `hasattr(hashlib, "scrypt")` ist `False`. In CI und Docker liefe es, auf dem Rechner der Entwicklerin nicht. Ausgeschieden wegen Portabilität, nicht wegen der Qualität. |
+| **`hashlib.pbkdf2_hmac` ✅** | Immer vorhanden, null Abhängigkeiten, OWASPs empfohlene 600.000 Iterationen für SHA-256. Hier gemessen: 600k ≈ **160 ms**, 210k ≈ 57 ms. |
+
+Der ehrliche Preis: **PBKDF2 ist nicht speicherhart**, ein Angreifer mit GPUs erzielt
+dagegen also ein besseres Kostenverhältnis als gegen argon2id. Billig zu revidieren macht
+das die Speicherform — `pbkdf2_sha256$600000$<Salt>$<Hash>` im Django-Stil: Algorithmus
+und Arbeitsfaktor stehen in jeder Zeile und lassen sich bei der nächsten Anmeldung ohne
+Migration anheben. Auch für einen unbekannten Benutzernamen läuft die KDF gegen einen
+Dummy-Hash, damit sich Konten nicht über Zeitmessung aufzählen lassen; "falsches
+Passwort" und "kein solcher Nutzer" liefern denselben Text.
+
+`Settings.password_iterations` hält die Suite schnell (`tests/conftest.py` senkt den Wert,
+so wie Django es für seine eigenen Testeinstellungen dokumentiert), während ein Test
+festhält, dass der Produktionswert wirklich 600.000 ist, und einmal mit vollen Kosten hasht.
+
+### 🛡️ Berechtigungsmatrix
+
+Vier Rollen in der Ordnung `viewer < analyst < compliance_officer < admin`. Die Menge
+verdient sich ihren Platz, weil eine Unterscheidung echt und nicht dekorativ ist:
+**die Prüfung gegen Sanktionslisten ist die regulierte Freigabe** und braucht deshalb
+einen Compliance-Officer, während Einreihung und Zoll Analystenarbeit sind — was sich
+genau auf die drei bestehenden `subject_type`-Werte abbildet, statt neue Begriffe zu
+erfinden.
+
+Jeder rechnende Endpunkt bleibt **öffentlich**. Genau darum geht es in der Demo, und
+nichts davon braucht eine Identität. Authentifizierung schützt Schreibzugriffe, den
+Gesamtblick darauf, wer was geprüft hat, und die Kontenverwaltung.
+
+| Endpunkt | anonym | viewer | analyst | Compliance-Officer | admin |
+|---|:--:|:--:|:--:|:--:|:--:|
+| `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /dashboard/stats` — Kennzahlen | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /dashboard/stats` — `recent_reviews` (Namen + Notizen) | ❌ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` (Spur eines Ergebnisses) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history` (vollständiges Prüfprotokoll) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
+| `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
+| `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
+| `POST /auth/register` · `/auth/login` · `/auth/logout` · `GET /auth/me` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /auth/users` · `POST /auth/users/{username}/role` | ❌ 401 | ❌ 403 | ❌ 403 | ❌ 403 | ✅ |
+
+`401` heißt "nicht angemeldet", `403` heißt "angemeldet, falsche Rolle" — ein Client muss
+das auseinanderhalten können, um zwischen Login-Formular und Erklärung zu entscheiden,
+deshalb sind die beiden nie austauschbar. Anonyme Aufrufe erhalten `/dashboard/stats` mit
+`recent_reviews: []` und `recent_reviews_restricted: true`; die Kennzahlen bleiben
+öffentlich. Die Berechtigungen stehen in genau einem Dict in `auth.py`, und eine
+unbekannte Rolle oder Aktion verweigert immer — ein Tippfehler kann nichts gewähren.
+`dashboard.py` ist daran unbeteiligt: die Schwärzung passiert im Endpunkt.
+
+### 👤 Selbstregistrierung vergibt `analyst` — eine Demo-Entscheidung, kein Abbild echter Rollenvergabe
+
+Wer sich registriert, erhält sofort die Rolle `analyst`, damit Besucherinnen eine
+Einreihung freigeben *und* an einer Sanktionsfreigabe scheitern können, ohne dass jemand
+ein Konto einrichtet. **So läuft RBAC-Onboarding in einem echten Zollcompliance-System
+nicht ab, und das soll es hier auch nicht.** Dort werden Rollen *vergeben*, nicht gewählt:
+eine Administratorin oder ein IdP-/HR-Gruppen-Mapping weist sie zu, nachdem die Person
+verifiziert wurde; Selbstregistrierung gibt es entweder gar nicht, oder sie endet in einem
+wartenden Zustand ohne Rechte. Einem Registrierungsformular die Macht zu geben,
+Zolleinreihungen freizugeben, wäre in jedem echten Audit ein Befund.
+
+Die produktionsnahe Variante ist eine Zeile: `auth.SELF_REGISTRATION_ROLE` auf `VIEWER`
+setzen — neue Konten dürfen dann nur das Prüfprotokoll lesen, bis eine Administratorin sie
+über `POST /auth/users/{username}/role` hochstuft, was es bereits gibt und bereits
+admin-only ist. Dieselbe Begründung gilt dafür, dass die Demo-Konten unten ihre Passwörter
+veröffentlichen: für eine Portfolio-Demo auf fiktiven Daten angemessen, anderswo nicht
+vertretbar.
+
+### 🕰️ Historische Freitext-Prüfer bleiben unangetastet
+
+Zeilen, die vor der Einführung von Konten geschrieben wurden — und Zeilen, die die CLI
+weiterhin schreibt — tragen einen Namen, für den niemand geradestehen kann. Sie bleiben
+exakt so und werden gekennzeichnet: die API meldet `"authenticated": false`, die
+Oberfläche zeigt neben dem Namen ein neutrales **Altbestand**-Label.
+
+Drei Dinge passieren bewusst **nicht**:
+
+- Kein Nachtragen, kein Raten, kein Löschen.
+- Kein Abgleich über den Namen. `review_authorship` hängt an der **Zeilen-ID**; eine alte
+  Zeile mit `alice` wird also *nicht* jemandem zugeordnet, der sich später als `alice`
+  registriert — Identitätsübernahme per Registrierung ist konstruktiv ausgeschlossen, nicht
+  per Richtlinie. Ein Test registriert genau den Altnamen und prüft, dass die Zeile nicht
+  authentifiziert bleibt.
+- Die CLI wird nicht als authentifiziert ausgegeben. Wer die CLI ausführen kann, kann
+  ohnehin in die Datenbankdatei schreiben; eine Passwortabfrage dort wäre Theater. Ihre
+  Zeilen sind wie alle anderen nicht authentifizierten gekennzeichnet.
 
 ### 🔗 Deterministische `subject_reference`
 
@@ -573,6 +764,49 @@ Alle Einstellungen stammen aus Umgebungsvariablen oder aus `.env`:
 | `CUSTOMSIQ_DATABASE_URL` | *(nicht gesetzt)* | `postgresql://…`-URL. **Hat Vorrang vor `CUSTOMSIQ_DATABASE_PATH`, wenn gesetzt**; nicht gesetzt oder leer ⇒ SQLite wie bisher. Jedes andere Schema wird beim Start abgelehnt |
 | `CUSTOMSIQ_LOG_LEVEL` | `INFO` | Python-Loglevel (`DEBUG`, `INFO`, `WARNING`, …) |
 | `CUSTOMSIQ_SCREENING_THRESHOLD` | `0.75` | Mindest-Namensähnlichkeit (0–1) für einen Prüftreffer |
+| `CUSTOMSIQ_PASSWORD_ITERATIONS` | `600000` | PBKDF2-HMAC-SHA256-Arbeitsfaktor (OWASP-Wert; ≈160 ms pro Hash) |
+| `CUSTOMSIQ_SESSION_TTL_HOURS` | `12` | Gültigkeitsdauer des Session-Cookies |
+| `CUSTOMSIQ_SEED_DEMO_USERS` | `true` | Legt die vier Demo-Konten in einer **leeren** users-Tabelle an. Für echte Deployments auf `false` setzen |
+
+### 🔐 Anmelden
+
+Lesen und Rechnen braucht kein Konto. Eine Prüfung zu erfassen schon.
+
+Beim ersten Start werden vier Demo-Konten angelegt — eines je Rolle, damit sich das
+Berechtigungsmodell ausprobieren und nicht nur nachlesen lässt:
+
+| Benutzername | Passwort | Rolle | Darf |
+|---|---|---|---|
+| `demo_viewer` | `viewer-demo-2026` | viewer | Das vollständige Prüfprotokoll lesen; nichts freigeben |
+| `demo_analyst` | `analyst-demo-2026` | analyst | Einreihungs- und Zollergebnisse freigeben |
+| `demo_officer` | `officer-demo-2026` | Compliance-Officer | Zusätzlich Sanktionsprüfungen freigeben |
+| `demo_admin` | `admin-demo-2026` | admin | Alles, dazu `/auth/users` und Rollenwechsel |
+
+> **Das sind öffentliche Zugangsdaten auf fiktiven Daten.** Verwenden Sie hier nie ein
+> echtes Passwort. Sie werden nur angelegt, wenn die `users`-Tabelle leer ist — ein
+> Deployment mit echten Konten kann sie also durch einen Neustart nicht untergeschoben
+> bekommen — und `CUSTOMSIQ_SEED_DEMO_USERS=false` schaltet sie ganz ab.
+
+Eine Registrierung vergibt `analyst` — siehe [warum das eine Demo-Entscheidung ist](#-selbstregistrierung-vergibt-analyst--eine-demo-entscheidung-kein-abbild-echter-rollenvergabe).
+
+```bash
+# anmelden (oder registrieren) und das Cookie behalten
+curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "demo_officer", "password": "officer-demo-2026"}'
+
+# das Cookie ist es, was die Freigabe autorisiert
+curl -b cookies.txt -X POST "http://localhost:8000/review" \
+  -H "Content-Type: application/json" \
+  -d '{"subject_type": "screening", "subject_reference": "<aus der /screen-Antwort>", "decision": "flagged"}'
+
+curl -b cookies.txt "http://localhost:8000/auth/me"
+curl -b cookies.txt -X POST "http://localhost:8000/auth/logout"
+```
+
+Im Browser ist das die Karte **Anmelden**; nach der Anmeldung zeigt der Kopfbereich
+Benutzernamen und Rolle, und die Prüf-Schaltflächen erscheinen genau an den Ergebnissen,
+die Ihre Rolle freigeben darf. Alles ist übersetzt (EN/TR/DE) wie der Rest der Oberfläche.
 
 ### 🐳 Mit Docker ausführen
 
@@ -818,13 +1052,20 @@ zollfreie Einfuhr.
 | `subject_type` | `str` | *erforderlich* | `classification` \| `screening` \| `duty` | Art des geprüften Ergebnisses |
 | `subject_reference` | `str` | *erforderlich* | nicht leer | Die `subject_reference` dieses Ergebnisses — nie neu eingegeben, immer der von der API gelieferte Wert |
 | `decision` | `str` | *erforderlich* | `approved` \| `rejected` \| `flagged` | Das Urteil des Prüfers |
-| `reviewer_name` | `str` | *erforderlich* | nicht leer | Freitext — Platzhalter bis es authentifizierte Nutzer gibt |
 | `comment` | `str \| null` | `null` | — | Optionale Notiz |
+
+Ein Feld `reviewer_name` gibt es nicht mehr: Prüfer ist, wer laut Session-Cookie
+angemeldet ist. Es wurde **entfernt** statt entgegengenommen-und-ignoriert, damit kein
+Client glauben kann, er habe den Namen in einer Prüfzeile gesetzt. Erfordert ein
+angemeldetes Konto — `analyst` für `classification` und `duty`, `compliance_officer`
+für `screening` (siehe [Berechtigungsmatrix](#️-berechtigungsmatrix)); anonyme Aufrufe
+erhalten `401`, zu niedrig eingestufte `403`.
 
 ```bash
 curl -X POST "http://localhost:8000/review" \
   -H "Content-Type: application/json" \
-  -d '{"subject_type": "duty", "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e", "decision": "approved", "reviewer_name": "alice", "comment": "confirmed correct"}'
+  -H "Cookie: customsiq_session=$TOKEN" \
+  -d '{"subject_type": "duty", "subject_reference": "8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e", "decision": "approved", "comment": "confirmed correct"}'
 ```
 
 ```json
@@ -835,7 +1076,8 @@ curl -X POST "http://localhost:8000/review" \
   "decision": "approved",
   "reviewer_name": "alice",
   "comment": "confirmed correct",
-  "reviewed_at": "2026-01-01T12:00:00+00:00"
+  "reviewed_at": "2026-01-01T12:00:00+00:00",
+  "authenticated": true
 }
 ```
 
@@ -1009,7 +1251,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | `logging_config.py` | 🟢 100 % |
 | `main.py` | 🟢 98 % |
 | `pg_adapter.py` | 🟢 96 % |
-| **Gesamt** | **🟢 98,33 %** (197 Tests in 0,85 s, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
+| `auth.py` | 🟢 100 % |
+| **Gesamt** | **🟢 98,63 %** (301 Tests in 1,7 s, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
 
 Die 13 PostgreSQL-Paritätstests zählen dort *nicht* mit: Sie werden übersprungen, solange
 `CUSTOMSIQ_TEST_POSTGRES_URL` nicht auf einen echten Server zeigt (die CI setzt die Variable; ein
@@ -1199,13 +1442,16 @@ von der Abdeckungsschwelle gemessen:
 | KN-Code-Versionierung (SCD Type 2) | ✅ **Ausgeliefert** | `hs_code_history` + `cn_code_versions`, bereitgestellt über `GET /codes/{code}/history` |
 | `dashboard.py` | ✅ **Ausgeliefert** | Schreibgeschützte Berichtsschicht über Phase 1 & 2, via `GET /dashboard/stats` |
 | `risk.py` | ✅ **Ausgeliefert** | Zusammengesetzter Sendungs-Risiko-Score über Einreihung, Prüfung und Zoll, via `GET /assess-risk` |
+| `auth.py` (RBAC) | ✅ **Ausgeliefert** | Konten, Sitzungen und vier Rollen; `reviewer_name` kommt jetzt aus der Sitzung |
 
 Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
 Alias- und Transliterationsbehandlung für Entitätsnamen, Kontingent- und Antidumping-Komponenten
 auf der Zollberechnung, das Zwischenspeichern des Klassifikator-Index, sobald ein vollständiger
-KN-Import den Neuaufbau pro Aufruf spürbar macht, **authentifizierte Prüfer mit RBAC** anstelle
-des Freitextfelds `reviewer_name` in `review.py` — der naheliegende nächste Schritt, sobald diese
-Demo echte Nachvollziehbarkeit pro Freigabe braucht — ein CLI-Befehl `history <code>`, der den
+KN-Import den Neuaufbau pro Aufruf spürbar macht, **Single Sign-on über einen externen
+Identity Provider** (SSO/SCIM) anstelle des lokalen Passwortspeichers, nachdem
+[RBAC ausgeliefert ist](#-authentifizierung-ohne-abhängigkeit), kontobezogene Sperren oder
+Rate Limits nach wiederholt fehlgeschlagenen Anmeldungen (heute bremst nur die 160-ms-KDF),
+ein CLI-Befehl `history <code>`, der den
 API-Endpunkt spiegelt, ein eigener, paginierter `GET /cn-imports`-Endpunkt zum vollständigen
 Durchsuchen des `cn_code_versions`-Protokolls (`/dashboard/stats` stellt die zuvor nicht
 exponierten `fetch_cn_import_runs`-Daten jetzt bereit, aber nur die jüngsten — für die vollständige
@@ -1241,6 +1487,7 @@ CustomsIQ/
 │   │   ├── embargo_screener.py  # Namensprüfung gegen Sanktionslisten
 │   │   ├── tariff_calculator.py # Zollsatzwahl + Berechnung
 │   │   ├── review.py            # Prüfprotokoll (Vier-Augen-Prinzip)
+│   │   ├── auth.py              # Konten, Sitzungen, Rollen — nur stdlib, keine neue Abhängigkeit
 │   │   ├── dashboard.py         # schreibgeschützte Aggregation über Phase 1 & 2
 │   │   ├── risk.py              # zusammengesetzter Sendungs-Risiko-Score
 │   │   ├── exceptions.py        # typisierte Fehlerhierarchie
@@ -1251,7 +1498,9 @@ CustomsIQ/
 │   │   └── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
 ├── scripts/import_cn_codes.py   # offizielle KN-Datei → hs_codes, versioniert Änderungen (SCD Type 2)
-├── tests/                       # 197 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import, Dashboard, Risiko
+├── tests/                       # 301 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import, Dashboard, Risiko, Auth/RBAC
+│   ├── conftest.py              #   senkt den Passwort-Arbeitsfaktor für die Suite
+│   ├── helpers.py               #   angemeldete TestClient-Helfer
 │                                #   + 13 Postgres-Paritätstests, ohne konfigurierten Server übersprungen
 │   └── fixtures/                # Beispiel-KN-Export für die Importer-Tests
 ├── pyproject.toml               # ruff · black · mypy · pytest · coverage

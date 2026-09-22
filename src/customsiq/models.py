@@ -45,7 +45,12 @@ class ReviewDecision:
         subject_type: "classification" | "screening" | "duty".
         subject_reference: Deterministic hash identifying the reviewed input.
         decision: "approved" | "rejected" | "flagged".
-        reviewer_name: Free text — stand-in until authenticated users exist.
+        reviewer_name: Who signed off. For API submissions this is the
+            authenticated user's username, set by the server, never by the
+            client. CLI submissions and rows written before authenticated
+            users existed hold free text; `review_authorship` is what says
+            which of the two a row is, and it is keyed by row id so a free-text
+            name can never be claimed by someone registering it later.
         comment: Optional free-text note.
         reviewed_at: ISO 8601 timestamp the decision was recorded.
     """
@@ -121,3 +126,26 @@ class TariffRate:
     rate_percent: float
     trade_agreement: Optional[str]
     valid_from: str
+
+
+@dataclass(frozen=True)
+class User:
+    """An account that can sign in and sign off on decisions.
+
+    Attributes:
+        id: Autoincrement row id.
+        username: Unique login name; also what lands in
+            `review_decisions.reviewer_name` for that user's sign-offs.
+        role: "viewer" | "analyst" | "compliance_officer" | "admin".
+        created_at: ISO 8601 timestamp the account was created.
+
+    The password hash is deliberately absent: this record is handed to route
+    handlers and serialized into responses, so the hash has no business
+    travelling with it. `database.get_password_hash` fetches it on its own for
+    the one function that verifies a login.
+    """
+
+    id: int
+    username: str
+    role: str
+    created_at: str
