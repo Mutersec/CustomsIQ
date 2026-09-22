@@ -82,6 +82,7 @@ not a black box that decides alone.
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
 | 🌐 | **REST API** | `GET /search` and `GET /screen` on FastAPI, with auto-generated `/docs` |
 | 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 codes + 18 mock entities |
+| 🧩 | **SAP GTS terminology view** | Renders results in SAP GTS vocabulary and a BAPIRET2-shaped structure — a labelled simulation, not a system connection |
 | 📄 | **Invoice extraction** | Upload a PDF invoice and the classification, duty and risk forms arrive pre-filled — text-layer PDFs, pure Python, nothing stored |
 | 🔐 | **RBAC** | Four roles over real accounts — sanctions sign-off needs a compliance officer, and the audit trail names the session, not a text box |
 | 🐘 | **Dual backend** | The same SQL runs on PostgreSQL — opt in with one env var, SQLite stays the default |
@@ -342,7 +343,7 @@ separate counts) — an honest reading of what was actually recorded, not a fabr
 
 ### ⚠️ Composite risk scoring
 
-Real risk-based customs controls (SAP GTS "Legal Control" included) don't score
+Real risk-based customs controls (SAP GTS Compliance Management included) don't score
 classification, screening and duty independently — a shipment's overall risk is a function of
 all three together. `risk.py` adds `assess_shipment()`, which calls `classify()`,
 `screen_entity()` and `calculate_duty()` — their existing public signatures, nothing new — and
@@ -496,6 +497,89 @@ today's SQLite behaviour — and the parity tests deliberately assert no tie ord
 copy, so the two backends cannot drift apart. The seven decision modules are unchanged down to
 their `sqlite3.Connection` annotations: none of them runs SQL, they only hand `conn` back to
 `database.py`, so the Postgres branch returns the wrapper via `cast`.
+
+### 🧩 SAP GTS terminology view — a simulation, not an integration
+
+> ⚠️ **This is a terminology and data-shape simulation, not an SAP integration.**
+> CustomsIQ is not connected to any SAP system and never has been. This layer reshapes
+> CustomsIQ's own results into structures whose field names and vocabulary mirror
+> SAP GTS — the documented `BAPIRET2` return structure and GTS's own functional-area
+> and document-status terminology — so that the domain concepts are recognisable at a
+> glance. **The output is not a valid IDoc or BAPI payload and no real SAP system would
+> accept it.** Real integration would require licensed SAP GTS plus an SAP BTP ABAP
+> Environment (or an on-premise SAP system reachable over RFC/OData) — none of which
+> this project has, uses, or claims. It exists to demonstrate familiarity with SAP GTS
+> concepts, nothing more.
+
+The same sentence travels *inside every payload* (`"SIMULATION": true` and a
+`DISCLAIMER` string in the `HEADER`) and sits at the top of the UI panel, so the
+output stays self-labelling if it is ever copied somewhere this README isn't.
+
+**What maps to what.** SAP GTS is organised into three functional areas: **Compliance
+Management** (SPL screening, embargo checks, Legal Control), **Customs Management**
+(declarations, classification, duty determination) and **Risk Management** (Preference
+Processing, letters of credit, restitution).
+
+| CustomsIQ | Existing function | SAP GTS equivalent | Area |
+|---|---|---|---|
+| Denied-party screening | `embargo_screener.screen_entity()` | **Sanctioned Party List (SPL) Screening** — compares partner data against uploaded list entries and blocks the document on a hit | Compliance Mgmt |
+| Human review / audit trail | `review.submit_review()` | The **block / release decision and its check log** — GTS blocks a document when a check fails, and it stays blocked until someone releases it | Compliance Mgmt |
+| Classification | `cn_classifier.classify()` | **Classification** — determining a commodity code for a product | Customs Mgmt |
+| Duty calculation | `tariff_calculator.calculate_duty()` | **Duty determination**; where a preferential rate applies, the *result* of **Preference Processing** | Customs Mgmt / Risk Mgmt |
+| Composite risk | `risk.assess_shipment()` | No single GTS object — the outcome across all three areas, which is why it renders as a multi-area document |
+
+Two details worth being precise about, because they are the kind of thing an SAP
+reviewer checks:
+
+- **Preference Processing is GTS *Risk* Management, not Customs Management.** Duty
+  determination belongs to Customs Management; preferential-origin determination is a
+  Risk Management function. `calculate_duty` touches both, so its rendered message is
+  tagged to whichever applied.
+- **`review_decisions` is not Legal Control.** Legal Control specifically means
+  export-licence determination for dual-use goods: GTS blocks an item when no licence
+  can be assigned, and only assigning one lifts the block. CustomsIQ has **no licence
+  master data, no dual-use classification and no embargo-by-country check**, so
+  claiming that mapping would be false precision. What `review_decisions` genuinely
+  models is the block/release workflow and check log that sits on top of *any* failed
+  compliance check.
+
+**The output shape.** `BAPIRET2` is SAP's standard return structure, and it is
+reproduced field-for-field, including the real lengths — values are truncated to them
+rather than emitted at arbitrary width:
+
+| Field | Type | Len | Used for |
+|---|---|---|---|
+| `TYPE` | CHAR | 1 | `S` success · `E` error · `W` warning · `I` info · `A` abort |
+| `ID` | CHAR | 20 | Message class `ZCUSTOMSIQ_GTS`. The `Z` prefix is SAP's customer namespace — the conventional way of saying "not a standard SAP object" |
+| `NUMBER` | NUMC | 3 | Stable number per outcome (`001` SPL hit, `020` preferential rate applied, …) |
+| `MESSAGE` | CHAR | 220 | The rendered text |
+| `LOG_NO` | CHAR | 20 | The CustomsIQ `subject_reference`, truncated to the real width |
+| `LOG_MSG_NO` | NUMC | 6 | Serial within the log |
+| `MESSAGE_V1`–`V4` | CHAR | 50 | The substituted variables, the way SAP composes messages |
+| `PARAMETER` | CHAR | 32 | Which GTS service produced it |
+| `ROW` | INT4 | — | Position in the RETURN table |
+| `FIELD` | CHAR | 30 | The CustomsIQ factor behind it |
+| `SYSTEM` | CHAR | 10 | `CUSTOMSIQ` — a logical-system name, not a real SAP SID |
+
+What is real: those field names, types and lengths, and the GTS area names. What is
+CustomsIQ's own construction: the message class, the message numbers, the header
+envelope and the `BLOCKED` / `PENDING` / `RELEASED` / `NOT_BLOCKED` status vocabulary.
+
+**Worked example** — the same pinned assessment the risk section and the CLI examples
+already use (`assess_shipment(conn, "NO", "Northwind Maritime", 1000, description="cotton t-shirt")`
+→ `0.6609`, high):
+
+| ROW | TYPE | NUMBER | PARAMETER | MESSAGE |
+|---|---|---|---|---|
+| 1 | `E` | `001` | `SPL_SCREENING` | Sanctioned party list hit for 'Northwind Maritime' — real sanctions match: Northwind Maritime Holdings Ltd (1.00) |
+| 2 | `I` | `010` | `CLASSIFICATION` | Commodity code 6109100000 determined — top match 6109100000 at 84.65% confidence |
+| 3 | `S` | `020` | `PREFERENCE_DUTY` | Preferential duty rate applied — preferential rate 0.0% |
+| 4 | `E` | `030` | `RISK_ASSESSMENT` | Composite risk HIGH (0.6609) — document blocked pending review |
+
+`DOCUMENT_STATUS: "BLOCKED"`. Every number there comes from the existing assessment;
+`sap_gts_bridge.py` performs no arithmetic of its own — it takes already-computed
+result objects, never a database connection, and calls none of the decision
+functions. Tests assert exactly that, on the function signatures and the source.
 
 ### 📄 Invoice extraction: what it reads, and what it can't
 
@@ -1101,6 +1185,8 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/dashboard/stats` | Aggregate stats: reference data, review activity, CN import runs |
 | `GET` | `/assess-risk` | Composite risk score combining classification, screening and duty |
 | `POST` | `/extract-invoice` | Read an uploaded invoice PDF and return the fields found in it (sign-in required) |
+| `GET` | `/sap-gts/compliance-check` | The same risk assessment, rendered in SAP GTS terminology (simulation) |
+| `GET` | `/sap-gts/legal-control/{subject_reference}` | A subject's review decisions as a block/release check log (simulation) |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
 **`GET /search` parameters**
@@ -1563,7 +1649,7 @@ dependency, since only this tool would ever use it. Exporting the sheet to CSV a
 
 ## 🗺️ Roadmap
 
-**All eight features ship today — no scaffolds remain**, and every module is measured by the
+**Every planned phase has shipped — no scaffolds remain**, and every module is measured by the
 coverage gate:
 
 | Module | Status | Scope |
@@ -1578,6 +1664,7 @@ coverage gate:
 | `risk.py` | ✅ **Shipped** | Composite shipment risk score over classification, screening and duty, via `GET /assess-risk` |
 | `auth.py` (RBAC) | ✅ **Shipped** | Accounts, sessions and four roles; `reviewer_name` now comes from the session |
 | `document_extraction.py` | ✅ **Shipped** | Invoice PDF upload that pre-fills the classification, duty and risk forms |
+| `sap_gts_bridge.py` | ✅ **Shipped** | SAP GTS terminology view over existing results — a labelled simulation, not an integration |
 
 Planned extensions: country-level embargo checks and product/destination restrictions, alias and
 transliteration handling for entity names, quota/anti-dumping components on top of the duty
@@ -1622,6 +1709,7 @@ CustomsIQ/
 │   │   ├── review.py            # human-review audit trail (four-eyes)
 │   │   ├── auth.py              # accounts, sessions, roles — stdlib only, no new deps
 │   │   ├── document_extraction.py # invoice PDF → fields (pypdf + labelled-line regex)
+│   │   ├── sap_gts_bridge.py     # renders results in SAP GTS terms — simulation, not an integration
 │   │   ├── dashboard.py         # read-only aggregation over Phases 1 & 2
 │   │   ├── risk.py              # composite shipment risk score
 │   │   ├── exceptions.py        # typed error hierarchy

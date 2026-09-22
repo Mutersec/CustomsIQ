@@ -433,6 +433,81 @@
     font-weight: 600;
   }
 
+  /* ---------- SAP GTS terminology view ---------- */
+  .sim-notice {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    background: #fdf6e7;
+    border: 1px solid #e3cfa2;
+    border-left: 3px solid var(--amber);
+    border-radius: 4px;
+    color: #6b4c12;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+
+  .sim-notice strong { color: #8a5a05; }
+
+  .gts-header {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 6px 14px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+
+  .gts-header div { display: flex; gap: 6px; }
+  .gts-header .k { color: var(--text-dim); }
+  .gts-header .v { font-weight: 600; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .gts-row {
+    display: grid;
+    grid-template-columns: 26px 46px 150px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+
+  .gts-row:last-child { border-bottom: none; }
+  .gts-row .num, .gts-row .param { color: var(--text-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .msg-type {
+    display: inline-block;
+    width: 20px;
+    text-align: center;
+    border-radius: 3px;
+    font-weight: 700;
+    font-size: 11.5px;
+    line-height: 18px;
+    color: #fff;
+  }
+
+  .msg-type.E { background: var(--red); }
+  .msg-type.W { background: var(--amber); }
+  .msg-type.S { background: var(--green); }
+  .msg-type.I { background: var(--text-dim); }
+
+  .doc-status {
+    padding: 2px 9px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+
+  .doc-status.BLOCKED { background: #fbeceb; color: #8c2018; }
+  .doc-status.PENDING { background: #fdf3e3; color: #8a5a05; }
+  .doc-status.RELEASED, .doc-status.NOT_BLOCKED { background: #e8f3ec; color: #1e7a3d; }
+
+  @media (max-width: 620px) {
+    .gts-row { grid-template-columns: 26px 46px 1fr; }
+    .gts-row .param { grid-column: 3; }
+  }
+
   /* ---------- invoice extraction ---------- */
   input[type="file"] {
     width: 100%;
@@ -907,6 +982,22 @@
     </div>
   </section>
 
+  <!-- ============ SAP GTS terminology view ============ -->
+  <section class="panel wide">
+    <div class="panel-head">
+      <span class="rule"></span>
+      <h2 data-i18n="sapGts.title"></h2>
+    </div>
+    <div class="panel-body">
+      <p class="sim-notice" data-i18n-html="sapGts.disclaimer"></p>
+      <p class="hint" data-i18n="sapGts.hint"></p>
+      <form id="sapgts-form">
+        <button type="submit" id="sapgts-btn" data-i18n="sapGts.button"></button>
+      </form>
+      <div class="results" id="sapgts-results" aria-live="polite"></div>
+    </div>
+  </section>
+
   <!-- ============ Review history ============ -->
   <section class="panel wide">
     <div class="panel-head">
@@ -1065,6 +1156,26 @@
           country_of_origin: "Country of origin",
           party_name: "Party (consignee)",
         },
+      },
+      sapGts: {
+        title: "SAP GTS Terminology View",
+        disclaimer: "<strong>Simulation, not an SAP integration.</strong> CustomsIQ is not connected to any SAP system. " +
+          "This view reshapes CustomsIQ's own results into structures whose field names and vocabulary mirror SAP GTS " +
+          "&mdash; the documented BAPIRET2 return structure and GTS's functional-area and document-status terminology " +
+          "&mdash; so the domain concepts are recognisable. <strong>It is not a valid IDoc or BAPI payload and no real " +
+          "SAP system would accept it.</strong>",
+        hint: "Renders the shipment risk assessment above in SAP GTS terms. Fill in the risk form first — this uses those same four values, and computes nothing new.",
+        button: "Render in GTS terms",
+        busy: "Rendering…",
+        fillRiskForm: "Fill in the shipment risk assessment fields above first.",
+        valueMustBeNumber: "Customs value must be a number.",
+        documentType: "Document type",
+        status: "Document status",
+        areas: "Functional areas",
+        subjectReference: "Subject reference",
+        sourceSystem: "Source system",
+        returnTable: (n) => `RETURN table — ${n} message(s)`,
+        failed: "Could not render the GTS view.",
       },
       reviewHistory: {
         title: "Review History",
@@ -1248,6 +1359,26 @@
           party_name: "Taraf (alıcı)",
         },
       },
+      sapGts: {
+        title: "SAP GTS Terminoloji Görünümü",
+        disclaimer: "<strong>Simülasyon, SAP entegrasyonu değil.</strong> CustomsIQ hiçbir SAP sistemine bağlı değildir. " +
+          "Bu görünüm, CustomsIQ'nun kendi sonuçlarını alan adları ve söz dağarcığı SAP GTS'i yansıtan yapılara " +
+          "dönüştürür &mdash; belgelenmiş BAPIRET2 dönüş yapısı ile GTS'in işlevsel alan ve belge durumu terminolojisi " +
+          "&mdash; böylece alan kavramları tanınabilir olur. <strong>Bu geçerli bir IDoc veya BAPI yükü değildir ve " +
+          "gerçek hiçbir SAP sistemi bunu kabul etmez.</strong>",
+        hint: "Yukarıdaki sevkiyat risk değerlendirmesini SAP GTS terimleriyle gösterir. Önce risk formunu doldurun — bu görünüm aynı dört değeri kullanır ve yeni bir hesaplama yapmaz.",
+        button: "GTS terimleriyle göster",
+        busy: "Oluşturuluyor…",
+        fillRiskForm: "Önce yukarıdaki sevkiyat risk değerlendirmesi alanlarını doldurun.",
+        valueMustBeNumber: "Gümrük kıymeti sayı olmalıdır.",
+        documentType: "Belge tipi",
+        status: "Belge durumu",
+        areas: "İşlevsel alanlar",
+        subjectReference: "Konu referansı",
+        sourceSystem: "Kaynak sistem",
+        returnTable: (n) => `RETURN tablosu — ${n} mesaj`,
+        failed: "GTS görünümü oluşturulamadı.",
+      },
       reviewHistory: {
         title: "İnceleme Geçmişi",
         hint: "Sınıflandırma, tarama ve vergi sonuçlarına ilişkin onaylar — yalnızca eklenir, en yeni önce.",
@@ -1429,6 +1560,26 @@
           country_of_origin: "Ursprungsland",
           party_name: "Beteiligter (Empfänger)",
         },
+      },
+      sapGts: {
+        title: "SAP-GTS-Terminologieansicht",
+        disclaimer: "<strong>Simulation, keine SAP-Integration.</strong> CustomsIQ ist mit keinem SAP-System verbunden. " +
+          "Diese Ansicht überführt die eigenen Ergebnisse von CustomsIQ in Strukturen, deren Feldnamen und Vokabular " +
+          "SAP GTS nachbilden &mdash; die dokumentierte BAPIRET2-Rückgabestruktur sowie die Bereichs- und " +
+          "Belegstatus-Terminologie von GTS &mdash; damit die Fachbegriffe wiedererkennbar sind. <strong>Es ist kein " +
+          "gültiger IDoc- oder BAPI-Beleg, und kein echtes SAP-System würde ihn annehmen.</strong>",
+        hint: "Stellt die obige Sendungs-Risikobewertung in SAP-GTS-Begriffen dar. Füllen Sie zuerst das Risikoformular aus — diese Ansicht nutzt dieselben vier Werte und berechnet nichts Neues.",
+        button: "In GTS-Begriffen darstellen",
+        busy: "Wird erstellt…",
+        fillRiskForm: "Bitte zuerst die Felder der Sendungs-Risikobewertung oben ausfüllen.",
+        valueMustBeNumber: "Der Zollwert muss eine Zahl sein.",
+        documentType: "Belegart",
+        status: "Belegstatus",
+        areas: "Funktionsbereiche",
+        subjectReference: "Vorgangsreferenz",
+        sourceSystem: "Quellsystem",
+        returnTable: (n) => `RETURN-Tabelle — ${n} Meldung(en)`,
+        failed: "Die GTS-Ansicht konnte nicht erstellt werden.",
       },
       reviewHistory: {
         title: "Prüfprotokoll",
@@ -2127,6 +2278,69 @@
           </article>
         `;
       },
+    });
+  });
+
+  // ---------- SAP GTS terminology view ----------
+  // Reads the four risk-assessment inputs rather than duplicating a form: this
+  // renders that same assessment in GTS vocabulary and computes nothing itself.
+  const sapGtsBox = document.getElementById("sapgts-results");
+
+  function renderGtsDocument(payload) {
+    const header = payload.HEADER;
+    const rows = payload.RETURN.map((r) => `
+      <div class="gts-row">
+        <span class="msg-type ${escapeHtml(r.TYPE)}">${escapeHtml(r.TYPE)}</span>
+        <span class="num">${escapeHtml(r.NUMBER)}</span>
+        <span class="param">${escapeHtml(r.PARAMETER)}</span>
+        <span>${escapeHtml(r.MESSAGE)}</span>
+      </div>
+    `).join("");
+
+    sapGtsBox.innerHTML = `
+      <article class="card">
+        <div class="gts-header">
+          <div><span class="k">${escapeHtml(t("sapGts.documentType"))}</span><span class="v">${escapeHtml(header.DOCUMENT_TYPE)}</span></div>
+          <div><span class="k">${escapeHtml(t("sapGts.status"))}</span><span class="doc-status ${escapeHtml(header.DOCUMENT_STATUS)}">${escapeHtml(header.DOCUMENT_STATUS)}</span></div>
+          <div><span class="k">${escapeHtml(t("sapGts.areas"))}</span><span class="v">${escapeHtml(header.FUNCTIONAL_AREAS.join(" · "))}</span></div>
+          <div><span class="k">${escapeHtml(t("sapGts.sourceSystem"))}</span><span class="v">${escapeHtml(header.SOURCE_SYSTEM)}</span></div>
+        </div>
+        <p class="meta">${escapeHtml(t("sapGts.returnTable")(payload.RETURN.length))}</p>
+        ${rows}
+        <p class="meta">${escapeHtml(header.DISCLAIMER)}</p>
+      </article>
+    `;
+  }
+
+  document.getElementById("sapgts-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const subject = riskSubject.value.trim();
+    if (!subject || !riskOrigin.value.trim() || !riskParty.value.trim() || !riskValue.value.trim()) {
+      setState(sapGtsBox, "error", t("sapGts.fillRiskForm"));
+      return;
+    }
+    if (isNaN(Number(riskValue.value.trim()))) {
+      setState(sapGtsBox, "error", t("sapGts.valueMustBeNumber"));
+      return;
+    }
+
+    submit({
+      url: () => {
+        const params = new URLSearchParams({
+          country_of_origin: riskOrigin.value.trim(),
+          party_name: riskParty.value.trim(),
+          customs_value: riskValue.value.trim(),
+        });
+        params.set(looksLikeHsCode(subject) ? "hs_code" : "description", subject);
+        return `/sap-gts/compliance-check?${params.toString()}`;
+      },
+      input: riskSubject,
+      button: document.getElementById("sapgts-btn"),
+      box: sapGtsBox,
+      busyLabel: t("sapGts.busy"),
+      idleLabel: t("sapGts.button"),
+      render: renderGtsDocument,
     });
   });
 

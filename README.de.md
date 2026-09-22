@@ -84,6 +84,7 @@ entscheidet.
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
 | 🌐 | **REST-API** | `GET /search` und `GET /screen` über FastAPI, mit erzeugter `/docs`-Oberfläche |
 | 🗄️ | **Speicherung ohne Einrichtungsaufwand** | SQLite aus der Standardbibliothek, vorbefüllt mit 20 Codes + 18 fiktiven Einträgen |
+| 🧩 | **SAP-GTS-Terminologieansicht** | Stellt Ergebnisse im SAP-GTS-Vokabular und in BAPIRET2-Form dar — eine gekennzeichnete Simulation, keine Systemanbindung |
 | 📄 | **Rechnungsauslesung** | Ein Rechnungs-PDF hochladen und die Einreihungs-, Zoll- und Risikoformulare kommen vorausgefüllt zurück — Text-PDFs, reines Python, nichts wird gespeichert |
 | 🔐 | **RBAC** | Vier Rollen über echte Konten — Sanktionsfreigaben brauchen einen Compliance-Officer, und das Prüfprotokoll nennt die Sitzung, nicht ein Textfeld |
 | 🐘 | **Zwei Backends** | Dasselbe SQL läuft auch auf PostgreSQL — per Umgebungsvariable zuschaltbar, Standard bleibt SQLite |
@@ -350,7 +351,7 @@ erfasst wurde, keine erfundene Aufschlüsselung.
 
 ### ⚠️ Zusammengesetztes Risiko-Scoring
 
-Echte risikobasierte Zollkontrollen (SAP GTS "Legal Control" eingeschlossen) bewerten
+Echte risikobasierte Zollkontrollen (SAP GTS Compliance Management eingeschlossen) bewerten
 Einreihung, Prüfung und Zoll nicht unabhängig voneinander — das Gesamtrisiko einer Sendung ist
 eine Funktion aller drei zusammen. `risk.py` fügt `assess_shipment()` hinzu, das `classify()`,
 `screen_entity()` und `calculate_duty()` aufruft — deren bestehende öffentliche Signaturen, ohne
@@ -519,6 +520,88 @@ Kopie gepflegt; die beiden Backends können also nicht auseinanderlaufen. Die si
 Entscheidungsmodule blieben unverändert, bis hin zu ihren `sqlite3.Connection`-Annotationen: Keines
 führt SQL aus, sie reichen `conn` nur an `database.py` zurück — deshalb gibt der PostgreSQL-Zweig
 den Wrapper per `cast` zurück.
+
+### 🧩 SAP-GTS-Terminologieansicht — eine Simulation, keine Integration
+
+> ⚠️ **Dies ist eine Terminologie- und Datenform-Simulation, keine SAP-Integration.**
+> CustomsIQ ist mit keinem SAP-System verbunden und war es nie. Diese Schicht überführt
+> die eigenen Ergebnisse von CustomsIQ in Strukturen, deren Feldnamen und Vokabular
+> SAP GTS nachbilden — die dokumentierte `BAPIRET2`-Rückgabestruktur sowie die Bereichs-
+> und Belegstatus-Terminologie von GTS — damit die Fachbegriffe auf einen Blick
+> wiedererkennbar sind. **Die Ausgabe ist kein gültiger IDoc- oder BAPI-Beleg, und kein
+> echtes SAP-System würde sie annehmen.** Eine echte Integration erforderte lizenziertes
+> SAP GTS sowie eine SAP BTP ABAP Environment (oder ein On-Premise-SAP-System, erreichbar
+> über RFC/OData) — nichts davon hat, nutzt oder behauptet dieses Projekt. Sie existiert,
+> um Vertrautheit mit SAP-GTS-Konzepten zu zeigen, mehr nicht.
+
+Derselbe Hinweis reist **in jeder Ausgabe mit** (`"SIMULATION": true` und ein
+`DISCLAIMER`-Text im `HEADER`) und steht oben in der UI-Karte, damit die Ausgabe auch
+dann beschriftet bleibt, wenn sie irgendwohin kopiert wird, wo diese README nicht ist.
+
+**Was worauf abgebildet wird.** SAP GTS gliedert sich in drei Funktionsbereiche:
+**Compliance Management** (SPL-Screening, Embargoprüfungen, Legal Control),
+**Customs Management** (Zollanmeldungen, Einreihung, Abgabenermittlung) und
+**Risk Management** (Preference Processing, Akkreditive, Ausfuhrerstattung).
+
+| CustomsIQ | Bestehende Funktion | SAP-GTS-Entsprechung | Bereich |
+|---|---|---|---|
+| Sanktionslistenprüfung | `embargo_screener.screen_entity()` | **Sanctioned Party List (SPL) Screening** — gleicht Partnerdaten mit hochgeladenen Listeneinträgen ab und sperrt den Beleg bei einem Treffer | Compliance Mgmt |
+| Prüfung / Prüfprotokoll | `review.submit_review()` | Die **Sperr-/Freigabeentscheidung und ihr Prüfprotokoll** — GTS sperrt einen Beleg, wenn eine Prüfung fehlschlägt, und er bleibt gesperrt, bis jemand ihn freigibt | Compliance Mgmt |
+| Einreihung | `cn_classifier.classify()` | **Classification** — Ermittlung der Warennummer zu einem Produkt | Customs Mgmt |
+| Zollberechnung | `tariff_calculator.calculate_duty()` | **Abgabenermittlung**; bei einem Präferenzsatz das *Ergebnis* von **Preference Processing** | Customs Mgmt / Risk Mgmt |
+| Gesamtrisiko | `risk.assess_shipment()` | Kein einzelnes GTS-Objekt — das Ergebnis über alle drei Bereiche, weshalb es als bereichsübergreifender Beleg dargestellt wird |
+
+Zwei Punkte, die genau benannt gehören, weil eine SAP-erfahrene Leserin sie prüft:
+
+- **Preference Processing gehört zu GTS *Risk* Management, nicht zu Customs Management.**
+  Die Abgabenermittlung liegt im Customs Management; die Ermittlung des Präferenzursprungs
+  ist eine Risk-Management-Funktion. `calculate_duty` berührt beides, deshalb wird die
+  erzeugte Meldung dem jeweils zutreffenden Bereich zugeordnet.
+- **`review_decisions` ist nicht Legal Control.** Legal Control meint speziell die
+  Ausfuhrgenehmigungs-Ermittlung für Dual-Use-Güter: GTS sperrt eine Position, wenn keine
+  Lizenz zugeordnet werden kann, und nur deren Zuordnung hebt die Sperre auf. CustomsIQ hat
+  **keine Lizenzstammdaten, keine Dual-Use-Einstufung und keine länderbezogene
+  Embargoprüfung** — diese Zuordnung zu behaupten wäre also falsche Präzision. Was
+  `review_decisions` tatsächlich abbildet, ist der Sperr-/Freigabeprozess samt Protokoll,
+  der über *jeder* fehlgeschlagenen Compliance-Prüfung liegt.
+
+**Die Ausgabeform.** `BAPIRET2` ist SAPs Standard-Rückgabestruktur und wird hier Feld für
+Feld nachgebildet, einschließlich der echten Längen — Werte werden darauf gekürzt statt in
+beliebiger Breite ausgegeben:
+
+| Feld | Typ | Länge | Wofür |
+|---|---|---|---|
+| `TYPE` | CHAR | 1 | `S` Erfolg · `E` Fehler · `W` Warnung · `I` Info · `A` Abbruch |
+| `ID` | CHAR | 20 | Nachrichtenklasse `ZCUSTOMSIQ_GTS`. Das `Z`-Präfix ist SAPs Kundennamensraum — die übliche Art zu sagen „kein Standard-SAP-Objekt" |
+| `NUMBER` | NUMC | 3 | Feste Nummer je Ergebnis (`001` SPL-Treffer, `020` Präferenzsatz angewendet, …) |
+| `MESSAGE` | CHAR | 220 | Der erzeugte Text |
+| `LOG_NO` | CHAR | 20 | Die CustomsIQ-`subject_reference`, auf die echte Breite gekürzt |
+| `LOG_MSG_NO` | NUMC | 6 | Laufende Nummer im Protokoll |
+| `MESSAGE_V1`–`V4` | CHAR | 50 | Die eingesetzten Variablen, so wie SAP Meldungen zusammensetzt |
+| `PARAMETER` | CHAR | 32 | Welcher GTS-Service die Meldung erzeugt hat |
+| `ROW` | INT4 | — | Position in der RETURN-Tabelle |
+| `FIELD` | CHAR | 30 | Der zugrunde liegende CustomsIQ-Faktor |
+| `SYSTEM` | CHAR | 10 | `CUSTOMSIQ` — ein logischer Systemname, keine echte SAP-SID |
+
+Echt sind: diese Feldnamen, Typen und Längen sowie die GTS-Bereichsnamen. CustomsIQs eigene
+Konstruktion sind: die Nachrichtenklasse, die Nachrichtennummern, der Header-Umschlag und
+das Statusvokabular `BLOCKED` / `PENDING` / `RELEASED` / `NOT_BLOCKED`.
+
+**Beispiel** — dieselbe fixierte Bewertung, die der Risiko-Abschnitt und die CLI-Beispiele
+schon verwenden (`assess_shipment(conn, "NO", "Northwind Maritime", 1000, description="cotton t-shirt")`
+→ `0.6609`, hoch):
+
+| ROW | TYPE | NUMBER | PARAMETER | MESSAGE |
+|---|---|---|---|---|
+| 1 | `E` | `001` | `SPL_SCREENING` | Sanctioned party list hit for 'Northwind Maritime' — real sanctions match: Northwind Maritime Holdings Ltd (1.00) |
+| 2 | `I` | `010` | `CLASSIFICATION` | Commodity code 6109100000 determined — top match 6109100000 at 84.65% confidence |
+| 3 | `S` | `020` | `PREFERENCE_DUTY` | Preferential duty rate applied — preferential rate 0.0% |
+| 4 | `E` | `030` | `RISK_ASSESSMENT` | Composite risk HIGH (0.6609) — document blocked pending review |
+
+`DOCUMENT_STATUS: "BLOCKED"`. Jede Zahl darin stammt aus der bestehenden Bewertung;
+`sap_gts_bridge.py` rechnet nichts selbst — es nimmt fertig berechnete Ergebnisobjekte
+entgegen, nie eine Datenbankverbindung, und ruft keine der Entscheidungsfunktionen auf.
+Tests sichern genau das ab, über die Funktionssignaturen und den Quelltext.
 
 ### 📄 Rechnungsauslesung: was sie liest und was nicht
 
@@ -1149,6 +1232,8 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/dashboard/stats` | Aggregierte Statistiken: Referenzdaten, Prüfaktivität, KN-Importläufe |
 | `GET` | `/assess-risk` | Zusammengesetzter Risiko-Score aus Einreihung, Prüfung und Zoll |
 | `POST` | `/extract-invoice` | Liest ein hochgeladenes Rechnungs-PDF und gibt die gefundenen Felder zurück (Anmeldung erforderlich) |
+| `GET` | `/sap-gts/compliance-check` | Dieselbe Risikobewertung in SAP-GTS-Terminologie (Simulation) |
+| `GET` | `/sap-gts/legal-control/{subject_reference}` | Die Prüfentscheidungen eines Vorgangs als Sperr-/Freigabeprotokoll (Simulation) |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
 **Parameter von `GET /search`**
@@ -1589,6 +1674,7 @@ von der Abdeckungsschwelle gemessen:
 | `risk.py` | ✅ **Ausgeliefert** | Zusammengesetzter Sendungs-Risiko-Score über Einreihung, Prüfung und Zoll, via `GET /assess-risk` |
 | `auth.py` (RBAC) | ✅ **Ausgeliefert** | Konten, Sitzungen und vier Rollen; `reviewer_name` kommt jetzt aus der Sitzung |
 | `document_extraction.py` | ✅ **Ausgeliefert** | Rechnungs-PDF-Upload, der die Einreihungs-, Zoll- und Risikoformulare vorausfüllt |
+| `sap_gts_bridge.py` | ✅ **Ausgeliefert** | SAP-GTS-Terminologieansicht über bestehende Ergebnisse — gekennzeichnete Simulation, keine Integration |
 
 Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
 Alias- und Transliterationsbehandlung für Entitätsnamen, Kontingent- und Antidumping-Komponenten
@@ -1635,6 +1721,7 @@ CustomsIQ/
 │   │   ├── review.py            # Prüfprotokoll (Vier-Augen-Prinzip)
 │   │   ├── auth.py              # Konten, Sitzungen, Rollen — nur stdlib, keine neue Abhängigkeit
 │   │   ├── document_extraction.py # Rechnungs-PDF → Felder (pypdf + Regex auf beschriftete Zeilen)
+│   │   ├── sap_gts_bridge.py     # stellt Ergebnisse in SAP-GTS-Begriffen dar — Simulation, keine Integration
 │   │   ├── dashboard.py         # schreibgeschützte Aggregation über Phase 1 & 2
 │   │   ├── risk.py              # zusammengesetzter Sendungs-Risiko-Score
 │   │   ├── exceptions.py        # typisierte Fehlerhierarchie

@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from src.customsiq import auth, review
+from src.customsiq import auth, review, sap_gts_bridge
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.dashboard import get_dashboard_stats
@@ -371,6 +371,54 @@ async def extract_invoice_upload(
         "has_text_layer": result.has_text_layer,
         "notes": result.notes,
     }
+
+
+@app.get("/sap-gts/compliance-check")
+def sap_gts_compliance_check(
+    country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
+    party_name: str = Query(..., description="Person or organisation to screen"),
+    customs_value: float = Query(..., description="Declared customs value"),
+    description: Optional[str] = Query(None, description="Free-text description of the goods"),
+    hs_code: Optional[str] = Query(None, description="CN-8 or TARIC-10 code, if already known"),
+) -> dict:
+    """Render a risk assessment in SAP GTS terminology. **Simulation, not an integration.**
+
+    CustomsIQ is not connected to any SAP system. This reshapes the result of the
+    existing `/assess-risk` call into a BAPIRET2-shaped RETURN table with GTS
+    functional-area and document-status vocabulary, so the domain concepts are
+    recognisable. The payload is not a valid BAPI or IDoc document and no real SAP
+    system would accept it — every response says so in its own HEADER.
+
+    Same parameters and same permissions as `/assess-risk`, because it is the same
+    data: `src.customsiq.risk.assess_shipment` does the work, and
+    `src.customsiq.sap_gts_bridge` only renames and reshapes what it returned.
+    """
+    try:
+        assessment = assess_shipment(
+            _conn, country_of_origin, party_name, customs_value, description, hs_code
+        )
+    except InvalidQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    subject_reference = (
+        review.reference_for_classification(description)
+        if description
+        else review.reference_for_duty(hs_code or "", country_of_origin, customs_value)
+    )
+    return sap_gts_bridge.compliance_check(assessment, party_name, subject_reference).as_payload()
+
+
+@app.get("/sap-gts/legal-control/{subject_reference}")
+def sap_gts_legal_control(subject_reference: str) -> dict:
+    """Render a subject's recorded review decisions as a block/release check log.
+
+    **Simulation, not an integration** — see `/sap-gts/compliance-check`. Public for
+    the same reason a single subject's `/review/history` is: it is that same data,
+    reshaped. A reference with no decisions returns a valid document reporting
+    exactly that, not a 404 — nothing was blocked, so there is nothing to release.
+    """
+    decisions = review.get_review_history(_conn, subject_reference=subject_reference)
+    return sap_gts_bridge.legal_control_log(decisions, subject_reference).as_payload()
 
 
 @app.get("/codes/{code}/history")

@@ -83,6 +83,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
 | 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
+| 🧩 | **SAP GTS terminoloji görünümü** | Sonuçları SAP GTS söz dağarcığı ve BAPIRET2 biçiminde gösterir — etiketlenmiş bir simülasyon, sistem bağlantısı değil |
 | 📄 | **Fatura okuma** | PDF fatura yükleyin; sınıflandırma, vergi ve risk formları önceden dolu gelsin — metin katmanlı PDF, saf Python, hiçbir şey saklanmaz |
 | 🔐 | **RBAC** | Gerçek hesaplar üzerinde dört rol — yaptırım onayı uyum yetkilisi gerektirir ve denetim izi bir metin kutusunu değil, oturumu adlandırır |
 | 🐘 | **Çift veritabanı desteği** | Aynı SQL PostgreSQL üzerinde de çalışır — tek bir ortam değişkeniyle açılır, varsayılan SQLite kalır |
@@ -347,7 +348,7 @@ sorgusu) — bu, gerçekte kaydedilenin dürüst bir okunuşudur, uydurulmuş bi
 
 ### ⚠️ Toplu risk skorlama
 
-Gerçek risk tabanlı gümrük kontrolleri (SAP GTS "Legal Control" dahil) sınıflandırma, tarama ve
+Gerçek risk tabanlı gümrük kontrolleri (SAP GTS Compliance Management dahil) sınıflandırma, tarama ve
 vergiyi bağımsız olarak puanlamaz — bir sevkiyatın genel riski üçünün birlikte bir fonksiyonudur.
 `risk.py`, `classify()`, `screen_entity()` ve `calculate_duty()`'yi — mevcut genel imzalarıyla,
 hiçbir yenilik olmadan — çağıran `assess_shipment()`'ı ekler ve üçünü tek bir toplu skorda
@@ -507,6 +508,88 @@ doğrulamaz.
 böylece iki arka uç birbirinden ayrışamaz. Yedi karar modülü, `sqlite3.Connection` tip
 açıklamalarına kadar değişmedi: hiçbiri SQL çalıştırmaz, yalnızca `conn`'u `database.py`'ye geri
 verir; bu yüzden Postgres dalı sarmalayıcıyı `cast` ile döndürür.
+
+### 🧩 SAP GTS terminoloji görünümü — simülasyon, entegrasyon değil
+
+> ⚠️ **Bu bir terminoloji ve veri-şekli simülasyonudur, SAP entegrasyonu değildir.**
+> CustomsIQ hiçbir SAP sistemine bağlı değildir ve hiç olmadı. Bu katman, CustomsIQ'nun
+> kendi sonuçlarını alan adları ve söz dağarcığı SAP GTS'i yansıtan yapılara dönüştürür —
+> belgelenmiş `BAPIRET2` dönüş yapısı ve GTS'in kendi işlevsel alan ile belge durumu
+> terminolojisi — böylece alan kavramları ilk bakışta tanınabilir olur. **Çıktı geçerli bir
+> IDoc veya BAPI yükü değildir ve gerçek hiçbir SAP sistemi bunu kabul etmez.** Gerçek bir
+> entegrasyon, lisanslı SAP GTS'in yanı sıra bir SAP BTP ABAP Environment (ya da RFC/OData
+> üzerinden erişilebilen bir on-premise SAP sistemi) gerektirir; bu projede bunların hiçbiri
+> yoktur, kullanılmaz ve iddia edilmez. Yalnızca SAP GTS kavramlarına aşinalığı göstermek
+> için vardır, başka bir şey için değil.
+
+Aynı ifade **her yükün içinde** de taşınır (`HEADER` içinde `"SIMULATION": true` ve bir
+`DISCLAIMER` metni) ve arayüz panelinin en üstünde durur; böylece çıktı, bu README'nin
+bulunmadığı bir yere kopyalansa bile kendini etiketlemeye devam eder.
+
+**Ne neye karşılık geliyor.** SAP GTS üç işlevsel alana ayrılır: **Compliance Management**
+(SPL taraması, ambargo kontrolleri, Legal Control), **Customs Management** (beyannameler,
+sınıflandırma, vergi tespiti) ve **Risk Management** (Preference Processing, akreditif,
+ihracat iadesi).
+
+| CustomsIQ | Mevcut fonksiyon | SAP GTS karşılığı | Alan |
+|---|---|---|---|
+| Yasaklı taraf taraması | `embargo_screener.screen_entity()` | **Sanctioned Party List (SPL) Screening** — taraf verilerini yüklenmiş liste kayıtlarıyla karşılaştırır ve eşleşmede belgeyi bloke eder | Compliance Mgmt |
+| İnsan onayı / denetim izi | `review.submit_review()` | **Bloke/serbest bırakma kararı ve kontrol kaydı** — GTS bir kontrol başarısız olduğunda belgeyi bloke eder ve biri serbest bırakana dek bloke kalır | Compliance Mgmt |
+| Sınıflandırma | `cn_classifier.classify()` | **Classification** — bir ürün için eşya kodunun belirlenmesi | Customs Mgmt |
+| Vergi hesaplama | `tariff_calculator.calculate_duty()` | **Vergi tespiti**; tercihli oran uygulandığında **Preference Processing**'in *sonucu* | Customs Mgmt / Risk Mgmt |
+| Toplu risk | `risk.assess_shipment()` | Tek bir GTS nesnesi yok — üç alanın tamamındaki sonuç; bu yüzden çok alanlı bir belge olarak gösterilir |
+
+SAP bilen birinin kontrol edeceği, bu yüzden net söylenmesi gereken iki ayrıntı:
+
+- **Preference Processing, Customs Management değil GTS *Risk* Management'tır.** Vergi
+  tespiti Customs Management'a aittir; tercihli menşe tespiti ise bir Risk Management
+  işlevidir. `calculate_duty` ikisine de dokunur, bu yüzden üretilen mesaj hangisi
+  uygulandıysa ona etiketlenir.
+- **`review_decisions` Legal Control değildir.** Legal Control özellikle çift kullanımlı
+  eşya için ihracat lisansı tespiti demektir: GTS bir kaleme lisans atanamadığında onu
+  bloke eder ve bloke yalnızca lisans atanınca kalkar. CustomsIQ'da **lisans ana verisi,
+  çift kullanım sınıflandırması ve ülke bazlı ambargo kontrolü yoktur**; dolayısıyla böyle
+  bir eşleştirme iddiası yanlış bir kesinlik olurdu. `review_decisions`'ın gerçekten
+  modellediği şey, *herhangi bir* başarısız uyum kontrolünün üstünde duran bloke/serbest
+  bırakma akışı ve kontrol kaydıdır.
+
+**Çıktı şekli.** `BAPIRET2` SAP'nin standart dönüş yapısıdır ve burada gerçek uzunlukları
+dahil olmak üzere alan alan yeniden üretilmiştir — değerler rastgele genişlikte
+yazılmak yerine bu uzunluklara göre kısaltılır:
+
+| Alan | Tip | Uz. | Kullanımı |
+|---|---|---|---|
+| `TYPE` | CHAR | 1 | `S` başarı · `E` hata · `W` uyarı · `I` bilgi · `A` iptal |
+| `ID` | CHAR | 20 | Mesaj sınıfı `ZCUSTOMSIQ_GTS`. `Z` öneki SAP'nin müşteri ad alanıdır — "bu standart bir SAP nesnesi değildir" demenin alışılmış yolu |
+| `NUMBER` | NUMC | 3 | Sonuç başına sabit numara (`001` SPL eşleşmesi, `020` tercihli oran uygulandı, …) |
+| `MESSAGE` | CHAR | 220 | Oluşturulan metin |
+| `LOG_NO` | CHAR | 20 | CustomsIQ `subject_reference` değeri, gerçek genişliğe kısaltılmış |
+| `LOG_MSG_NO` | NUMC | 6 | Kayıt içindeki sıra numarası |
+| `MESSAGE_V1`–`V4` | CHAR | 50 | SAP'nin mesaja yerleştirdiği değişkenler |
+| `PARAMETER` | CHAR | 32 | Mesajı üreten GTS servisi |
+| `ROW` | INT4 | — | RETURN tablosundaki sıra |
+| `FIELD` | CHAR | 30 | Arkasındaki CustomsIQ faktörü |
+| `SYSTEM` | CHAR | 10 | `CUSTOMSIQ` — mantıksal sistem adı, gerçek bir SAP SID'i değil |
+
+Gerçek olan: bu alan adları, tipleri, uzunlukları ve GTS alan adları. CustomsIQ'nun kendi
+kurgusu olan: mesaj sınıfı, mesaj numaraları, başlık zarfı ve `BLOCKED` / `PENDING` /
+`RELEASED` / `NOT_BLOCKED` durum sözlüğü.
+
+**Örnek** — risk bölümünün ve CLI örneklerinin zaten kullandığı sabitlenmiş değerlendirme
+(`assess_shipment(conn, "NO", "Northwind Maritime", 1000, description="cotton t-shirt")`
+→ `0.6609`, yüksek):
+
+| ROW | TYPE | NUMBER | PARAMETER | MESSAGE |
+|---|---|---|---|---|
+| 1 | `E` | `001` | `SPL_SCREENING` | Sanctioned party list hit for 'Northwind Maritime' — real sanctions match: Northwind Maritime Holdings Ltd (1.00) |
+| 2 | `I` | `010` | `CLASSIFICATION` | Commodity code 6109100000 determined — top match 6109100000 at 84.65% confidence |
+| 3 | `S` | `020` | `PREFERENCE_DUTY` | Preferential duty rate applied — preferential rate 0.0% |
+| 4 | `E` | `030` | `RISK_ASSESSMENT` | Composite risk HIGH (0.6609) — document blocked pending review |
+
+`DOCUMENT_STATUS: "BLOCKED"`. Oradaki her sayı mevcut değerlendirmeden gelir;
+`sap_gts_bridge.py` kendi başına hiçbir hesap yapmaz — yalnızca hesaplanmış sonuç
+nesnelerini alır, asla bir veritabanı bağlantısı almaz ve karar fonksiyonlarının
+hiçbirini çağırmaz. Testler bunu fonksiyon imzaları ve kaynak üzerinden doğrular.
 
 ### 📄 Fatura okuma: neyi okur, neyi okuyamaz
 
@@ -1120,6 +1203,8 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/dashboard/stats` | Toplu istatistikler: referans veriler, inceleme faaliyeti, CN içe aktarma çalıştırmaları |
 | `GET` | `/assess-risk` | Sınıflandırma, tarama ve vergiyi birleştiren toplu risk skoru |
 | `POST` | `/extract-invoice` | Yüklenen fatura PDF'ini okur ve bulunan alanları döndürür (oturum gerekir) |
+| `GET` | `/sap-gts/compliance-check` | Aynı risk değerlendirmesini SAP GTS terimleriyle gösterir (simülasyon) |
+| `GET` | `/sap-gts/legal-control/{subject_reference}` | Bir konunun inceleme kararlarını bloke/serbest bırakma kaydı olarak gösterir (simülasyon) |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -1556,6 +1641,7 @@ eşiğiyle ölçülüyor:
 | `risk.py` | ✅ **Tamamlandı** | Sınıflandırma, tarama ve vergi üzerinden toplu sevkiyat risk skoru, `GET /assess-risk` üzerinden |
 | `auth.py` (RBAC) | ✅ **Tamamlandı** | Hesaplar, oturumlar ve dört rol; `reviewer_name` artık oturumdan gelir |
 | `document_extraction.py` | ✅ **Tamamlandı** | Sınıflandırma, vergi ve risk formlarını dolduran fatura PDF yüklemesi |
+| `sap_gts_bridge.py` | ✅ **Tamamlandı** | Mevcut sonuçlar üzerinde SAP GTS terminoloji görünümü — etiketlenmiş simülasyon, entegrasyon değil |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
 isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
@@ -1599,6 +1685,7 @@ CustomsIQ/
 │   │   ├── review.py            # insan onayı denetim izi (dört göz)
 │   │   ├── auth.py              # hesaplar, oturumlar, roller — yalnızca stdlib, yeni bağımlılık yok
 │   │   ├── document_extraction.py # fatura PDF'i → alanlar (pypdf + etiketli satır regex'i)
+│   │   ├── sap_gts_bridge.py     # sonuçları SAP GTS terimleriyle gösterir — simülasyon, entegrasyon değil
 │   │   ├── dashboard.py         # Faz 1 ve 2 üzerine salt-okunur toplulaştırma
 │   │   ├── risk.py              # toplu sevkiyat risk skoru
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
