@@ -8,3 +8,8 @@ python-dotenv==1.0.0
 fastapi==0.104.1
 uvicorn==0.24.0
 httpx==0.25.2
+# Invoice PDF text extraction. Unlike psycopg (requirements-postgres.txt) this
+# IS on the production path: the live demo's /extract-invoice needs it. Safe to
+# put there because it is a pure-Python py3-none-any wheel with no system
+# library and no compiler step — verified before adding, not assumed.
+pypdf==6.19.0

@@ -433,6 +433,52 @@
     font-weight: 600;
   }
 
+  /* ---------- invoice extraction ---------- */
+  input[type="file"] {
+    width: 100%;
+    padding: 7px 8px;
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  input[type="file"]::file-selector-button {
+    margin-right: 10px;
+    padding: 4px 10px;
+    background: var(--primary-soft);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--primary);
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  #invoice-prefill {
+    background: var(--surface);
+    border: 1px solid var(--primary);
+    color: var(--primary);
+  }
+
+  .field-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .field-row:last-child { border-bottom: none; }
+  .field-row .field-name { min-width: 150px; color: var(--text-dim); }
+  .field-row .field-value { font-weight: 600; color: var(--text); }
+
   /* ---------- review controls ---------- */
   .review {
     margin-top: 10px;
@@ -764,6 +810,26 @@
       <div class="results" id="screen-results" aria-live="polite"></div>
     </div>
   </section>
+  <!-- ============ Invoice extraction ============ -->
+  <section class="panel wide">
+    <div class="panel-head cls">
+      <span class="rule"></span>
+      <h2 data-i18n="invoice.title"></h2>
+    </div>
+    <div class="panel-body">
+      <p class="hint" data-i18n="invoice.hint"></p>
+      <form id="invoice-form">
+        <div class="field">
+          <label for="invoice-file" data-i18n="invoice.fileLabel"></label>
+          <input type="file" id="invoice-file" accept="application/pdf,.pdf">
+        </div>
+        <button type="submit" id="invoice-btn" data-i18n="invoice.button"></button>
+        <button type="button" id="invoice-prefill" data-i18n="invoice.prefill" hidden></button>
+      </form>
+      <div class="results" id="invoice-results" aria-live="polite"></div>
+    </div>
+  </section>
+
   <!-- ============ Classification ============ -->
   <section class="panel wide">
     <div class="panel-head cls">
@@ -976,6 +1042,30 @@
         level: { low: "low", medium: "medium", high: "high" },
         factor: { screening: "Screening", classification: "Classification", duty: "Duty" },
       },
+      invoice: {
+        title: "Invoice Extraction",
+        hint: "Upload a commercial invoice PDF and the fields below are read from it, then pre-filled into the classification, duty and risk forms for you to check and edit. Nothing is submitted for you, and the file is never stored.",
+        fileLabel: "Invoice PDF",
+        button: "Extract fields",
+        busy: "Reading…",
+        prefill: "Pre-fill the forms",
+        chooseFile: "Choose a PDF first.",
+        needSignIn: "Sign in to upload a document.",
+        found: (n) => `${n} field(s) found`,
+        missing: (names) => `Not found: ${names}`,
+        matchedOn: (label) => `matched on "${label}"`,
+        prefilled: (n) => `Pre-filled ${n} form field(s). Review them, then submit the form you need.`,
+        nothingToPrefill: "Nothing to pre-fill.",
+        failed: "Could not read that document.",
+        fields: {
+          description: "Description",
+          hs_code: "HS code",
+          customs_value: "Customs value",
+          currency: "Currency",
+          country_of_origin: "Country of origin",
+          party_name: "Party (consignee)",
+        },
+      },
       reviewHistory: {
         title: "Review History",
         hint: "Sign-offs recorded against classification, screening and duty results — append-only, most recent first.",
@@ -1134,6 +1224,30 @@
         level: { low: "düşük", medium: "orta", high: "yüksek" },
         factor: { screening: "Tarama", classification: "Sınıflandırma", duty: "Vergi" },
       },
+      invoice: {
+        title: "Fatura Okuma",
+        hint: "Bir ticari fatura PDF'i yükleyin; aşağıdaki alanlar belgeden okunur ve sınıflandırma, vergi ve risk formlarına siz kontrol edip düzenleyesiniz diye önceden doldurulur. Sizin yerinize hiçbir şey gönderilmez ve dosya asla saklanmaz.",
+        fileLabel: "Fatura PDF'i",
+        button: "Alanları çıkar",
+        busy: "Okunuyor…",
+        prefill: "Formları doldur",
+        chooseFile: "Önce bir PDF seçin.",
+        needSignIn: "Belge yüklemek için oturum açın.",
+        found: (n) => `${n} alan bulundu`,
+        missing: (names) => `Bulunamadı: ${names}`,
+        matchedOn: (label) => `"${label}" etiketinden`,
+        prefilled: (n) => `${n} form alanı dolduruldu. Kontrol edip ihtiyacınız olan formu gönderin.`,
+        nothingToPrefill: "Doldurulacak bir şey yok.",
+        failed: "Bu belge okunamadı.",
+        fields: {
+          description: "Açıklama",
+          hs_code: "HS kodu",
+          customs_value: "Gümrük kıymeti",
+          currency: "Para birimi",
+          country_of_origin: "Menşe ülke",
+          party_name: "Taraf (alıcı)",
+        },
+      },
       reviewHistory: {
         title: "İnceleme Geçmişi",
         hint: "Sınıflandırma, tarama ve vergi sonuçlarına ilişkin onaylar — yalnızca eklenir, en yeni önce.",
@@ -1291,6 +1405,30 @@
         valueMustBeNumber: "Der Zollwert muss eine Zahl sein.",
         level: { low: "niedrig", medium: "mittel", high: "hoch" },
         factor: { screening: "Prüfung", classification: "Einreihung", duty: "Zoll" },
+      },
+      invoice: {
+        title: "Rechnungsauslesung",
+        hint: "Laden Sie eine Handelsrechnung als PDF hoch: die Felder unten werden daraus gelesen und in die Einreihungs-, Zoll- und Risikoformulare vorausgefüllt, damit Sie sie prüfen und anpassen können. Es wird nichts für Sie abgeschickt, und die Datei wird nie gespeichert.",
+        fileLabel: "Rechnungs-PDF",
+        button: "Felder auslesen",
+        busy: "Wird gelesen…",
+        prefill: "Formulare vorausfüllen",
+        chooseFile: "Bitte zuerst ein PDF auswählen.",
+        needSignIn: "Zum Hochladen eines Dokuments bitte anmelden.",
+        found: (n) => `${n} Feld(er) gefunden`,
+        missing: (names) => `Nicht gefunden: ${names}`,
+        matchedOn: (label) => `erkannt an „${label}“`,
+        prefilled: (n) => `${n} Formularfeld(er) vorausgefüllt. Prüfen Sie sie und senden Sie das gewünschte Formular ab.`,
+        nothingToPrefill: "Nichts zum Vorausfüllen.",
+        failed: "Dieses Dokument konnte nicht gelesen werden.",
+        fields: {
+          description: "Warenbeschreibung",
+          hs_code: "HS-Code",
+          customs_value: "Zollwert",
+          currency: "Währung",
+          country_of_origin: "Ursprungsland",
+          party_name: "Beteiligter (Empfänger)",
+        },
       },
       reviewHistory: {
         title: "Prüfprotokoll",
@@ -1806,6 +1944,126 @@
         `;
       },
     });
+  });
+
+  // ---------- Invoice extraction ----------
+  // Upload, show what was found, and only then — on a second, explicit click —
+  // write the values into the existing forms. Nothing auto-submits: the user
+  // reviews and presses the button they already know.
+  const invoiceBox = document.getElementById("invoice-results");
+  const invoiceFile = document.getElementById("invoice-file");
+  const invoicePrefillBtn = document.getElementById("invoice-prefill");
+  let extractedFields = [];
+
+  function renderExtraction(payload) {
+    const rows = payload.fields.map((f) => `
+      <div class="field-row">
+        <span class="field-name">${escapeHtml(t(`invoice.fields.${f.name}`) || f.name)}</span>
+        <span class="field-value">${escapeHtml(f.value)}</span>
+        <span class="chip">${escapeHtml(t("invoice.matchedOn")(f.label))}</span>
+      </div>
+    `).join("");
+
+    const missing = payload.missing.length
+      ? `<p class="meta">${escapeHtml(t("invoice.missing")(
+          payload.missing.map((n) => t(`invoice.fields.${n}`) || n).join(", ")))}</p>`
+      : "";
+    const notes = payload.notes.map(
+      (n) => `<div class="state warn">${escapeHtml(n)}</div>`).join("");
+
+    invoiceBox.innerHTML = `
+      ${notes}
+      <article class="card cls">
+        <div class="card-top">
+          <span class="card-title">${escapeHtml(t("invoice.found")(payload.fields.length))}</span>
+          <span class="score">${pct(payload.completeness)}%</span>
+        </div>
+        ${rows}
+        ${missing}
+      </article>
+    `;
+  }
+
+  document.getElementById("invoice-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const file = invoiceFile.files[0];
+    if (!file) {
+      setState(invoiceBox, "error", t("invoice.chooseFile"));
+      return;
+    }
+
+    const button = document.getElementById("invoice-btn");
+    button.disabled = true;
+    button.textContent = t("invoice.busy");
+    invoicePrefillBtn.hidden = true;
+    setState(invoiceBox, "", t("common.working"));
+
+    try {
+      // Raw body rather than multipart: no multipart parser is involved on the
+      // server at all, which keeps that whole class of parser bugs off the one
+      // endpoint that accepts arbitrary bytes.
+      const response = await fetch("/extract-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/pdf" },
+        body: file,
+      });
+      const payload = await response.json();
+      if (response.status === 401) {
+        setState(invoiceBox, "error", t("invoice.needSignIn"));
+        return;
+      }
+      if (!response.ok) {
+        setState(invoiceBox, "error", payload.detail || t("invoice.failed"));
+        return;
+      }
+      extractedFields = payload.fields;
+      renderExtraction(payload);
+      invoicePrefillBtn.hidden = payload.fields.length === 0;
+    } catch (err) {
+      setState(invoiceBox, "error", t("common.couldNotReach"));
+    } finally {
+      button.disabled = false;
+      button.textContent = t("invoice.button");
+    }
+  });
+
+  invoicePrefillBtn.addEventListener("click", () => {
+    const value = (name) => {
+      const field = extractedFields.find((f) => f.name === name);
+      return field ? field.value : "";
+    };
+    const description = value("description");
+    const hsCode = value("hs_code");
+    const origin = value("country_of_origin");
+    const party = value("party_name");
+    const customsValue = value("customs_value");
+
+    // The risk panel already decides whether its single subject field is a code
+    // or a description (looksLikeHsCode), so hand it whichever we have.
+    const targets = [
+      ["classify-input", description],
+      ["duty-code", hsCode],
+      ["duty-origin", origin],
+      ["duty-value", customsValue],
+      ["risk-subject", hsCode || description],
+      ["risk-origin", origin],
+      ["risk-party", party],
+      ["risk-value", customsValue],
+    ];
+
+    let filled = 0;
+    targets.forEach(([id, v]) => {
+      if (!v) return;
+      document.getElementById(id).value = v;
+      filled += 1;
+    });
+
+    const status = document.createElement("p");
+    status.className = "meta";
+    status.textContent = filled
+      ? t("invoice.prefilled")(filled)
+      : t("invoice.nothingToPrefill");
+    invoiceBox.appendChild(status);
   });
 
   // ---------- Shipment risk assessment ----------

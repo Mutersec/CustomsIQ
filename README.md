@@ -9,7 +9,7 @@ lists, and calculate the duty owed.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-301%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-358%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
@@ -82,6 +82,7 @@ not a black box that decides alone.
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
 | 🌐 | **REST API** | `GET /search` and `GET /screen` on FastAPI, with auto-generated `/docs` |
 | 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 codes + 18 mock entities |
+| 📄 | **Invoice extraction** | Upload a PDF invoice and the classification, duty and risk forms arrive pre-filled — text-layer PDFs, pure Python, nothing stored |
 | 🔐 | **RBAC** | Four roles over real accounts — sanctions sign-off needs a compliance officer, and the audit trail names the session, not a text box |
 | 🐘 | **Dual backend** | The same SQL runs on PostgreSQL — opt in with one env var, SQLite stays the default |
 | ⚙️ | **Env-based config** | `pydantic-settings` reads `.env` — no hardcoded paths or thresholds |
@@ -496,6 +497,97 @@ copy, so the two backends cannot drift apart. The seven decision modules are unc
 their `sqlite3.Connection` annotations: none of them runs SQL, they only hand `conn` back to
 `database.py`, so the Postgres branch returns the wrapper via `cast`.
 
+### 📄 Invoice extraction: what it reads, and what it can't
+
+Upload a commercial invoice and the classification, duty and risk forms arrive
+pre-filled. It is a **convenience layer, not a decision engine**:
+`document_extraction.py` turns a PDF into strings and numbers, and the decisions stay
+where they already live. The module imports none of the seven decision modules — a
+test asserts that — so it cannot quietly become a second classifier. It also never
+calls them itself: the endpoint returns fields, the user reviews and edits them, and
+then presses the buttons that already existed. Thin composable pieces beat one opaque
+action that decides on a document's behalf.
+
+**The one production dependency, and why it was allowed.** This is the first phase to
+add a package to `requirements.txt` — the file Render's build installs, which Phases 6
+and 7 deliberately kept untouched. Unavoidable here, since the feature *is* PDF
+parsing, so the choice was verified rather than assumed before committing to it:
+`pypdf==6.19.0` ships a `py3-none-any` wheel (**no platform-specific wheel exists at
+all**, so nothing compiles), requires Python ≥3.9 which matches this project's floor,
+and has exactly one runtime dependency — `typing_extensions`, already present via
+pydantic. Checked after installing, not just on PyPI: the installed package contains
+no `.so`, `.pyd` or `.dylib`. No Tesseract, no poppler, no system library.
+
+**Fields, and where each one goes.** Every field exists because an existing function
+already takes it as an argument:
+
+| Field | Labels matched | Feeds |
+|---|---|---|
+| `description` | Description of Goods · Goods Description · Description · Product · Commodity | `classify()` / `assess_shipment(description=)` |
+| `hs_code` | HS Code · Commodity Code · Tariff Code · CN Code | `calculate_duty()` / `assess_shipment(hs_code=)` |
+| `customs_value` | Invoice Value · Customs Value · Total Amount · Total | `calculate_duty()` / `assess_shipment()` |
+| `currency` | read from the value line (EUR/USD/GBP, €/$/£) | display only — this project does no currency conversion, and pretending otherwise would invent one |
+| `country_of_origin` | Country of Origin · Origin · Made In | `calculate_duty()` / `assess_shipment()` |
+| `party_name` | **Consignee** · Supplier · Exporter · Seller · Shipper | `assess_shipment()` → `screen_entity()` |
+
+`party_name` prefers **Consignee** even when an Exporter line comes first, because
+denied-party screening is about the counterparty. Values are normalized only where
+this project already defines "valid": `validate_cn_code` for codes,
+`validate_country_code` for origins (so `Norway` and `NO` both give `NO`).
+
+**Field detection is labelled-line regex, and that is a deliberate ceiling.** One
+pattern per field over a synonym list, plus small normalizers — about 60 lines, no
+dependency. The alternative (LayoutLM, donut, spaCy) means model weights and a
+torch/transformers stack in a project that **rejected scikit-learn for a 20-row
+TF-IDF**, and would still need supervision to beat a labelled match on structured
+documents. Stated plainly rather than sold around: **this works on invoices that label
+their fields, one per line.** It will *not* read a value out of a borderless table
+column, a two-column layout where label and value land far apart in the text stream, a
+freeform paragraph, or a non-English document — the labels are English, and TR/DE
+labels are a deliberate non-goal. Partial extraction is the normal case, which is why
+`missing` and `completeness` are part of every response and why nothing is ever
+auto-submitted. One real ambiguity is handled explicitly: `1.234,56` and `12,450.00`
+are both understood, by treating whichever separator comes **last** as the decimal
+point.
+
+Every field reports the label it matched and the line it came from, the same
+explainability contract as `classify`'s `matched_terms` and `risk`'s factor breakdown —
+so a reviewer can see *why* a value was picked, not just what it was.
+
+**Scanned PDFs are detected, not silently mishandled.** A page with no text layer comes
+back with `has_text_layer: false` and a note saying so, instead of an empty field list
+that looks like a parser bug. OCR is **not built** — it is a documented extension
+point: `pytesseract` needs the `tesseract-ocr` **system binary**, and Render's native
+Python buildpack has no apt layer to install one. That is the same reasoning that keeps
+Postgres and Docker off the live path; adding a half-built hook nobody uses would be
+worse than naming the boundary.
+
+**Upload security**, in the order it executes:
+
+| Control | Behaviour |
+|---|---|
+| Authentication | Signed in, any role (`document:extract` → `viewer`). Anonymous callers get `401` **before a byte is read**. The demo accounts are published, so the feature stays tryable by anyone who signs in |
+| Size | 2 MB, counted over the incoming stream and aborted mid-transfer → `413`. Deliberately not `Content-Length` — a header can lie, and buffering first is the bug worth not having |
+| Type | The bytes must start with `%PDF-` → `415`. The filename and the declared `Content-Type` are never trusted, and the filename is never used in a path |
+| Structure | At most 10 pages read; encrypted PDFs refused; any parse failure becomes a clean `400`, never a traceback |
+| Rate | 10 uploads per account per minute |
+| Storage | **Nothing is stored, ever.** The bytes live in a `BytesIO` for one request. No `tempfile`, no `open()`, no upload directory, no database row, no filename or document text in the logs. Two tests enforce it: a source scan for file-writing calls, and a snapshot of the working and temp directories around a real upload |
+
+**Transport is a raw body, not multipart** — `Content-Type: application/pdf` with the
+PDF as the request body. FastAPI needs `python-multipart` for multipart uploads, and
+the fix for its current DoS advisory (CVE-2026-42561, unbounded part headers) landed in
+0.0.27, which requires Python ≥3.10 — above this project's 3.9 floor. Every version
+installable here carries an unpatched parser DoS, on the one endpoint that accepts
+attacker-controlled bytes. Skipping multipart removes that entire class of parser bug
+from the attack surface and costs only the Swagger file-picker widget.
+
+The rate limit is **application memory only** — one dict in the app process, keyed by
+username. It touches no database, so the Phase 6 backend choice changes nothing about
+it and cannot bypass or duplicate it. What *does* change the effective limit is process
+count: two instances would each allow the full quota, and a restart clears it. Correct
+for the single instance this runs on; shared state (Redis, or a table) is the upgrade
+path if that ever stops being true.
+
 ### 🔐 Authentication without a dependency
 
 `reviewer_name` used to be whatever the client typed. Five places in this repo said
@@ -559,6 +651,7 @@ and account administration.
 | `GET /review/history` (full audit log) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
 | `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
+| `POST /extract-invoice` (upload) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /auth/register` · `/auth/login` · `/auth/logout` · `GET /auth/me` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /auth/users` · `POST /auth/users/{username}/role` | ❌ 401 | ❌ 403 | ❌ 403 | ❌ 403 | ✅ |
 
@@ -733,6 +826,48 @@ All settings are read from environment variables or `.env`:
 | `CUSTOMSIQ_PASSWORD_ITERATIONS` | `600000` | PBKDF2-HMAC-SHA256 work factor (OWASP's figure; ≈160 ms per hash) |
 | `CUSTOMSIQ_SESSION_TTL_HOURS` | `12` | How long a session cookie stays valid |
 | `CUSTOMSIQ_SEED_DEMO_USERS` | `true` | Seed the four published demo accounts into an **empty** users table. Set `false` for a real deployment |
+| `CUSTOMSIQ_UPLOAD_MAX_BYTES` | `2097152` | Largest accepted invoice upload (2 MB), enforced while streaming the body |
+| `CUSTOMSIQ_UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | Uploads allowed per account per minute |
+
+### 📄 Extracting an invoice
+
+Sign in (any role), choose a PDF in the **Invoice Extraction** panel and press
+**Extract fields**. Each field is shown with the label it was matched on, alongside a
+list of anything that wasn't found. **Pre-fill the forms** then writes the values into
+the classification, duty and risk inputs — and stops there. Nothing is submitted for
+you: review or edit the values, then press the button you already know.
+
+```bash
+curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "demo_viewer", "password": "viewer-demo-2026"}'
+
+curl -b cookies.txt -X POST "http://localhost:8000/extract-invoice" \
+  -H "Content-Type: application/pdf" \
+  --data-binary @invoice.pdf
+```
+
+```json
+{
+  "fields": [
+    {"name": "country_of_origin", "value": "NO", "label": "Country of Origin",
+     "source_line": "Country of Origin:    Norway"},
+    {"name": "customs_value", "value": "12450.0", "label": "Invoice Value",
+     "source_line": "Invoice Value:        EUR 12,450.00"},
+    {"name": "hs_code", "value": "6109100000", "label": "HS Code",
+     "source_line": "HS Code:              6109100000"}
+  ],
+  "missing": [],
+  "completeness": 1.0,
+  "page_count": 1,
+  "has_text_layer": true,
+  "notes": []
+}
+```
+
+The sample invoice this produces is committed at `tests/fixtures/sample_invoice.pdf`,
+and `tests/fixtures/make_invoice_pdfs.py` regenerates it — so the fixture isn't an
+opaque binary in the repo.
 
 ### 🔐 Signing in
 
@@ -965,6 +1100,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/codes/{code}/history` | One CN code's SCD Type 2 version timeline, oldest first |
 | `GET` | `/dashboard/stats` | Aggregate stats: reference data, review activity, CN import runs |
 | `GET` | `/assess-risk` | Composite risk score combining classification, screening and duty |
+| `POST` | `/extract-invoice` | Read an uploaded invoice PDF and return the fields found in it (sign-in required) |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
 **`GET /search` parameters**
@@ -1253,7 +1389,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | `main.py` | 🟢 98% |
 | `pg_adapter.py` | 🟢 96% |
 | `auth.py` | 🟢 100% |
-| **Total** | **🟢 98.63%** (301 tests in 1.7 s, gate at 80%) — **no module is excluded from the gate** |
+| `document_extraction.py` | 🟢 99% |
+| **Total** | **🟢 98.52%** (358 tests in 2.0 s, gate at 80%) — **no module is excluded from the gate** |
 
 The 13 PostgreSQL parity tests are *not* in that count: they skip unless `CUSTOMSIQ_TEST_POSTGRES_URL`
 points at a real server (CI sets it; a plain local `pytest` needs no Postgres and no driver).
@@ -1440,6 +1577,7 @@ coverage gate:
 | `dashboard.py` | ✅ **Shipped** | Read-only reporting layer over Phases 1 & 2, via `GET /dashboard/stats` |
 | `risk.py` | ✅ **Shipped** | Composite shipment risk score over classification, screening and duty, via `GET /assess-risk` |
 | `auth.py` (RBAC) | ✅ **Shipped** | Accounts, sessions and four roles; `reviewer_name` now comes from the session |
+| `document_extraction.py` | ✅ **Shipped** | Invoice PDF upload that pre-fills the classification, duty and risk forms |
 
 Planned extensions: country-level embargo checks and product/destination restrictions, alias and
 transliteration handling for entity names, quota/anti-dumping components on top of the duty
@@ -1483,6 +1621,7 @@ CustomsIQ/
 │   │   ├── tariff_calculator.py # duty rate selection + calculation
 │   │   ├── review.py            # human-review audit trail (four-eyes)
 │   │   ├── auth.py              # accounts, sessions, roles — stdlib only, no new deps
+│   │   ├── document_extraction.py # invoice PDF → fields (pypdf + labelled-line regex)
 │   │   ├── dashboard.py         # read-only aggregation over Phases 1 & 2
 │   │   ├── risk.py              # composite shipment risk score
 │   │   ├── exceptions.py        # typed error hierarchy
@@ -1493,7 +1632,8 @@ CustomsIQ/
 │   │   └── static/index.html    # web frontend — single file, no build step
 │   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── scripts/import_cn_codes.py   # official CN file → hs_codes, versioning changes (SCD Type 2)
-├── tests/                       # 301 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard, risk, auth/RBAC
+├── tests/                       # 358 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard, risk, auth/RBAC, extraction
+│   └── fixtures/                #   sample CN export + invoice PDFs (make_invoice_pdfs.py regenerates them)
 │   ├── conftest.py              #   lowers the password work factor for the suite
 │   ├── helpers.py               #   signed-in TestClient helpers
 │                                #   + 13 Postgres parity tests, skipped unless a server is configured

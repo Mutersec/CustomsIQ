@@ -49,6 +49,11 @@ PERMISSIONS = {
     "review:duty": ANALYST,
     "review:screening": COMPLIANCE_OFFICER,
     "audit:read": VIEWER,
+    # Uploading a document is the one endpoint that spends CPU parsing
+    # attacker-supplied binary, so it is the one analysis feature that isn't
+    # anonymous. Viewer is deliberately the floor: the demo accounts are
+    # published, so the feature stays tryable by anyone who signs in.
+    "document:extract": VIEWER,
     "users:manage": ADMIN,
 }
 

@@ -1,6 +1,7 @@
 """FastAPI HTTP surface for CN code search, sanctions screening and duty calculation."""
 
 import sqlite3
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from src.customsiq import auth, review
 from src.customsiq.cn_classifier import classify
@@ -22,6 +24,7 @@ from src.customsiq.database import (
     seed,
     update_user_role,
 )
+from src.customsiq.document_extraction import PDF_MAGIC, extract_invoice
 from src.customsiq.embargo_screener import screen_entity
 from src.customsiq.exceptions import (
     AuthenticationError,
@@ -266,6 +269,107 @@ def assess_risk(
             }
             for f in result.factors
         ],
+    }
+
+
+#: Upload timestamps per account, for the rate limit below. Application memory
+#: only: this deliberately touches no database, so it behaves identically on the
+#: SQLite and PostgreSQL backends and a backend switch can neither bypass nor
+#: duplicate it.
+_UPLOAD_HITS: dict = {}
+
+_RATE_WINDOW_SECONDS = 60.0
+
+
+def _check_rate_limit(username: str) -> None:
+    """Allow N uploads per account per minute, or raise 429.
+
+    # ponytail: one dict per process, cleared by a restart — right for the one
+    # instance this runs on, and the wrong shape the moment there are two (each
+    # would allow the full quota). Shared state (Redis, or a table) is the
+    # upgrade path if a second instance ever appears.
+    """
+    now = time.monotonic()
+    recent = [hit for hit in _UPLOAD_HITS.get(username, []) if now - hit < _RATE_WINDOW_SECONDS]
+    if len(recent) >= settings.upload_rate_limit_per_minute:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Too many uploads. The limit is "
+                f"{settings.upload_rate_limit_per_minute} per minute."
+            ),
+        )
+    recent.append(now)
+    _UPLOAD_HITS[username] = recent
+
+
+async def _read_capped_body(request: Request) -> bytes:
+    """Read the request body, refusing anything over the configured cap.
+
+    Counted over the incoming chunks and aborted the moment the cap is passed,
+    rather than buffering the whole body and checking Content-Length after the
+    fact — a header can lie, and buffering first is exactly the bug worth not
+    having on the one endpoint that accepts arbitrary bytes.
+    """
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > settings.upload_max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File is too large (limit {settings.upload_max_bytes // 1024} KB).",
+            )
+    return bytes(body)
+
+
+@app.post("/extract-invoice")
+async def extract_invoice_upload(
+    request: Request,
+    user: User = Depends(require_permission("document:extract")),
+) -> dict:
+    """Read an uploaded invoice PDF and return the fields found in it.
+
+    Send the PDF as the raw request body (`Content-Type: application/pdf`).
+
+    This endpoint deliberately does **not** classify, price or score anything.
+    It returns fields for the user to review and edit in the existing forms,
+    which then call the existing `/classify`, `/calculate-duty` and
+    `/assess-risk` routes — thin composable pieces rather than one opaque
+    action that decides on a document's behalf.
+
+    The upload is never stored: the bytes live in memory for this request only.
+    Requires a signed-in account (any role); anonymous callers are refused
+    before a single byte is read.
+    """
+    _check_rate_limit(user.username)
+    data = await _read_capped_body(request)
+
+    # Content decides the type, never the filename or a declared Content-Type.
+    if not data.startswith(PDF_MAGIC):
+        raise HTTPException(status_code=415, detail="Only PDF files are supported.")
+
+    try:
+        # Off the event loop: parsing is CPU-bound, and this route is async only
+        # because streaming the body requires it.
+        result = await run_in_threadpool(extract_invoice, data)
+    except InvalidQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "fields": [
+            {
+                "name": field.name,
+                "value": field.value,
+                "label": field.label,
+                "source_line": field.source_line,
+            }
+            for field in result.fields
+        ],
+        "missing": result.missing,
+        "completeness": result.completeness,
+        "page_count": result.page_count,
+        "has_text_layer": result.has_text_layer,
+        "notes": result.notes,
     }
 
 

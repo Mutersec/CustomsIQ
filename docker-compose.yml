@@ -21,6 +21,8 @@ services:
       # Demo accounts (one per role, credentials in the README) are seeded only
       # into an empty users table. Set to "false" for a real deployment.
       CUSTOMSIQ_SEED_DEMO_USERS: "true"
+      CUSTOMSIQ_UPLOAD_MAX_BYTES: "2097152"
+      CUSTOMSIQ_UPLOAD_RATE_LIMIT_PER_MINUTE: "10"
       # Empty by default => SQLite, exactly as before. Set it to opt into the
       # postgres service below (which also needs --profile postgres):
       #   CUSTOMSIQ_DATABASE_URL=postgresql://customsiq:customsiq@postgres:5432/customsiq \

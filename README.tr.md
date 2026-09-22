@@ -9,7 +9,7 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Kapsam](https://img.shields.io/badge/kapsam-%9825-brightgreen)
-![Testler](https://img.shields.io/badge/testler-301%20ge%C3%A7ti-brightgreen)
+![Testler](https://img.shields.io/badge/testler-358%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
@@ -83,6 +83,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
 | 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
+| 📄 | **Fatura okuma** | PDF fatura yükleyin; sınıflandırma, vergi ve risk formları önceden dolu gelsin — metin katmanlı PDF, saf Python, hiçbir şey saklanmaz |
 | 🔐 | **RBAC** | Gerçek hesaplar üzerinde dört rol — yaptırım onayı uyum yetkilisi gerektirir ve denetim izi bir metin kutusunu değil, oturumu adlandırır |
 | 🐘 | **Çift veritabanı desteği** | Aynı SQL PostgreSQL üzerinde de çalışır — tek bir ortam değişkeniyle açılır, varsayılan SQLite kalır |
 | ⚙️ | **Ortam tabanlı yapılandırma** | `pydantic-settings` `.env` dosyasını okur — sabit kodlanmış yol veya eşik yok |
@@ -507,6 +508,96 @@ böylece iki arka uç birbirinden ayrışamaz. Yedi karar modülü, `sqlite3.Con
 açıklamalarına kadar değişmedi: hiçbiri SQL çalıştırmaz, yalnızca `conn`'u `database.py`'ye geri
 verir; bu yüzden Postgres dalı sarmalayıcıyı `cast` ile döndürür.
 
+### 📄 Fatura okuma: neyi okur, neyi okuyamaz
+
+Bir ticari fatura yükleyin; sınıflandırma, vergi ve risk formları önceden dolu gelsin.
+Bu bir **kolaylık katmanıdır, karar motoru değil**: `document_extraction.py` bir PDF'i
+metin ve sayılara dönüştürür, kararlar ise zaten bulundukları yerde kalır. Modül yedi
+karar modülünün hiçbirini içe aktarmaz — bir test bunu doğrular — dolayısıyla sessizce
+ikinci bir sınıflandırıcıya dönüşemez. Onları kendisi de çağırmaz: uç nokta alanları
+döndürür, kullanıcı gözden geçirip düzenler ve zaten var olan düğmelere basar. İnce,
+birleştirilebilir parçalar, bir belge adına karar veren opak tek bir eylemden iyidir.
+
+**Tek üretim bağımlılığı ve neden kabul edildi.** Bu, `requirements.txt`'e — yani
+Render'ın derlemede kurduğu dosyaya — paket ekleyen ilk faz; Faz 6 ve 7 bu dosyaya
+bilinçli olarak dokunmamıştı. Burada kaçınılmaz, çünkü özelliğin kendisi PDF ayrıştırma;
+bu yüzden seçim varsayılmadan önce doğrulandı: `pypdf==6.19.0` bir `py3-none-any`
+tekerleği yayımlıyor (**platforma özgü tekerlek hiç yok**, yani derlenecek bir şey yok),
+Python ≥3.9 istiyor — projenin tabanıyla uyumlu — ve tek çalışma zamanı bağımlılığı
+pydantic üzerinden zaten kurulu olan `typing_extensions`. Yalnızca PyPI'ye bakılmadı,
+kurulumdan sonra da kontrol edildi: kurulu pakette tek bir `.so`, `.pyd` veya `.dylib`
+yok. Tesseract yok, poppler yok, sistem kütüphanesi yok.
+
+**Alanlar ve her birinin gittiği yer.** Her alan, mevcut bir fonksiyonun zaten
+argüman olarak aldığı için vardır:
+
+| Alan | Eşleşen etiketler | Beslediği |
+|---|---|---|
+| `description` | Description of Goods · Goods Description · Description · Product · Commodity | `classify()` / `assess_shipment(description=)` |
+| `hs_code` | HS Code · Commodity Code · Tariff Code · CN Code | `calculate_duty()` / `assess_shipment(hs_code=)` |
+| `customs_value` | Invoice Value · Customs Value · Total Amount · Total | `calculate_duty()` / `assess_shipment()` |
+| `currency` | değer satırından okunur (EUR/USD/GBP, €/$/£) | yalnızca gösterim — bu proje döviz çevirisi yapmaz, yapıyormuş gibi davranmak uydurma olurdu |
+| `country_of_origin` | Country of Origin · Origin · Made In | `calculate_duty()` / `assess_shipment()` |
+| `party_name` | **Consignee** · Supplier · Exporter · Seller · Shipper | `assess_shipment()` → `screen_entity()` |
+
+`party_name`, sayfada önce bir Exporter satırı gelse bile **Consignee**'yi tercih eder;
+çünkü yasaklı taraf taraması karşı tarafla ilgilidir. Değerler yalnızca bu projenin
+"geçerli"yi zaten tanımladığı yerlerde normalleştirilir: kodlar için `validate_cn_code`,
+menşe için `validate_country_code` (böylece `Norway` da `NO` da `NO` verir).
+
+**Alan tespiti etiketli satır regex'idir ve bu bilinçli bir tavandır.** Alan başına bir
+desen, eş anlamlı etiket listesiyle, artı küçük normalleştiriciler — yaklaşık 60 satır,
+sıfır bağımlılık. Alternatif (LayoutLM, donut, spaCy) **20 satırlık bir TF-IDF için
+scikit-learn'ü reddetmiş** bir projeye model ağırlıkları ve torch/transformers yığını
+getirir ve yapılandırılmış belgelerde etiketli eşleşmeyi geçmek için yine de denetimli
+eğitim ister. Süslemeden söylemek gerekirse: **bu, alanlarını satır satır etiketleyen
+faturalarda çalışır.** Çerçevesiz bir tablo sütunundaki değeri, etiketle değerin metin
+akışında birbirinden uzağa düştüğü iki sütunlu bir düzeni, serbest bir paragrafı ya da
+İngilizce olmayan bir belgeyi *okuyamaz* — etiketler İngilizcedir ve TR/DE etiketleri
+bu fazın bilinçli olarak kapsam dışı bıraktığı bir hedeftir. Kısmi çıkarım normal
+durumdur; bu yüzden `missing` ve `completeness` her yanıtın parçasıdır ve bu yüzden
+hiçbir şey otomatik gönderilmez. Gerçek bir belirsizlik açıkça ele alınır: `1.234,56`
+ve `12,450.00` ikisi de anlaşılır — **en son** gelen ayırıcı ondalık nokta sayılır.
+
+Her alan, eşleştiği etiketi ve geldiği satırı bildirir; bu, `classify`'ın
+`matched_terms`'i ve `risk`'in faktör dökümüyle aynı açıklanabilirlik sözleşmesidir —
+yani inceleyen kişi bir değerin *neden* seçildiğini görebilir, yalnızca ne olduğunu değil.
+
+**Taranmış PDF'ler fark edilir, sessizce yanlış işlenmez.** Metin katmanı olmayan bir
+sayfa `has_text_layer: false` ve bunu söyleyen bir notla döner; ayrıştırıcı hatası gibi
+görünen boş bir alan listesiyle değil. OCR **yapılmadı** — belgelenmiş bir genişleme
+noktasıdır: `pytesseract`, `tesseract-ocr` **sistem ikilisini** gerektirir ve Render'ın
+yerel Python buildpack'inde bunu kuracak bir apt katmanı yoktur. Postgres ve Docker'ı
+canlı yolun dışında tutan mantığın aynısı; kimsenin kullanmadığı yarım bir kanca
+eklemek, sınırı adıyla söylemekten kötü olurdu.
+
+**Yükleme güvenliği**, çalıştığı sırayla:
+
+| Önlem | Davranış |
+|---|---|
+| Kimlik doğrulama | Oturum açmış olmak, her rol yeterli (`document:extract` → `viewer`). Anonim çağrılar **tek bayt okunmadan** `401` alır. Demo hesapları yayımlı olduğu için özellik herkesin denemesine açık kalır |
+| Boyut | 2 MB; gelen akış üzerinden sayılır ve aktarım ortasında kesilir → `413`. Bilinçli olarak `Content-Length` değil — başlık yalan söyleyebilir ve önce tamponlamak tam da istenmeyen hatadır |
+| Tür | Baytlar `%PDF-` ile başlamalı → `415`. Dosya adına ve bildirilen `Content-Type`'a asla güvenilmez, dosya adı hiçbir yolda kullanılmaz |
+| Yapı | En fazla 10 sayfa okunur; şifreli PDF'ler reddedilir; her ayrıştırma hatası temiz bir `400` olur, asla bir yığın izi değil |
+| Hız | Hesap başına dakikada 10 yükleme |
+| Saklama | **Hiçbir şey saklanmaz.** Baytlar tek bir istek boyunca `BytesIO` içinde yaşar. `tempfile` yok, `open()` yok, yükleme dizini yok, veritabanı satırı yok, günlüklerde dosya adı veya belge metni yok. İki test bunu doğrular: dosyaya yazan çağrılar için kaynak taraması ve gerçek bir yükleme çevresinde çalışma ile geçici dizinin anlık görüntüsü |
+
+**Aktarım multipart değil, ham gövdedir** — `Content-Type: application/pdf` ile PDF
+doğrudan istek gövdesinde. FastAPI multipart yüklemeler için `python-multipart` ister;
+onun güncel DoS açığının (CVE-2026-42561, sınırsız parça başlıkları) düzeltmesi 0.0.27
+ile geldi ve bu sürüm Python ≥3.10 istiyor — projenin 3.9 tabanının üstünde. Burada
+kurulabilen her sürüm, saldırganın gönderdiği baytları kabul eden tek uç noktada
+yamalanmamış bir ayrıştırıcı DoS'u taşıyor. Multipart'ı atlamak bu hata sınıfının
+tamamını saldırı yüzeyinden çıkarıyor ve yalnızca Swagger'daki dosya seçici bileşenine
+mal oluyor.
+
+Hız sınırı **yalnızca uygulama belleğindedir** — uygulama sürecinde, kullanıcı adına
+göre anahtarlanan tek bir sözlük. Veritabanına hiç dokunmaz; dolayısıyla Faz 6'daki
+arka uç seçimi onu değiştirmez, atlayamaz ve çoğaltamaz. Etkin sınırı değiştiren şey
+arka uç değil, süreç sayısıdır: iki örnek her biri tam kotayı verir ve yeniden başlatma
+sayacı sıfırlar. Bu tek örnek için doğru; paylaşımlı durum (Redis ya da bir tablo) bir
+gün bu doğru olmaktan çıkarsa izlenecek yoldur.
+
 ### 🔐 Bağımlılıksız kimlik doğrulama
 
 `reviewer_name` eskiden istemcinin yazdığı şeydi. Bu depodaki beş ayrı yer bunu
@@ -571,6 +662,7 @@ toplu okumayı ve hesap yönetimini korur.
 | `GET /review/history` (tüm denetim kaydı) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
 | `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
+| `POST /extract-invoice` (yükleme) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /auth/register` · `/auth/login` · `/auth/logout` · `GET /auth/me` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /auth/users` · `POST /auth/users/{username}/role` | ❌ 401 | ❌ 403 | ❌ 403 | ❌ 403 | ✅ |
 
@@ -749,6 +841,48 @@ Tüm ayarlar ortam değişkenlerinden veya `.env` dosyasından okunur:
 | `CUSTOMSIQ_PASSWORD_ITERATIONS` | `600000` | PBKDF2-HMAC-SHA256 iş faktörü (OWASP değeri; hash başına ≈160 ms) |
 | `CUSTOMSIQ_SESSION_TTL_HOURS` | `12` | Oturum çerezinin geçerlilik süresi |
 | `CUSTOMSIQ_SEED_DEMO_USERS` | `true` | Dört demo hesabını **boş** bir users tablosuna ekler. Gerçek dağıtımda `false` yapın |
+| `CUSTOMSIQ_UPLOAD_MAX_BYTES` | `2097152` | Kabul edilen en büyük fatura yüklemesi (2 MB); gövde akarken uygulanır |
+| `CUSTOMSIQ_UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | Hesap başına dakikada izin verilen yükleme sayısı |
+
+### 📄 Fatura okuma
+
+Oturum açın (her rol olur), **Fatura Okuma** panelinden bir PDF seçin ve **Alanları
+çıkar**'a basın. Her alan, eşleştiği etiketle birlikte gösterilir; bulunamayanlar ayrıca
+listelenir. **Formları doldur** ise değerleri sınıflandırma, vergi ve risk alanlarına
+yazar — ve orada durur. Sizin yerinize hiçbir şey gönderilmez: değerleri gözden geçirin
+ya da düzenleyin, sonra zaten bildiğiniz düğmeye basın.
+
+```bash
+curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "demo_viewer", "password": "viewer-demo-2026"}'
+
+curl -b cookies.txt -X POST "http://localhost:8000/extract-invoice" \
+  -H "Content-Type: application/pdf" \
+  --data-binary @fatura.pdf
+```
+
+```json
+{
+  "fields": [
+    {"name": "country_of_origin", "value": "NO", "label": "Country of Origin",
+     "source_line": "Country of Origin:    Norway"},
+    {"name": "customs_value", "value": "12450.0", "label": "Invoice Value",
+     "source_line": "Invoice Value:        EUR 12,450.00"},
+    {"name": "hs_code", "value": "6109100000", "label": "HS Code",
+     "source_line": "HS Code:              6109100000"}
+  ],
+  "missing": [],
+  "completeness": 1.0,
+  "page_count": 1,
+  "has_text_layer": true,
+  "notes": []
+}
+```
+
+Bunu üreten örnek fatura `tests/fixtures/sample_invoice.pdf` olarak depoda duruyor ve
+`tests/fixtures/make_invoice_pdfs.py` onu yeniden üretiyor — böylece fixture, depoda
+opak bir ikili dosya olarak kalmıyor.
 
 ### 🔐 Oturum açma
 
@@ -985,6 +1119,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/codes/{code}/history` | Bir CN kodunun SCD Type 2 sürüm zaman çizelgesi, en eski önce |
 | `GET` | `/dashboard/stats` | Toplu istatistikler: referans veriler, inceleme faaliyeti, CN içe aktarma çalıştırmaları |
 | `GET` | `/assess-risk` | Sınıflandırma, tarama ve vergiyi birleştiren toplu risk skoru |
+| `POST` | `/extract-invoice` | Yüklenen fatura PDF'ini okur ve bulunan alanları döndürür (oturum gerekir) |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
 **`GET /search` parametreleri**
@@ -1229,7 +1364,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | `main.py` | 🟢 %98 |
 | `pg_adapter.py` | 🟢 %96 |
 | `auth.py` | 🟢 %100 |
-| **Toplam** | **🟢 %98,63** (1,7 sn'de 301 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+| `document_extraction.py` | 🟢 %99 |
+| **Toplam** | **🟢 %98,52** (2,0 sn'de 358 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
 
 13 PostgreSQL parite testi bu sayıya dahil değildir: `CUSTOMSIQ_TEST_POSTGRES_URL` gerçek bir
 sunucuyu göstermedikçe atlanırlar (CI bunu tanımlar; yerel düz bir `pytest` için ne Postgres ne de
@@ -1419,6 +1555,7 @@ eşiğiyle ölçülüyor:
 | `dashboard.py` | ✅ **Tamamlandı** | Faz 1 ve 2 üzerine salt-okunur raporlama, `GET /dashboard/stats` üzerinden |
 | `risk.py` | ✅ **Tamamlandı** | Sınıflandırma, tarama ve vergi üzerinden toplu sevkiyat risk skoru, `GET /assess-risk` üzerinden |
 | `auth.py` (RBAC) | ✅ **Tamamlandı** | Hesaplar, oturumlar ve dört rol; `reviewer_name` artık oturumdan gelir |
+| `document_extraction.py` | ✅ **Tamamlandı** | Sınıflandırma, vergi ve risk formlarını dolduran fatura PDF yüklemesi |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
 isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
@@ -1461,6 +1598,7 @@ CustomsIQ/
 │   │   ├── tariff_calculator.py # vergi oranı seçimi + hesaplama
 │   │   ├── review.py            # insan onayı denetim izi (dört göz)
 │   │   ├── auth.py              # hesaplar, oturumlar, roller — yalnızca stdlib, yeni bağımlılık yok
+│   │   ├── document_extraction.py # fatura PDF'i → alanlar (pypdf + etiketli satır regex'i)
 │   │   ├── dashboard.py         # Faz 1 ve 2 üzerine salt-okunur toplulaştırma
 │   │   ├── risk.py              # toplu sevkiyat risk skoru
 │   │   ├── exceptions.py        # tipli hata hiyerarşisi
@@ -1471,7 +1609,8 @@ CustomsIQ/
 │   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
 ├── scripts/import_cn_codes.py   # resmî CN dosyası → hs_codes, değişiklikleri sürümler (SCD Type 2)
-├── tests/                       # 301 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli, risk, kimlik/RBAC
+├── tests/                       # 358 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli, risk, kimlik/RBAC, fatura okuma
+│   └── fixtures/                #   örnek CN dosyası + fatura PDF'leri (make_invoice_pdfs.py yeniden üretir)
 │   ├── conftest.py              #   test paketi için parola iş faktörünü düşürür
 │   ├── helpers.py               #   oturum açmış TestClient yardımcıları
 │                                #   + sunucu tanımlı değilse atlanan 13 Postgres parite testi

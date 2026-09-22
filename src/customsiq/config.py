@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     session_ttl_hours: int = 12
     seed_demo_users: bool = True
 
+    # Invoice upload limits. The size cap is enforced while streaming the body,
+    # not from Content-Length, and the rate limit is per account, per process.
+    upload_max_bytes: int = 2_097_152
+    upload_rate_limit_per_minute: int = 10
+
     @field_validator("database_url")
     @classmethod
     def _postgres_url_only(cls, value: Optional[str]) -> Optional[str]:

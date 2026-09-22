@@ -9,7 +9,7 @@ prüfen und den fälligen Zoll berechnen.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Testabdeckung](https://img.shields.io/badge/Testabdeckung-98%25-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-301%20bestanden-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-358%20bestanden-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/Linting-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/Stil-black-000000)
@@ -84,6 +84,7 @@ entscheidet.
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
 | 🌐 | **REST-API** | `GET /search` und `GET /screen` über FastAPI, mit erzeugter `/docs`-Oberfläche |
 | 🗄️ | **Speicherung ohne Einrichtungsaufwand** | SQLite aus der Standardbibliothek, vorbefüllt mit 20 Codes + 18 fiktiven Einträgen |
+| 📄 | **Rechnungsauslesung** | Ein Rechnungs-PDF hochladen und die Einreihungs-, Zoll- und Risikoformulare kommen vorausgefüllt zurück — Text-PDFs, reines Python, nichts wird gespeichert |
 | 🔐 | **RBAC** | Vier Rollen über echte Konten — Sanktionsfreigaben brauchen einen Compliance-Officer, und das Prüfprotokoll nennt die Sitzung, nicht ein Textfeld |
 | 🐘 | **Zwei Backends** | Dasselbe SQL läuft auch auf PostgreSQL — per Umgebungsvariable zuschaltbar, Standard bleibt SQLite |
 | ⚙️ | **Konfiguration über Umgebung** | `pydantic-settings` liest `.env` — keine fest codierten Pfade oder Schwellenwerte |
@@ -519,6 +520,104 @@ Entscheidungsmodule blieben unverändert, bis hin zu ihren `sqlite3.Connection`-
 führt SQL aus, sie reichen `conn` nur an `database.py` zurück — deshalb gibt der PostgreSQL-Zweig
 den Wrapper per `cast` zurück.
 
+### 📄 Rechnungsauslesung: was sie liest und was nicht
+
+Laden Sie eine Handelsrechnung hoch, und die Einreihungs-, Zoll- und Risikoformulare
+kommen vorausgefüllt zurück. Das ist eine **Komfortschicht, keine Entscheidungslogik**:
+`document_extraction.py` macht aus einem PDF Zeichenketten und Zahlen, die
+Entscheidungen bleiben, wo sie längst liegen. Das Modul importiert keines der sieben
+Entscheidungsmodule — ein Test hält das fest — es kann also nicht stillschweigend zu
+einem zweiten Klassifikator werden. Es ruft sie auch nicht selbst auf: der Endpunkt
+liefert Felder, die Nutzerin prüft und korrigiert sie und drückt dann die Knöpfe, die
+es schon gab. Dünne, kombinierbare Teile schlagen eine undurchsichtige Aktion, die
+stellvertretend für ein Dokument entscheidet.
+
+**Die eine Produktionsabhängigkeit, und warum sie zulässig war.** Dies ist die erste
+Phase, die ein Paket in `requirements.txt` aufnimmt — die Datei, die Renders Build
+installiert und die Phase 6 und 7 bewusst unangetastet ließen. Hier unvermeidlich, denn
+das Feature *ist* PDF-Parsing; also wurde die Wahl vor der Festlegung überprüft statt
+angenommen: `pypdf==6.19.0` liefert ein `py3-none-any`-Wheel (**es existiert überhaupt
+kein plattformspezifisches Wheel**, es wird also nichts kompiliert), verlangt Python
+≥3.9, was zur Untergrenze dieses Projekts passt, und hat genau eine Laufzeitabhängigkeit:
+`typing_extensions`, über pydantic ohnehin vorhanden. Nicht nur auf PyPI geprüft,
+sondern nach der Installation: im installierten Paket findet sich keine einzige `.so`,
+`.pyd` oder `.dylib`. Kein Tesseract, kein poppler, keine Systembibliothek.
+
+**Die Felder und wohin sie gehen.** Jedes Feld existiert, weil eine bestehende Funktion
+es ohnehin als Argument nimmt:
+
+| Feld | Erkannte Beschriftungen | Speist |
+|---|---|---|
+| `description` | Description of Goods · Goods Description · Description · Product · Commodity | `classify()` / `assess_shipment(description=)` |
+| `hs_code` | HS Code · Commodity Code · Tariff Code · CN Code | `calculate_duty()` / `assess_shipment(hs_code=)` |
+| `customs_value` | Invoice Value · Customs Value · Total Amount · Total | `calculate_duty()` / `assess_shipment()` |
+| `currency` | aus der Betragszeile gelesen (EUR/USD/GBP, €/$/£) | nur zur Anzeige — dieses Projekt rechnet keine Währungen um, und so zu tun als ob hieße, eine Umrechnung zu erfinden |
+| `country_of_origin` | Country of Origin · Origin · Made In | `calculate_duty()` / `assess_shipment()` |
+| `party_name` | **Consignee** · Supplier · Exporter · Seller · Shipper | `assess_shipment()` → `screen_entity()` |
+
+`party_name` bevorzugt **Consignee**, auch wenn eine Exporter-Zeile weiter oben steht,
+denn die Sanktionsprüfung betrifft die Gegenpartei. Normalisiert wird nur dort, wo
+dieses Projekt „gültig" bereits definiert: `validate_cn_code` für Codes,
+`validate_country_code` für Ursprünge (`Norway` und `NO` ergeben beide `NO`).
+
+**Die Felderkennung ist Regex auf beschrifteten Zeilen, und das ist eine bewusste
+Obergrenze.** Ein Muster je Feld über eine Synonymliste, dazu kleine Normalisierer —
+rund 60 Zeilen, keine Abhängigkeit. Die Alternative (LayoutLM, donut, spaCy) brächte
+Modellgewichte und einen torch/transformers-Stack in ein Projekt, das
+**scikit-learn für ein TF-IDF über 20 Zeilen abgelehnt hat**, und bräuchte immer noch
+Training, um eine beschriftete Übereinstimmung auf strukturierten Dokumenten zu
+schlagen. Unverklausuliert gesagt: **das funktioniert bei Rechnungen, die ihre Felder
+zeilenweise beschriften.** Es liest *keinen* Wert aus einer rahmenlosen Tabellenspalte,
+keinem zweispaltigen Layout, in dem Beschriftung und Wert im Textstrom weit
+auseinanderfallen, keinem Fließtext und keinem nicht-englischen Dokument — die
+Beschriftungen sind englisch, TR/DE-Beschriftungen sind ein bewusstes Nicht-Ziel dieser
+Phase. Teilweise Auslesung ist der Normalfall; deshalb sind `missing` und
+`completeness` Teil jeder Antwort und deshalb wird nie automatisch abgeschickt. Eine
+echte Mehrdeutigkeit wird ausdrücklich behandelt: `1.234,56` und `12,450.00` werden
+beide verstanden, indem das **zuletzt** auftretende Trennzeichen als Dezimalpunkt gilt.
+
+Jedes Feld nennt die Beschriftung, auf die es passte, und die Zeile, aus der es stammt —
+derselbe Erklärbarkeitsvertrag wie `matched_terms` bei `classify` und die
+Faktoraufschlüsselung bei `risk`. Eine Prüferin sieht also, *warum* ein Wert gewählt
+wurde, nicht nur welcher.
+
+**Gescannte PDFs werden erkannt, nicht stillschweigend falsch behandelt.** Eine Seite
+ohne Textebene kommt mit `has_text_layer: false` und einem entsprechenden Hinweis
+zurück, statt mit einer leeren Feldliste, die wie ein Parser-Fehler aussieht. OCR ist
+**nicht gebaut** — es ist ein dokumentierter Erweiterungspunkt: `pytesseract` braucht
+die **Systembinärdatei** `tesseract-ocr`, und Renders nativer Python-Buildpack hat keine
+apt-Schicht, um sie zu installieren. Dieselbe Überlegung hält Postgres und Docker vom
+Live-Pfad fern; einen halbfertigen Haken einzubauen, den niemand nutzt, wäre schlechter,
+als die Grenze beim Namen zu nennen.
+
+**Upload-Sicherheit**, in der Reihenfolge der Ausführung:
+
+| Maßnahme | Verhalten |
+|---|---|
+| Authentifizierung | Angemeldet, jede Rolle genügt (`document:extract` → `viewer`). Anonyme Aufrufe erhalten `401`, **bevor ein Byte gelesen wird**. Die Demo-Konten sind veröffentlicht, das Feature bleibt also für alle ausprobierbar |
+| Größe | 2 MB, über den eingehenden Stream gezählt und mitten in der Übertragung abgebrochen → `413`. Bewusst nicht `Content-Length` — ein Header kann lügen, und erst zu puffern ist genau der Fehler, den man hier nicht haben will |
+| Typ | Die Bytes müssen mit `%PDF-` beginnen → `415`. Dateiname und deklarierter `Content-Type` werden nie vertraut, der Dateiname landet in keinem Pfad |
+| Struktur | Höchstens 10 Seiten; verschlüsselte PDFs werden abgelehnt; jeder Parse-Fehler wird ein sauberer `400`, nie ein Traceback |
+| Rate | 10 Uploads pro Konto und Minute |
+| Speicherung | **Es wird nichts gespeichert.** Die Bytes leben für einen Request in einem `BytesIO`. Kein `tempfile`, kein `open()`, kein Upload-Verzeichnis, keine Datenbankzeile, kein Dateiname und kein Dokumenttext im Log. Zwei Tests sichern das ab: ein Quell-Scan nach schreibenden Aufrufen und ein Schnappschuss von Arbeits- und Temp-Verzeichnis um einen echten Upload herum |
+
+**Übertragen wird als roher Body, nicht als Multipart** — `Content-Type:
+application/pdf` mit dem PDF als Request-Body. FastAPI braucht für Multipart-Uploads
+`python-multipart`; der Fix für dessen aktuelle DoS-Meldung (CVE-2026-42561, unbegrenzte
+Part-Header) kam in 0.0.27, und das verlangt Python ≥3.10 — über der 3.9-Untergrenze
+dieses Projekts. Jede hier installierbare Version trägt also einen ungepatchten
+Parser-DoS, ausgerechnet am einzigen Endpunkt, der beliebige Bytes annimmt. Multipart
+wegzulassen nimmt diese ganze Fehlerklasse aus der Angriffsfläche und kostet nur das
+Datei-Auswahlfeld in Swagger.
+
+Das Rate Limit liegt **ausschließlich im Anwendungsspeicher** — ein Dict im
+App-Prozess, nach Benutzername indiziert. Es fasst keine Datenbank an, die Backend-Wahl
+aus Phase 6 ändert daran also nichts und kann es weder umgehen noch verdoppeln. Was das
+effektive Limit ändert, ist nicht das Backend, sondern die Prozessanzahl: zwei Instanzen
+gewähren je das volle Kontingent, und ein Neustart setzt den Zähler zurück. Für die eine
+Instanz hier korrekt; gemeinsamer Zustand (Redis oder eine Tabelle) ist der Ausbauweg,
+falls das einmal nicht mehr stimmt.
+
 ### 🔐 Authentifizierung ohne Abhängigkeit
 
 `reviewer_name` war bisher das, was der Client hineingeschrieben hat. Fünf Stellen in
@@ -585,6 +684,7 @@ Gesamtblick darauf, wer was geprüft hat, und die Kontenverwaltung.
 | `GET /review/history` (vollständiges Prüfprotokoll) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
 | `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
+| `POST /extract-invoice` (Upload) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /auth/register` · `/auth/login` · `/auth/logout` · `GET /auth/me` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /auth/users` · `POST /auth/users/{username}/role` | ❌ 401 | ❌ 403 | ❌ 403 | ❌ 403 | ✅ |
 
@@ -767,6 +867,49 @@ Alle Einstellungen stammen aus Umgebungsvariablen oder aus `.env`:
 | `CUSTOMSIQ_PASSWORD_ITERATIONS` | `600000` | PBKDF2-HMAC-SHA256-Arbeitsfaktor (OWASP-Wert; ≈160 ms pro Hash) |
 | `CUSTOMSIQ_SESSION_TTL_HOURS` | `12` | Gültigkeitsdauer des Session-Cookies |
 | `CUSTOMSIQ_SEED_DEMO_USERS` | `true` | Legt die vier Demo-Konten in einer **leeren** users-Tabelle an. Für echte Deployments auf `false` setzen |
+| `CUSTOMSIQ_UPLOAD_MAX_BYTES` | `2097152` | Größter akzeptierter Rechnungs-Upload (2 MB), beim Streamen des Bodys geprüft |
+| `CUSTOMSIQ_UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | Erlaubte Uploads pro Konto und Minute |
+
+### 📄 Eine Rechnung auslesen
+
+Melden Sie sich an (jede Rolle genügt), wählen Sie im Bereich **Rechnungsauslesung** ein
+PDF und klicken Sie **Felder auslesen**. Jedes Feld erscheint mit der Beschriftung, auf
+die es passte, dazu eine Liste dessen, was nicht gefunden wurde. **Formulare
+vorausfüllen** schreibt die Werte dann in die Einreihungs-, Zoll- und Risikofelder — und
+hört dort auf. Es wird nichts für Sie abgeschickt: prüfen oder ändern Sie die Werte und
+drücken Sie dann den Knopf, den Sie ohnehin kennen.
+
+```bash
+curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "demo_viewer", "password": "viewer-demo-2026"}'
+
+curl -b cookies.txt -X POST "http://localhost:8000/extract-invoice" \
+  -H "Content-Type: application/pdf" \
+  --data-binary @rechnung.pdf
+```
+
+```json
+{
+  "fields": [
+    {"name": "country_of_origin", "value": "NO", "label": "Country of Origin",
+     "source_line": "Country of Origin:    Norway"},
+    {"name": "customs_value", "value": "12450.0", "label": "Invoice Value",
+     "source_line": "Invoice Value:        EUR 12,450.00"},
+    {"name": "hs_code", "value": "6109100000", "label": "HS Code",
+     "source_line": "HS Code:              6109100000"}
+  ],
+  "missing": [],
+  "completeness": 1.0,
+  "page_count": 1,
+  "has_text_layer": true,
+  "notes": []
+}
+```
+
+Die Beispielrechnung dazu liegt als `tests/fixtures/sample_invoice.pdf` im Repo, und
+`tests/fixtures/make_invoice_pdfs.py` erzeugt sie neu — das Fixture bleibt also keine
+undurchsichtige Binärdatei.
 
 ### 🔐 Anmelden
 
@@ -1005,6 +1148,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/codes/{code}/history` | Versionszeitlinie eines KN-Codes (SCD Type 2), älteste zuerst |
 | `GET` | `/dashboard/stats` | Aggregierte Statistiken: Referenzdaten, Prüfaktivität, KN-Importläufe |
 | `GET` | `/assess-risk` | Zusammengesetzter Risiko-Score aus Einreihung, Prüfung und Zoll |
+| `POST` | `/extract-invoice` | Liest ein hochgeladenes Rechnungs-PDF und gibt die gefundenen Felder zurück (Anmeldung erforderlich) |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
 **Parameter von `GET /search`**
@@ -1252,7 +1396,8 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 | `main.py` | 🟢 98 % |
 | `pg_adapter.py` | 🟢 96 % |
 | `auth.py` | 🟢 100 % |
-| **Gesamt** | **🟢 98,63 %** (301 Tests in 1,7 s, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
+| `document_extraction.py` | 🟢 99 % |
+| **Gesamt** | **🟢 98,52 %** (358 Tests in 2,0 s, Schwelle bei 80 %) — **kein Modul ist ausgenommen** |
 
 Die 13 PostgreSQL-Paritätstests zählen dort *nicht* mit: Sie werden übersprungen, solange
 `CUSTOMSIQ_TEST_POSTGRES_URL` nicht auf einen echten Server zeigt (die CI setzt die Variable; ein
@@ -1443,6 +1588,7 @@ von der Abdeckungsschwelle gemessen:
 | `dashboard.py` | ✅ **Ausgeliefert** | Schreibgeschützte Berichtsschicht über Phase 1 & 2, via `GET /dashboard/stats` |
 | `risk.py` | ✅ **Ausgeliefert** | Zusammengesetzter Sendungs-Risiko-Score über Einreihung, Prüfung und Zoll, via `GET /assess-risk` |
 | `auth.py` (RBAC) | ✅ **Ausgeliefert** | Konten, Sitzungen und vier Rollen; `reviewer_name` kommt jetzt aus der Sitzung |
+| `document_extraction.py` | ✅ **Ausgeliefert** | Rechnungs-PDF-Upload, der die Einreihungs-, Zoll- und Risikoformulare vorausfüllt |
 
 Geplante Erweiterungen: länderbezogene Embargokontrollen und Waren-/Bestimmungsbeschränkungen,
 Alias- und Transliterationsbehandlung für Entitätsnamen, Kontingent- und Antidumping-Komponenten
@@ -1488,6 +1634,7 @@ CustomsIQ/
 │   │   ├── tariff_calculator.py # Zollsatzwahl + Berechnung
 │   │   ├── review.py            # Prüfprotokoll (Vier-Augen-Prinzip)
 │   │   ├── auth.py              # Konten, Sitzungen, Rollen — nur stdlib, keine neue Abhängigkeit
+│   │   ├── document_extraction.py # Rechnungs-PDF → Felder (pypdf + Regex auf beschriftete Zeilen)
 │   │   ├── dashboard.py         # schreibgeschützte Aggregation über Phase 1 & 2
 │   │   ├── risk.py              # zusammengesetzter Sendungs-Risiko-Score
 │   │   ├── exceptions.py        # typisierte Fehlerhierarchie
@@ -1498,7 +1645,8 @@ CustomsIQ/
 │   │   └── static/index.html    # Weboberfläche — eine Datei, kein Build-Schritt
 │   └── utils/validators.py      # Validierung von KN-/TARIC-Format und Ländercode
 ├── scripts/import_cn_codes.py   # offizielle KN-Datei → hs_codes, versioniert Änderungen (SCD Type 2)
-├── tests/                       # 301 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import, Dashboard, Risiko, Auth/RBAC
+├── tests/                       # 358 Tests — Unit, API, CLI, Einreihung, Prüfung, Zoll, Review, Import, Dashboard, Risiko, Auth/RBAC, Auslesung
+│   └── fixtures/                #   CN-Beispieldatei + Rechnungs-PDFs (make_invoice_pdfs.py erzeugt sie neu)
 │   ├── conftest.py              #   senkt den Passwort-Arbeitsfaktor für die Suite
 │   ├── helpers.py               #   angemeldete TestClient-Helfer
 │                                #   + 13 Postgres-Paritätstests, ohne konfigurierten Server übersprungen
