@@ -9,7 +9,7 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Kapsam](https://img.shields.io/badge/kapsam-%9825-brightgreen)
-![Testler](https://img.shields.io/badge/testler-358%20ge%C3%A7ti-brightgreen)
+![Testler](https://img.shields.io/badge/testler-420%20ge%C3%A7ti-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/stil-black-000000)
@@ -26,13 +26,14 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 
 ---
 
-> **ℹ️ Demo veri kümesi hakkında.** Canlı demo, Render'ın ücretsiz katmanında hızlı soğuk başlangıç
-> için küçük ve seçilmiş bir veri kümesiyle (20 HS kodu) çalışır; o katmanda dosya sistemi
-> hareketsizlikte sıfırlanır. İçe aktarma hattı, gerçekçi CN formatındaki veriye karşı uçtan uca
-> doğrulanmıştır (aşağıdaki
-> [Gerçek CN nomanklatürünü içe aktarma](#gerçek-cn-nomanklatürünü-içe-aktarma) bölümüne bakın) —
-> hattı yerelde tam AB veri kümesiyle ya da kalıcı diskli bir dağıtımda çalıştırmak, canlı demonun
-> kullandığı şemanın aynısını doldurur.
+> **ℹ️ Demo veri kümesi hakkında.** Canlı demonun tarife kodu kataloğu artık **gerçek**: tam AB
+> Kombine Nomanklatürü 2026, 13.753 kod, üç dilde (EN/DE/FR) — tam olarak ne anlama geldiğini ve
+> Render'ın ücretsiz, kalıcı olmayan katmanında nasıl çalışır tutulduğunu (depoya gömülü, canlı
+> çekilmiyor — her yeniden başlamada sıfır ağ erişimiyle hayatta kalıyor) aşağıdaki
+> [🌍 Gerçek AB Kombine Nomanklatürü 2026](#-gerçek-ab-kombine-nomanklatürü-2026) bölümünde görün.
+> **Yaptırım listesi ve gümrük/tarife oranları hâlâ kurgusal mock veridir** — yalnızca ürün kodu
+> kataloğu gerçek; bu aracın herhangi bir parçasının üretim kullanımı yine de bu README boyunca
+> bağlantılanan resmî kaynakları gerektirir.
 
 ---
 
@@ -42,7 +43,7 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 |---|---|---|
 | [🎯 Problem](#-problem) | [✨ Özellikler](#-özellikler) | [🏗️ Mimari](#️-mimari) |
 | [🧠 Tasarım kararları](#-tasarım-kararları) | [⚙️ Kurulum](#️-kurulum) | [🚀 Kullanım](#-kullanım) |
-| [🌐 API referansı](#-api-referansı) | [🧪 Kalite ve testler](#-kalite-ve-testler) | [📦 Örnek veri](#-örnek-veri) |
+| [🌐 API referansı](#-api-referansı) | [🧪 Kalite ve testler](#-kalite-ve-testler) | [🌍 Gerçek AB Kombine Nomanklatürü 2026](#-gerçek-ab-kombine-nomanklatürü-2026) |
 | [🗺️ Yol haritası](#️-yol-haritası) | [📁 Proje yapısı](#-proje-yapısı) | [📄 Lisans](#-lisans) |
 
 ---
@@ -738,7 +739,7 @@ toplu okumayı ve hesap yönetimini korur.
 
 | Uç nokta | anonim | viewer | analyst | uyum yetkilisi | admin |
 |---|:--:|:--:|:--:|:--:|:--:|
-| `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` · `/codes/{code}/translations` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — sayımlar | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — `recent_reviews` (adlar + notlar) | ❌ | ✅ | ✅ | ✅ | ✅ |
 | `GET /review/history?subject_reference=…` (tek sonucun izi) | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -845,8 +846,12 @@ hesaplanan `sorgu_ağırlığı × belge_ağırlığı`; sklearn ile aynı sayı
 `vectorizer.vocabulary_` içine uzanıp seyrek matrise indekslemek gerekirdi.
 
 Veri kümesi ~10⁵ satırı aşarsa ya da n-gram veya alt-doğrusal terim frekansı gerekirse
-scikit-learn'e geçilir. Ondan önce sınıflandırıcı indeksi her çağrıda yeniden kurulur — 20 kodda
-0,1 ms, 10 000 kodda ~68 ms — yani ilk optimizasyon yeni bir bağımlılık değil, önbelleklemedir.
+scikit-learn'e geçilir. Sınıflandırıcı indeksi eskiden her çağrıda yeniden kuruluyordu — 20 kurgusal
+kodda sorun değildi, 10.000 kodda ~68 ms — ve gerçek 13.733 kodluk AB Kombine Nomanklatürü
+paketlendiğinde (bkz. [🌍 Gerçek AB Kombine Nomanklatürü 2026](#-gerçek-ab-kombine-nomanklatürü-2026))
+bu ~150 ms/çağrıya çıktı; bu yüzden bu notun zaten öngördüğü önbellekleme uygulandı: her çağrıda
+tazece okunan satırlara karşı doğruluğu kontrol edilen, bağlantı başına bir önbellek — yeni bir
+bağımlılık değil.
 
 **Ölçümden çıkan bir ayrıntı:** CN açıklamaları çoğul yazılır ("cables", "batteries"), kullanıcılar
 ise tekil yazar. Çoğul katlaması olmadan `cable`, `biscuit`, `laptop` ve `battery` sorgularının her
@@ -1200,6 +1205,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/review` | Geçmiş bir sınıflandırma, tarama veya vergi sonucu için inceleyici kararını kaydeder |
 | `GET` | `/review/history` | Kayıtlı inceleme kararları, en yeni önce |
 | `GET` | `/codes/{code}/history` | Bir CN kodunun SCD Type 2 sürüm zaman çizelgesi, en eski önce |
+| `GET` | `/codes/{code}/translations` | Bir CN kodunun Almanca/Fransızca açıklamaları, İngilizcesiyle birlikte |
 | `GET` | `/dashboard/stats` | Toplu istatistikler: referans veriler, inceleme faaliyeti, CN içe aktarma çalıştırmaları |
 | `GET` | `/assess-risk` | Sınıflandırma, tarama ve vergiyi birleştiren toplu risk skoru |
 | `POST` | `/extract-invoice` | Yüklenen fatura PDF'ini okur ve bulunan alanları döndürür (oturum gerekir) |
@@ -1450,7 +1456,7 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 | `pg_adapter.py` | 🟢 %96 |
 | `auth.py` | 🟢 %100 |
 | `document_extraction.py` | 🟢 %99 |
-| **Toplam** | **🟢 %98,52** (2,0 sn'de 358 test, eşik %80) — **hiçbir modül eşiğin dışında değil** |
+| **Toplam** | **🟢 %96,28** (~5,7 sn'de 420 test, eşik %80) — **hiçbir modül eşiğin dışında değil**. `scripts/import_cn_codes.py`'nin openpyxl'e bağlı Excel-okuma yolu toplamın daha yüksek olmamasının nedeni: openpyxl isteğe bağlıdır ve CI'de kurulu değildir, bu yüzden o kod orada test edilmez — önceden var olan `_read_excel_rows` da aynı muameleyi görüyordu. O yolun çağırdığı sonek-birleştirme ve yaprak-seçim *mantığı* saf fonksiyonlara ayrıştırılmış ve tam test edilmiştir. |
 
 13 PostgreSQL parite testi bu sayıya dahil değildir: `CUSTOMSIQ_TEST_POSTGRES_URL` gerçek bir
 sunucuyu göstermedikçe atlanırlar (CI bunu tanımlar; yerel düz bir `pytest` için ne Postgres ne de
@@ -1493,10 +1499,92 @@ sürücü gerekir).
 
 ---
 
-## 📦 Örnek veri
+## 🌍 Gerçek AB Kombine Nomanklatürü 2026
+
+Önceki her faz sınıflandırma/arama uç noktalarını 20 kurgusal koda karşı çalıştırdı — algoritmaları
+göstermek için yeterli, gerçek bir ürün bulmak için işe yaramaz. Bu faz o boşluğu **kalıcı olarak**
+kapatıyor, canlı bir içe aktarma adımıyla değil: resmî AB Kombine Nomanklatürü 2026 bir kez işlenip
+bu depoya gömülü bir dosya olarak commit edilir (`data/cn_nomenclature_2026.csv`, 3,1 MB) ve her
+uygulama başlangıcında `hs_codes`'a yüklenir — Render dahil, onun ücretsiz katmanı her yeniden
+başlamada dosya sistemini sıfırlar. Ağ erişimi yok, iki dağıtım arasında hayatta kalan hiçbir şeye
+bağımlılık yok — `tests/fixtures/sample_invoice.pdf`'nin fatura-okuma fixture'ları için zaten
+kullandığı "bir kez işle, sonucu commit et" yaklaşımının aynısı.
+
+**Gerçek, ölçülmüş sayılar, tahmin değil:**
+
+| | |
+|---|---|
+| Kaynak | AB Kombine Nomanklatürü 2026, resmî Eurostat/DG TAXUD dışa aktarımı, [CIRCABC](https://circabc.europa.eu/) üzerinden, İngilizce/Almanca/Fransızca |
+| Gömülü yaprak kod | **13.733** — her gerçekten beyan edilebilir kod, CN-8 ve TARIC-10 birleşik (metodoloji aşağıda) |
+| Paket boyutu | Depoya commit edilen 3,1 MB CSV |
+| Her soğuk başlangıca eklenen | **~90 ms** (CSV ayrıştırma + `hs_codes`'a upsert + `hs_code_translations`'a upsert, ölçülmüş) |
+| Bu ölçekte `classify()` maliyeti | Soğukken ~150 ms, bağlantı başına önbellek ısındığında **~20 ms** — aşağıya bakın |
+| Bu ölçekte `search()` maliyeti | Çağrı başına ~440–490 ms — karakter-örtüşme algoritması için eşdeğer bir önbellekleme mümkün değil; daha büyük gerçek kataloğun bilinen, kabul edilmiş bir maliyeti, açıklanmadan bırakılmak yerine burada belirtiliyor |
+
+`cn_classifier.py` zaten önceki bir fazdan tam bu senaryoyu adlandıran bir yorum taşıyordu:
+*"indeks her çağrıda yeniden kurulur — 20 kodda 0,1 ms, 10 bin kodda ~68 ms. Tam bir CN içe
+aktarımı bunu fark edilir kılarsa bağlantı başına önbellekleyin."* Bu içe aktarma tam da bunu
+yaptı, bu yüzden önceden onaylanmış düzeltme uygulandı: tazece okunan satırları son kurulan
+indeksle karşılaştıran ve yalnızca gerçekten farklıysa yeniden hesaplayan, bağlantı başına bir
+önbellek — satır sayısı kontrolü **değil**, çünkü o, sayıyı değiştirmeyen ama metni değiştiren bir
+güncellemeyi kaçırıp bayat bir sonuç döndürürdü. Doğrudan doğrulandı, yalnızca akıl yürütülmedi:
+önbellek doldurulduktan sonra satır içi bir güncelleme yapıldı ve bir sonraki `classify()` çağrısı
+eski metni değil, doğru şekilde yeniden kurulmuş sonucu döndürdü. Skorlar ve sıralamalar öncekiyle
+aynı — yalnızca gereksiz yeniden kurma atlanıyor. `search.py`'de eşdeğer bir düzeltme yok: karakter
+örtüşme karşılaştırması sorguya bağlıdır, korpusa değil, dolayısıyla önbelleklenecek bir indeks yok
+ve ~450 ms'lik maliyeti burada, sessizce bırakılmak yerine belirtiliyor.
+
+**Nerede yaşıyor, ve neden yeni sütunlar değil.** `hs_codes.description` İngilizce kalır, değişmez;
+Almanca ve Fransızca açıklamalar **yeni, ayrı** bir `hs_code_translations(code, language,
+description)` tablosunda yaşar — tam olarak [🕘 Sürümlü CN kodları](#-sürümlü-cn-kodları-scd-type-2)
+bölümünün `hs_code_history` için zaten belirlediği örneği izleyerek: `CREATE TABLE IF NOT EXISTS
+hs_codes (...)` hiçbir zaman kimsenin mevcut veritabanı dosyasına sütun ekleyemez, bu yüzden yeni
+bir tablo her önceden oluşturulmuş `customsiq.db`'ye güvenilir şekilde ulaşan tek yoldur. Bir kodun
+çevirilerini `GET /codes/{code}/translations`'ta alın; hiç çevirisi olmayan bir kod (aşağıdaki 20
+mock satırdan biri) `de`/`fr` için hata değil, `null` döndürür.
+
+**"Yaprak kod"un gerçekte ne anlama geldiği, varsayılmadan gerçek dosyaya karşı çözüldü.** Kaynak
+dışa aktarım her hiyerarşi seviyesini tek bir sayfada, bir `Hier. Pos.` sütunuyla işaretlenmiş
+olarak listeler: CN-8 (Kombine Nomanklatür) için `8`, TARIC-10 (AB'nin daha ayrıntılı gümrük
+beyanı kodları) için `10`. TARIC-10 alt bölümleri olan bir CN-8 kodu **tek başına gerçekten beyan
+edilebilir değildir** — gerçek beyanlar mevcut en ayrıntılı kodu gerektirir — bu yüzden çocukları
+lehine düşürülür; daha fazla alt bölümü olmayan bir CN-8 kodu olduğu gibi tutulur. Varsayılmadan,
+doğrudan incelenerek doğrulanan bir kıvrım daha: her kodun sonundaki iki haneli jeton
+(`"0101291000 80"`) eşya kodunun kendisinin parçası değil, bir Eurostat *istatistiksel sonekidir*
+ve 1.098 kodun gerçekten farklı açıklamalara sahip birden fazla sonek varyantı vardır (ağırlık
+aralıkları, "kesim için" ile "diğer" gibi). `hs_codes.code` bir birincil anahtar olduğundan biri
+seçilmelidir: sonek `80` (her böyle kod için mevcut olan "ek birim yok" varsayılanı) kazanır;
+aksi halde hangi varyant önce görüldüyse o. Sonuç: **4.173 yalnızca-CN-8 yaprak + 9.560 TARIC-10
+kod = 13.733** — saf bir `Hier. Pos. == 8` filtresinin üreteceği ~9.700 değil.
+
+**Paketi yeniden oluşturma** (gelecekteki yıllık bir güncelleme, ya da farklı bir dil kümesi):
+
+```bash
+python scripts/import_cn_codes.py build-bundle \
+  Nomenclature_EN.xlsx Nomenclature_DE.xlsx Nomenclature_FR.xlsx \
+  --output data/cn_nomenclature_2026.csv
+```
+
+Bu tek seferlik/ara sıra çalıştırılan bir derleme adımıdır — uygulama bunu asla çalıştırmaz;
+yalnızca commit edilmiş CSV'yi okur. `scripts/import_cn_codes.py`'nin orijinal tek dilli `import`
+komutu (aşağıda) değişmedi ve bir paket zaten var olduğunda rutin bir yıllık tazeleme için hâlâ
+çalışır.
+
+Aşağıdaki 20 satırlık mock katalog gerçek veriyle birlikte **değişmeden korunur** — değiştirilmez.
+`seed()`'in varsayılanı her zaman olduğu gibi aynı 20 kod olarak kalır (bu depodaki her test
+fixture'ı buna bağlıdır ve tamamen değiştirilmeden geçmeye devam eder); gerçek 13.733 kodluk paket
+yalnızca canlı uygulamada bunun üstüne eklenir. Mock kodların hiçbiri gerçek olanlarla çakışmaz —
+varsayılmadı, doğrulandı: `8517120000`, `6109100000` ve diğerleri önceki fazlar için icat edildi
+ve gerçek 2026 CN-8 girdilerine karşılık gelmiyor. Belirtilmeye değer, küçük ve dürüst bir yan
+etki: mock verinin kategori etiketleri `import_cn_codes.py`'nin bölümden türetilen eşlemesinden
+öncedir ve iki yerde onunla çelişir — bölüm 64 (ayakkabı) mock kümede `"Tekstil"` ama gerçek
+kümede `"Ayakkabı"`; bölüm 09 (kahve) mock kümede `"Gıda"` ama gerçek kümede `"Bitkisel Ürünler"`.
+Her iki etiket de kendi bölümleri için canlı katalogda görünür, uzlaştırılmadan — mock satırlar
+ayrıca birkaç sabitlenmiş testte adıyla kullanılıyor, bu yüzden onları "düzeltmek" bu fazın
+kapsamı dışındaydı.
 
 Veritabanı, AB Kombine Nomanklatür biçiminde yazılmış **8 kategoriye yayılmış 20 temsili CN/TARIC
-koduyla** doldurulur:
+koduyla** doldurulur — orijinal mock küme, yukarıda açıklandı:
 
 | Kategori | Kod sayısı |
 |---|---|
@@ -1571,11 +1659,11 @@ standart MFN oranları ve iki ticaret anlaşması kapsamındaki tercihli oranlar
 > 🚨 **Oranlar ve her iki ticaret anlaşması da kurgusaldır.** Gerçek vergi oranları ve tercihli
 > menşeler AB TARIC veritabanından gelir; bu rakamları asla gerçek bir beyanda kullanmayın.
 
-### Gerçek CN nomanklatürünü içe aktarma
+### Bir CN nomanklatür güncellemesini içe aktarma
 
-Yukarıdaki 20 satırlık örnek bir demo veri kümesidir — **[canlı demo](https://customsiq-gs0u.onrender.com/) dahil**, orası da
-bilinçli olarak mock veriyle çalışır. Tam nomanklatürle yerelde çalışmak için resmî CN referans
-dosyasını indirip içe aktarın:
+Canlı demo zaten gerçek 13.733 kodluk AB Kombine Nomanklatürü 2026'yı çalıştırıyor (bkz.
+[🌍 Gerçek AB Kombine Nomanklatürü 2026](#-gerçek-ab-kombine-nomanklatürü-2026) yukarıda) — bu
+bölüm onu tazelemek, ya da yerelde farklı tek dilli bir CN dışa aktarımını içe aktarmak içindir:
 
 **1. Dosyayı edinin** (elle — içe aktarıcı ağa hiç bağlanmaz):
 
@@ -1618,9 +1706,13 @@ Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje 
 çünkü onu yalnızca bu araç kullanır. Sayfayı CSV'ye aktarmak bu ihtiyacı tamamen ortadan kaldırır.
 
 > 📜 **Atıf.** Kombine Nomanklatür, Avrupa Birliği'nin kamuya açık referans verisidir
-> (© Avrupa Birliği) ve [Komisyon'un yeniden kullanım politikası](https://ec.europa.eu/info/legal-notice_en)
-> kapsamında yeniden kullanılabilir. CustomsIQ bu veriyi dağıtmaz — yukarıdaki kaynaklardan kendiniz
-> indirirsiniz.
+> (© Avrupa Birliği) ve — atıf verilerek türetilmiş çıkarımların yeniden dağıtılması dahil —
+> [Komisyon'un yeniden kullanım politikası](https://ec.europa.eu/info/legal-notice_en) kapsamında
+> yeniden kullanılabilir. `data/cn_nomenclature_2026.csv` **tam olarak böyle bir çıkarımdır**:
+> resmî Eurostat/DG TAXUD CIRCABC dışa aktarımından türetilmiş 13.733 yaprak kod ve İngilizce,
+> Almanca, Fransızca açıklamaları, bu politika kapsamında depoya commit edilmiştir — önceki
+> fazların yalnızca resmî kaynaklara atıfta bulunup veri gömmediği bir değişiklik. Bu sayfadaki
+> yaptırım listesi ve vergi oranları tamamen kurgusal kalır ve bundan etkilenmez.
 
 ---
 
@@ -1642,6 +1734,7 @@ eşiğiyle ölçülüyor:
 | `auth.py` (RBAC) | ✅ **Tamamlandı** | Hesaplar, oturumlar ve dört rol; `reviewer_name` artık oturumdan gelir |
 | `document_extraction.py` | ✅ **Tamamlandı** | Sınıflandırma, vergi ve risk formlarını dolduran fatura PDF yüklemesi |
 | `sap_gts_bridge.py` | ✅ **Tamamlandı** | Mevcut sonuçlar üzerinde SAP GTS terminoloji görünümü — etiketlenmiş simülasyon, entegrasyon değil |
+| Gerçek AB Kombine Nomanklatürü 2026 | ✅ **Tamamlandı** | 13.733 gerçek, üç dilli yaprak kod; her başlangıçta orijinal mock veriyle birlikte yüklenir |
 
 Planlanan genişlemeler: ülke düzeyinde ambargo kontrolleri ve ürün/varış yeri kısıtları, kuruluş
 isimleri için takma ad ile transliterasyon desteği, vergi hesabının üzerine kota/anti-damping
@@ -1695,7 +1788,9 @@ CustomsIQ/
 │   │   ├── api.py               # FastAPI uygulaması (arayüzü de sunar)
 │   │   └── static/index.html    # web arayüzü — tek dosya, derleme adımı yok
 │   └── utils/validators.py      # CN/TARIC format ve ülke kodu doğrulaması
-├── scripts/import_cn_codes.py   # resmî CN dosyası → hs_codes, değişiklikleri sürümler (SCD Type 2)
+├── data/cn_nomenclature_2026.csv # gömülü AB Kombine Nomanklatürü 2026 — 13.733 yaprak kod, EN/DE/FR
+├── scripts/import_cn_codes.py   # resmî CN dosyası → hs_codes, değişiklikleri sürümler (SCD Type 2);
+│                                #   ayrıca yukarıdaki data/ paketini de oluşturur (build-bundle alt komutu)
 ├── tests/                       # 358 test — birim, API, CLI, sınıflandırma, tarama, vergi, inceleme, içe aktarma, gösterge paneli, risk, kimlik/RBAC, fatura okuma
 │   └── fixtures/                #   örnek CN dosyası + fatura PDF'leri (make_invoice_pdfs.py yeniden üretir)
 │   ├── conftest.py              #   test paketi için parola iş faktörünü düşürür

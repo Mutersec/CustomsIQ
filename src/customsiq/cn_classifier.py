@@ -23,6 +23,32 @@ TOP_TERMS = 3
 
 _WORD = re.compile(r"[a-z0-9]+")
 
+# ponytail: this index used to be rebuilt unconditionally on every call — fine
+# at 0.1 ms for the 20-code mock catalog, but ~150 ms/call once the real CN
+# nomenclature (13.7k codes) is loaded, which is noticeable enough to act on.
+# `fetch_all(conn)` still runs every time regardless (records are
+# always needed), so the cache below reuses that read as its own freshness
+# check: if the freshly-fetched records are byte-for-byte what was cached last
+# time, the (comparatively expensive) tokenize-and-weight rebuild is skipped.
+# That is deliberately NOT a row-count or last-modified check — either would
+# miss an in-place description update that leaves the row count unchanged,
+# and silently serve a stale index. A plain dict keyed by id(conn), never
+# evicted: bounded by how many distinct connections a process ever opens,
+# which in practice is one (the live app's singleton) plus however many a
+# test run creates — a WeakKeyDictionary is the upgrade path if that ever
+# stops being negligible.
+_index_cache: dict = {}
+
+
+def _index_for(conn: sqlite3.Connection, records: list[HSCode]) -> tuple:
+    """Return (idf, vectors) for `records`, rebuilding only if they changed."""
+    cached = _index_cache.get(id(conn))
+    if cached is not None and cached[0] == records:
+        return cached[1], cached[2]
+    idf, vectors = _build_index(records)
+    _index_cache[id(conn)] = (records, idf, vectors)
+    return idf, vectors
+
 
 class ClassificationResult(NamedTuple):
     """A suggested code, its confidence, and the terms that drove the match."""
@@ -116,10 +142,8 @@ def classify(
     """
     validate_query(description)
 
-    # ponytail: the index is rebuilt per call — 0.1 ms at 20 codes, ~68 ms at
-    # 10k. Cache it per connection if a full CN import makes that noticeable.
     records = fetch_all(conn)
-    idf, vectors = _build_index(records)
+    idf, vectors = _index_for(conn, records)
 
     counts = Counter(_tokenize(description))
     unseen = math.log(len(records) + 1) + 1  # IDF for a term absent from the corpus

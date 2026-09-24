@@ -7,6 +7,7 @@ URL instead of a file path (see `src/customsiq/config.py` for precedence and
 below is written once and shared by both backends.
 """
 
+import csv
 import logging
 import sqlite3
 import threading
@@ -99,6 +100,17 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS review_authorship (
     review_id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL
+);
+
+-- Supplementary German/French descriptions for hs_codes. A separate table,
+-- not description_de/description_fr columns on hs_codes, for the same reason
+-- hs_code_history is separate from hs_codes: CREATE TABLE IF NOT EXISTS never
+-- adds a column to anyone's existing database file.
+CREATE TABLE IF NOT EXISTS hs_code_translations (
+    code TEXT NOT NULL,
+    language TEXT NOT NULL,
+    description TEXT NOT NULL,
+    PRIMARY KEY (code, language)
 );
 """
 
@@ -414,6 +426,87 @@ def upsert_hs_codes(conn: sqlite3.Connection, records: Iterable[HSCode]) -> int:
     )
     conn.commit()
     return len(rows)
+
+
+def upsert_translations(conn: sqlite3.Connection, rows: Sequence[tuple]) -> int:
+    """Insert or update supplementary-language descriptions for HS codes.
+
+    Args:
+        conn: An open database connection.
+        rows: (code, language, description) tuples, e.g. ("6109100000", "de", "...").
+
+    Returns:
+        The number of rows written.
+    """
+    rows = list(rows)
+    conn.executemany(
+        "INSERT INTO hs_code_translations (code, language, description) VALUES (?, ?, ?) "
+        "ON CONFLICT(code, language) DO UPDATE SET description = excluded.description",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def fetch_translations(conn: sqlite3.Connection, code: str) -> dict:
+    """Return every supplementary-language description recorded for one code.
+
+    Args:
+        conn: An open database connection.
+        code: The HS code to look up. Not required to exist in hs_codes; a
+            code with no translations simply has an empty result.
+
+    Returns:
+        {language: description}, e.g. {"de": "...", "fr": "..."}. Empty if
+        no translations are recorded for this code.
+    """
+    rows = conn.execute(
+        "SELECT language, description FROM hs_code_translations WHERE code = ?", (code,)
+    ).fetchall()
+    return {language: description for language, description in rows}
+
+
+def load_bundled_cn_nomenclature(conn: sqlite3.Connection, path: Optional[Path] = None) -> int:
+    """Load the committed EU Combined Nomenclature bundle into hs_codes.
+
+    The bundle (`data/cn_nomenclature_2026.csv`) is built once, offline, by
+    `scripts/import_cn_codes.py build-bundle` from the official EU CIRCABC
+    export, then committed to the repo — so this needs no network access and
+    survives a filesystem reset, the same "process once, commit the result"
+    approach `tests/fixtures/make_invoice_pdfs.py` uses for its fixtures.
+
+    Safe to call on every startup: `upsert_hs_codes` is an idempotent
+    ON CONFLICT DO UPDATE, not the empty-table-only `_seed_if_empty` gate
+    `seed()` uses — that gate would never fire here, since `seed()` already
+    populated `hs_codes` with `SAMPLE_DATA` moments earlier. The bundle adds
+    to that 20-row set rather than replacing it; none of its codes collide
+    with the mock ones (verified — they're different values entirely).
+
+    Args:
+        conn: An open database connection.
+        path: Override for the bundle's location. Defaults to the file
+            shipped alongside this module (resolved from this module's own
+            location, not the working directory, the same reasoning
+            `api.py`'s `_STATIC_DIR` already uses).
+
+    Returns:
+        The number of HS codes loaded (== the number of translation rows / 2).
+    """
+    if path is None:
+        path = Path(__file__).resolve().parent.parent.parent / "data" / "cn_nomenclature_2026.csv"
+
+    records = []
+    translations: list[tuple] = []
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            records.append(HSCode(row["cn_code"], row["description_en"], row["category"]))
+            translations.append((row["cn_code"], "de", row["description_de"]))
+            translations.append((row["cn_code"], "fr", row["description_fr"]))
+
+    count = upsert_hs_codes(conn, records)
+    upsert_translations(conn, translations)
+    logger.info("loaded %d bundled CN codes from %s", count, path)
+    return count
 
 
 def fetch_all(conn: sqlite3.Connection) -> list[HSCode]:

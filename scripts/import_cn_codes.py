@@ -317,6 +317,156 @@ def import_file(
     return len(records)
 
 
+#: Eurostat's "Goods code" is the commodity code plus a trailing 2-digit
+#: statistical suffix, space-separated (e.g. "0101291000 80"). The suffix is
+#: not part of the code — for a CN-8 row the code's own last two digits are
+#: always "00" (verified against the real export), and several suffix variants
+#: can share one code with genuinely different descriptions (weight bands,
+#: "for slaughter" vs "other", etc.). Since hs_codes.code is a primary key,
+#: one description has to be picked: "80" is the "no supplementary unit"
+#: default and is present for every code that has more than one variant, so
+#: it wins; anything else falls back to whichever row was read first.
+_PREFERRED_SUFFIX = "80"
+
+_CN8_HIER = 8
+_TARIC10_HIER = 10
+
+
+def collapse_suffix_variants(by_code: dict) -> dict:
+    """Pick one description per code out of its Eurostat statistical-suffix variants.
+
+    Pure and openpyxl-free, so it's directly testable without a real workbook:
+    the part of the CIRCABC-parsing logic that actually has a judgment call in
+    it (which variant wins) is isolated from the part that's just file I/O.
+
+    Args:
+        by_code: {code: {suffix: description}} — one entry per suffix variant
+            actually seen for that code.
+
+    Returns:
+        {code: description}, one row per code.
+    """
+    return {
+        code: variants.get(_PREFERRED_SUFFIX, next(iter(variants.values())))
+        for code, variants in by_code.items()
+    }
+
+
+def select_leaf_codes(candidates: dict) -> dict:
+    """Drop CN-8 codes that have TARIC-10 children; keep everything else.
+
+    Also pure and openpyxl-free. A CN-8 code with TARIC-10 subdivisions isn't
+    actually declarable on its own — real declarations require the most
+    detailed code available — so it is dropped in favour of its children.
+    TARIC-10 codes with no CN-8 row at all (the hierarchy goes straight from a
+    6-digit heading to a 10-digit code — confirmed to occur in the real data,
+    not a data error) are real leaves and are kept.
+
+    Args:
+        candidates: {code: description}, mixing 8- and 10-digit codes, already
+            suffix-collapsed.
+
+    Returns:
+        The subset that are genuine leaves.
+    """
+    parents_with_children = {code[:_CN8_HIER] for code in candidates if len(code) == _TARIC10_HIER}
+    return {code: desc for code, desc in candidates.items() if code not in parents_with_children}
+
+
+def _leaf_descriptions_by_language(path: Path) -> dict:
+    """Read one CIRCABC nomenclature export into {leaf_code: description}.
+
+    File I/O and column handling only — see `collapse_suffix_variants` and
+    `select_leaf_codes` for the actual selection logic, and their own tests.
+
+    Args:
+        path: One language's CIRCABC "Nomenclature" .xlsx export.
+
+    Returns:
+        Every leaf code mapped to its description in this file's language.
+
+    Raises:
+        CNImportError: If openpyxl is missing, or the expected columns aren't there.
+    """
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise CNImportError(
+            "Excel support needs 'pip install openpyxl', "
+            "or export the sheet to CSV and import that instead."
+        ) from exc
+
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        rows = workbook.active.iter_rows(values_only=True)
+        headers = [str(cell) if cell is not None else "" for cell in next(rows)]
+        try:
+            code_col = headers.index("Goods code")
+            hier_col = headers.index("Hier. Pos.")
+            desc_col = headers.index("Description")
+        except ValueError as exc:
+            raise CNImportError(
+                f"{path.name}: expected 'Goods code' / 'Hier. Pos.' / 'Description' "
+                f"columns, found {headers}"
+            ) from exc
+
+        by_code: dict = {}
+        for row in rows:
+            level = row[hier_col]
+            if level not in (_CN8_HIER, _TARIC10_HIER):
+                continue
+            raw_code, suffix = row[code_col].split()
+            code = raw_code[:_CN8_HIER] if level == _CN8_HIER else raw_code
+            by_code.setdefault(code, {})[suffix] = row[desc_col]
+    finally:
+        workbook.close()
+
+    return select_leaf_codes(collapse_suffix_variants(by_code))
+
+
+def build_trilingual_bundle(en_path: Path, de_path: Path, fr_path: Path, output_path: Path) -> int:
+    """Merge three CIRCABC CN nomenclature exports into one committable CSV bundle.
+
+    A one-time/occasional tool, not something the running app calls: the output
+    is what gets committed to the repo and loaded at every startup (see
+    `database.load_bundled_cn_nomenclature`), the same "process once, commit
+    the result" pattern `tests/fixtures/make_invoice_pdfs.py` already uses for
+    the invoice-extraction fixtures.
+
+    Args:
+        en_path: The English CIRCABC export.
+        de_path: The German export — same rows, same order, different language.
+        fr_path: The French export.
+        output_path: Where to write the merged CSV.
+
+    Returns:
+        The number of leaf codes written.
+
+    Raises:
+        CNImportError: If the three files don't describe the same set of codes.
+    """
+    en = _leaf_descriptions_by_language(en_path)
+    de = _leaf_descriptions_by_language(de_path)
+    fr = _leaf_descriptions_by_language(fr_path)
+    if not (en.keys() == de.keys() == fr.keys()):
+        raise CNImportError(
+            "EN/DE/FR exports don't describe the same codes — "
+            "confirm all three are the same nomenclature edition."
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            ["cn_code", "category", "description_en", "description_de", "description_fr"]
+        )
+        for code in sorted(en):
+            writer.writerow([code, category_for_code(code), en[code], de[code], fr[code]])
+
+    logger.info("wrote %d leaf codes to %s", len(en), output_path)
+    return len(en)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Command-line entry point.
 
@@ -327,26 +477,50 @@ def main(argv: Optional[list[str]] = None) -> int:
         0 on success, 1 if the file could not be read as a CN export.
     """
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("path", type=Path, help="Local CN reference file (.csv or .xlsx)")
-    parser.add_argument("--db", default=settings.database_target, help="Target database")
-    parser.add_argument("--code-column", help="Override the auto-detected code column")
-    parser.add_argument("--description-column", help="Override the description column")
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command")
+
+    import_parser = subparsers.add_parser(
+        "import", help="Import a single-language CN export into a running database (default)"
+    )
+    import_parser.add_argument("path", type=Path, help="Local CN reference file (.csv or .xlsx)")
+    import_parser.add_argument("--db", default=settings.database_target, help="Target database")
+    import_parser.add_argument("--code-column", help="Override the auto-detected code column")
+    import_parser.add_argument("--description-column", help="Override the description column")
+    import_parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    import_parser.add_argument(
         "--version-label", help="Label for this import run (e.g. CN2026); default is a timestamp"
     )
+
+    bundle_parser = subparsers.add_parser(
+        "build-bundle",
+        help="Merge EN/DE/FR CIRCABC exports into the committed data/ CSV bundle",
+    )
+    bundle_parser.add_argument("en", type=Path, help="English CIRCABC Nomenclature export (.xlsx)")
+    bundle_parser.add_argument("de", type=Path, help="German export")
+    bundle_parser.add_argument("fr", type=Path, help="French export")
+    bundle_parser.add_argument("--output", type=Path, required=True, help="Output CSV path")
+
+    # No subcommand given -> behave like the single "import" command always has,
+    # so every existing invocation in the README keeps working unchanged.
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv or argv[0] not in ("import", "build-bundle", "-h", "--help"):
+        argv = ["import", *argv]
     args = parser.parse_args(argv)
 
     configure_logging()
     try:
-        import_file(
-            args.path,
-            args.db,
-            args.code_column,
-            args.description_column,
-            args.batch_size,
-            args.version_label,
-        )
+        if args.command == "build-bundle":
+            build_trilingual_bundle(args.en, args.de, args.fr, args.output)
+        else:
+            import_file(
+                args.path,
+                args.db,
+                args.code_column,
+                args.description_column,
+                args.batch_size,
+                args.version_label,
+            )
     except (CNImportError, FileNotFoundError) as exc:
         logger.error("%s", exc)
         return 1

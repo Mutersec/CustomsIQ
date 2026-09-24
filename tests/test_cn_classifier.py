@@ -4,10 +4,11 @@ import sqlite3
 
 import pytest
 
-from src.customsiq.cn_classifier import _singular, classify
-from src.customsiq.database import get_connection, seed
+from src.customsiq.cn_classifier import _index_cache, _singular, classify
+from src.customsiq.database import get_connection, seed, upsert_hs_codes
 from src.customsiq.exceptions import InvalidQueryError
 from src.customsiq.matching import MAX_QUERY_LENGTH
+from src.customsiq.models import HSCode
 from src.customsiq.search import search
 
 
@@ -137,3 +138,53 @@ class TestValidation:
         """Odd input is tokenised away rather than crashing."""
         assert isinstance(classify(conn, "!!! ??? --- '; DROP TABLE hs_codes;"), list)
         assert isinstance(classify(conn, "Baumwoll-T-Shirts, gewirkt 📦"), list)
+
+
+class TestIndexCache:
+    """The per-connection index cache added when the real CN bundle made a
+    rebuild-every-call noticeable (~150 ms at 13.7k codes). Must never change
+    what classify() returns — only whether it recomputes to get there."""
+
+    def test_repeat_calls_on_the_same_connection_give_identical_results(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        first = classify(conn, "knitted cotton shirt")
+        second = classify(conn, "knitted cotton shirt")
+        assert first == second
+
+    def test_a_cache_entry_exists_after_a_call(self, conn: sqlite3.Connection) -> None:
+        _index_cache.pop(id(conn), None)
+        classify(conn, "cotton shirt")
+        assert id(conn) in _index_cache
+
+    def test_an_in_place_description_change_is_not_served_stale(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The failure mode a naive (row-count-only) cache would have had:
+        an UPDATE that keeps the row count the same but changes the text."""
+        classify(conn, "prime the cache")
+        upsert_hs_codes(
+            conn, [HSCode("6109100000", "a wholly unrelated zzqxzzq phrase", "Textile")]
+        )
+
+        results = classify(conn, "zzqxzzq")
+        assert results, "the updated description was not picked up — stale cache"
+        assert results[0].hs_code.code == "6109100000"
+
+    def test_adding_a_new_code_is_reflected_immediately(self, conn: sqlite3.Connection) -> None:
+        classify(conn, "prime the cache")
+        upsert_hs_codes(conn, [HSCode("9999999999", "a brand new qwrbl item", "Miscellaneous")])
+
+        results = classify(conn, "qwrbl")
+        assert results and results[0].hs_code.code == "9999999999"
+
+    def test_different_connections_get_independent_cache_entries(self) -> None:
+        conn_a = get_connection(":memory:")
+        seed(conn_a)
+        conn_b = get_connection(":memory:")
+        seed(conn_b)
+        upsert_hs_codes(conn_b, [HSCode("9999999999", "only in conn_b, marker zjqzjq", "Other")])
+
+        classify(conn_a, "prime")
+        results = classify(conn_b, "zjqzjq")
+        assert results and results[0].hs_code.code == "9999999999"

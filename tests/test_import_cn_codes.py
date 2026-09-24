@@ -9,10 +9,12 @@ from scripts.import_cn_codes import (
     PROGRESS_EVERY,
     CNImportError,
     category_for_code,
+    collapse_suffix_variants,
     import_file,
     main,
     normalise_code,
     parse_records,
+    select_leaf_codes,
 )
 from src.customsiq.database import (
     fetch_all,
@@ -289,3 +291,116 @@ class TestCommandLine:
         path = tmp_path / "bad.csv"
         path.write_text("alpha,beta\n1,2\n", encoding="utf-8")
         assert main([str(path), "--db", str(tmp_path / "x.db")]) == 1
+
+
+class TestSuffixCollapse:
+    """Eurostat statistical-suffix variants collapse to one description per code."""
+
+    def test_the_80_suffix_wins_when_present(self) -> None:
+        by_code = {"01012910": {"10": "For slaughter", "80": "Other"}}
+        assert collapse_suffix_variants(by_code) == {"01012910": "Other"}
+
+    def test_a_single_variant_is_used_regardless_of_its_suffix(self) -> None:
+        by_code = {"01012910": {"10": "For slaughter"}}
+        assert collapse_suffix_variants(by_code) == {"01012910": "For slaughter"}
+
+    def test_the_first_encountered_variant_wins_without_an_80(self) -> None:
+        """Dict insertion order is preserved in Python, so this is deterministic."""
+        by_code = {"01012910": {"10": "First", "20": "Second"}}
+        assert collapse_suffix_variants(by_code) == {"01012910": "First"}
+
+    def test_multiple_codes_are_handled_independently(self) -> None:
+        by_code = {
+            "01012910": {"80": "Other"},
+            "01012990": {"10": "For slaughter", "80": "Other again"},
+        }
+        assert collapse_suffix_variants(by_code) == {
+            "01012910": "Other",
+            "01012990": "Other again",
+        }
+
+
+class TestLeafSelection:
+    """A CN-8 code with TARIC-10 children isn't a declarable leaf on its own."""
+
+    def test_a_cn8_code_with_taric10_children_is_dropped(self) -> None:
+        candidates = {
+            "85115000": "Other generators",  # would-be CN-8 leaf
+            "8511500010": "For use in civil aircraft",  # its real leaf children
+            "8511500090": "Other",
+        }
+        result = select_leaf_codes(candidates)
+        assert "85115000" not in result
+        assert result == {
+            "8511500010": "For use in civil aircraft",
+            "8511500090": "Other",
+        }
+
+    def test_a_cn8_code_with_no_children_is_kept(self) -> None:
+        candidates = {"01012910": "For slaughter"}
+        assert select_leaf_codes(candidates) == candidates
+
+    def test_a_taric10_orphan_with_no_cn8_row_is_kept(self) -> None:
+        """The hierarchy sometimes jumps straight from a 6-digit heading to
+        TARIC-10 with no intervening CN-8 row — confirmed against the real
+        export (e.g. 8511500000's children). Nothing to drop it in favour of."""
+        candidates = {"8511500010": "For use in civil aircraft"}
+        assert select_leaf_codes(candidates) == candidates
+
+    def test_unrelated_codes_are_unaffected(self) -> None:
+        candidates = {"01012910": "For slaughter", "94033000": "Wooden office furniture"}
+        assert select_leaf_codes(candidates) == candidates
+
+
+class TestBundledNomenclature:
+    """The committed data/cn_nomenclature_2026.csv bundle, spot-checked for real."""
+
+    BUNDLE = Path(__file__).parent.parent / "data" / "cn_nomenclature_2026.csv"
+
+    @pytest.fixture(scope="class")
+    def rows(self) -> list:
+        import csv
+
+        with self.BUNDLE.open(newline="", encoding="utf-8") as handle:
+            return list(csv.DictReader(handle))
+
+    def test_the_bundle_is_committed_and_readable(self, rows: list) -> None:
+        assert self.BUNDLE.exists()
+        assert len(rows) == 13733
+
+    def test_every_code_is_a_valid_cn_or_taric_code(self, rows: list) -> None:
+        from src.utils.validators import validate_cn_code
+
+        assert all(validate_cn_code(row["cn_code"]) for row in rows)
+
+    def test_every_row_has_all_three_languages_and_a_category(self, rows: list) -> None:
+        assert all(
+            row["description_en"] and row["description_de"] and row["description_fr"]
+            for row in rows
+        )
+        assert all(row["category"] for row in rows)
+
+    def test_codes_are_unique(self, rows: list) -> None:
+        codes = [row["cn_code"] for row in rows]
+        assert len(codes) == len(set(codes))
+
+    def test_a_known_real_code_matches_its_documented_worked_example(self, rows: list) -> None:
+        """The exact row shown in the README's leaf-selection example."""
+        by_code = {row["cn_code"]: row for row in rows}
+        assert by_code["01012910"]["description_en"] == "For slaughter"
+        assert by_code["01012910"]["description_de"] == "zum Schlachten"
+        assert by_code["01012910"]["category"] == "Animal Products"
+
+    def test_a_cn8_code_with_taric10_children_does_not_appear(self, rows: list) -> None:
+        """85115000 has real TARIC-10 children in the source export (verified
+        by direct inspection) and must not appear itself."""
+        codes = {row["cn_code"] for row in rows}
+        assert "85115000" not in codes
+        assert "8511500010" in codes
+        assert "8511500090" in codes
+
+    def test_none_of_sample_datas_mock_codes_collide_with_real_ones(self, rows: list) -> None:
+        from src.customsiq.database import SAMPLE_DATA
+
+        codes = {row["cn_code"] for row in rows}
+        assert not codes & {record.code for record in SAMPLE_DATA}

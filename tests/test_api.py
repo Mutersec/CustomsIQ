@@ -246,6 +246,32 @@ def test_code_history_returns_404_for_an_unknown_code() -> None:
     assert response.status_code == 404
 
 
+def test_code_translations_returns_real_bundled_data() -> None:
+    """A real CN-8 code from the bundled EU nomenclature has DE/FR translations."""
+    response = client.get("/codes/01012910/translations")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == "01012910"
+    assert body["en"] == "For slaughter"
+    assert body["de"] == "zum Schlachten"
+    assert body["fr"] == "destinés à la boucherie"
+
+
+def test_code_translations_are_null_not_missing_for_a_mock_code() -> None:
+    """SAMPLE_DATA predates the bundle, so it has no translations — not an error."""
+    response = client.get("/codes/6109100000/translations")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["en"] == "Cotton T-shirts, knitted"
+    assert body["de"] is None
+    assert body["fr"] is None
+
+
+def test_code_translations_returns_404_for_an_unknown_code() -> None:
+    response = client.get("/codes/00000000/translations")
+    assert response.status_code == 404
+
+
 def test_dashboard_stats_returns_the_expected_shape() -> None:
     """The dashboard endpoint returns every field, with sane types.
 

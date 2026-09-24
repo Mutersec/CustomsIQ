@@ -9,7 +9,7 @@ lists, and calculate the duty owed.**
 [![CI](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml/badge.svg)](https://github.com/Mutersec/CustomsIQ/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)
-![Tests](https://img.shields.io/badge/tests-358%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-420%20passing-brightgreen)
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 ![Black](https://img.shields.io/badge/style-black-000000)
@@ -26,12 +26,14 @@ lists, and calculate the duty owed.**
 
 ---
 
-> **ℹ️ About the demo dataset.** The live demo runs on a small curated dataset (20 HS codes) for
-> fast cold starts on Render's free tier, where the filesystem resets on inactivity. The import
-> pipeline has been verified end-to-end against realistic CN-format data (see
-> [Importing the real CN nomenclature](#importing-the-real-cn-nomenclature) below) — running it
-> against the full EU dataset locally, or on a persistent-disk deployment, populates the same
-> schema the live demo uses.
+> **ℹ️ About the demo dataset.** The live demo's tariff-code catalog is now **real**: the full
+> EU Combined Nomenclature 2026, 13,753 codes, trilingual (EN/DE/FR) — see
+> [🌍 The real EU Combined Nomenclature 2026](#-the-real-eu-combined-nomenclature-2026) below for
+> exactly what that means and how it's kept working on Render's ephemeral free tier (it's
+> committed to the repo, not fetched — survives every restart with zero network access).
+> **The sanctioned-party list and duty/tariff rates are still fictional mock data** — only the
+> product-code catalog is real; production use of any part of this tool still requires the
+> official sources linked throughout this README.
 
 ---
 
@@ -41,7 +43,7 @@ lists, and calculate the duty owed.**
 |---|---|---|
 | [🎯 Problem](#-problem) | [✨ Features](#-features) | [🏗️ Architecture](#️-architecture) |
 | [🧠 Design decisions](#-design-decisions) | [⚙️ Setup](#️-setup) | [🚀 Usage](#-usage) |
-| [🌐 API reference](#-api-reference) | [🧪 Quality & testing](#-quality--testing) | [📦 Sample data](#-sample-data) |
+| [🌐 API reference](#-api-reference) | [🧪 Quality & testing](#-quality--testing) | [🌍 The real EU Combined Nomenclature 2026](#-the-real-eu-combined-nomenclature-2026) |
 | [🗺️ Roadmap](#️-roadmap) | [📁 Project layout](#-project-layout) | [📄 License](#-license) |
 
 ---
@@ -728,7 +730,7 @@ and account administration.
 
 | Endpoint | anonymous | viewer | analyst | compliance officer | admin |
 |---|:--:|:--:|:--:|:--:|:--:|
-| `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` · `/codes/{code}/translations` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — counts | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — `recent_reviews` (names + comments) | ❌ | ✅ | ✅ | ✅ | ✅ |
 | `GET /review/history?subject_reference=…` (one result's trail) | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -832,8 +834,11 @@ on the way to the score; with sklearn it would mean reaching into `vectorizer.vo
 indexing back into a sparse matrix to recover the same numbers.
 
 Adopt scikit-learn if the corpus passes ~10⁵ rows, or if n-grams or sublinear term frequency are
-needed. Before that, the classifier index is rebuilt per call — 0.1 ms at 20 codes, ~68 ms at
-10 000 — so caching it is the first optimisation, not a new dependency.
+needed. The classifier index used to be rebuilt on every call — fine at 20 mock codes, ~68 ms at
+10,000 — and once the real 13,733-code EU Combined Nomenclature was bundled (see
+[🌍 The real EU Combined Nomenclature 2026](#-the-real-eu-combined-nomenclature-2026)) that became
+~150 ms per call, so the caching this note already anticipated was implemented: a per-connection
+cache correctness-checked against the freshly-fetched rows on every call, not a new dependency.
 
 **One measured wrinkle:** CN descriptions are written in the plural ("cables", "batteries") while
 users type the singular. Without plural folding, `cable`, `biscuit`, `laptop` and `battery` each
@@ -1182,6 +1187,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/review` | Record a reviewer's sign-off on a past classification, screening or duty result |
 | `GET` | `/review/history` | Recorded review decisions, most recently reviewed first |
 | `GET` | `/codes/{code}/history` | One CN code's SCD Type 2 version timeline, oldest first |
+| `GET` | `/codes/{code}/translations` | A CN code's German/French descriptions alongside the English one |
 | `GET` | `/dashboard/stats` | Aggregate stats: reference data, review activity, CN import runs |
 | `GET` | `/assess-risk` | Composite risk score combining classification, screening and duty |
 | `POST` | `/extract-invoice` | Read an uploaded invoice PDF and return the fields found in it (sign-in required) |
@@ -1476,7 +1482,7 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 | `pg_adapter.py` | 🟢 96% |
 | `auth.py` | 🟢 100% |
 | `document_extraction.py` | 🟢 99% |
-| **Total** | **🟢 98.52%** (358 tests in 2.0 s, gate at 80%) — **no module is excluded from the gate** |
+| **Total** | **🟢 96.28%** (420 tests in ~5.7 s, gate at 80%) — **no module is excluded from the gate**. `scripts/import_cn_codes.py`'s openpyxl-dependent Excel-reading path is the reason the total isn't higher: openpyxl is optional and not installed in CI, so that code is untested there — the same treatment its pre-existing `_read_excel_rows` already had. The suffix-collapse and leaf-selection *logic* that path calls is extracted into pure functions and fully tested. |
 
 The 13 PostgreSQL parity tests are *not* in that count: they skip unless `CUSTOMSIQ_TEST_POSTGRES_URL`
 points at a real server (CI sets it; a plain local `pytest` needs no Postgres and no driver).
@@ -1518,10 +1524,89 @@ points at a real server (CI sets it; a plain local `pytest` needs no Postgres an
 
 ---
 
-## 📦 Sample data
+## 🌍 The real EU Combined Nomenclature 2026
+
+Every earlier phase ran the classification/search endpoints against 20 invented codes — good
+enough to demonstrate the algorithms, useless for actually finding a real product. This phase
+closes that gap **permanently**, not with a live import step: the official EU Combined
+Nomenclature 2026 is processed once, bundled as a file committed to this repo
+(`data/cn_nomenclature_2026.csv`, 3.1 MB), and loaded into `hs_codes` on every app startup —
+including on Render, whose free tier resets the filesystem on every restart. No network access,
+no dependency on anything surviving between deploys; the same "process once, commit the result"
+approach `tests/fixtures/sample_invoice.pdf` already uses for the invoice-extraction fixtures.
+
+**Real, measured numbers, not estimates:**
+
+| | |
+|---|---|
+| Source | EU Combined Nomenclature 2026, official Eurostat/DG TAXUD export via [CIRCABC](https://circabc.europa.eu/), English/German/French |
+| Leaf codes bundled | **13,733** — every genuinely declarable code, CN-8 and TARIC-10 combined (see the methodology below) |
+| Bundle size | 3.1 MB CSV, committed to the repo |
+| Added to every cold start | **~90 ms** (CSV parse + upsert into `hs_codes` + upsert into `hs_code_translations`, measured) |
+| `classify()` cost at this scale | ~150 ms cold, **~20 ms** once its per-connection cache is warm — see below |
+| `search()` cost at this scale | ~440–490 ms per call — no equivalent cache is possible for its character-overlap algorithm; a known, accepted cost of the larger real catalog, stated here rather than left unexplained |
+
+`cn_classifier.py` already carried a comment from an earlier phase naming this exact scenario:
+*"the index is rebuilt per call — 0.1 ms at 20 codes, ~68 ms at 10k. Cache it per connection if a
+full CN import makes that noticeable."* This import did, so the pre-authorized fix is implemented:
+a per-connection cache that compares the freshly-fetched rows against the last-built index and
+only recomputes when they actually differ — **not** a row-count check, which would miss an
+in-place description update that leaves the count unchanged and serve a stale result. Verified
+directly, not just reasoned about: an in-place update was made after populating the cache, and the
+very next `classify()` call correctly rebuilt rather than returning the old text. Scores and
+rankings are unchanged from before — only the redundant rebuild is skipped. `search.py` has no
+equivalent fix: its character-overlap comparison is query-dependent, not corpus-dependent, so
+there's no index to cache, and its ~450 ms cost is stated here rather than silently left as-is.
+
+**Where it lives, and why not as new columns.** `hs_codes.description` stays English-only and
+unchanged; German and French descriptions live in a **new, separate**
+`hs_code_translations(code, language, description)` table, following the exact precedent
+[🕘 Versioned CN codes](#-versioned-cn-codes-scd-type-2) already set for `hs_code_history`:
+`CREATE TABLE IF NOT EXISTS hs_codes (...)` can never add a column to anyone's existing database
+file, so a new table is the only way that reliably reaches every already-created `customsiq.db`.
+Fetch a code's translations at `GET /codes/{code}/translations`; a code with none (any of the 20
+mock rows below) returns `null` for `de`/`fr`, not an error.
+
+**What "leaf code" actually means, worked out against the real file rather than assumed.** The
+source export lists every hierarchy level in one sheet, flagged by a `Hier. Pos.` column: `8` for
+CN-8 (Combined Nomenclature) and `10` for TARIC-10 (the EU's more granular customs-declaration
+codes). A CN-8 code that has TARIC-10 subdivisions **isn't actually declarable on its own** — real
+declarations require the most detailed code available — so it's dropped in favour of its
+children; a CN-8 code with no further subdivision is kept as-is. One more wrinkle, verified by
+direct inspection rather than assumed away: the two-digit token trailing each code
+(`"0101291000 80"`) is a Eurostat *statistical suffix*, not part of the commodity code itself, and
+1,098 codes have multiple suffix variants with genuinely different descriptions (weight bands,
+"for slaughter" vs. "other"). Since `hs_codes.code` is a primary key, one has to be picked:
+suffix `80` (the "no supplementary unit" default, present for every such code) wins; otherwise
+whichever variant appeared first. The result: **4,173 CN-8-only leaves + 9,560 TARIC-10 codes =
+13,733**, not the ~9,700 a naive `Hier. Pos. == 8` filter would have produced.
+
+**Regenerating the bundle** (a future annual update, or a different language set):
+
+```bash
+python scripts/import_cn_codes.py build-bundle \
+  Nomenclature_EN.xlsx Nomenclature_DE.xlsx Nomenclature_FR.xlsx \
+  --output data/cn_nomenclature_2026.csv
+```
+
+This is a one-time/occasional build step — the app never runs it; it only reads the committed
+CSV. `scripts/import_cn_codes.py`'s original single-language `import` command (below) is
+unchanged and still works for a routine annual refresh once a bundle already exists.
+
+The 20-row mock catalog below is **kept, unchanged, alongside the real data** — not replaced.
+`seed()`'s default stays the same 20 codes it has always been (every test fixture in this repo
+depends on that, and continues to pass completely unmodified); the real 13,733-code bundle is
+added on top, in the live app only. None of the mock codes collide with real ones — verified, not
+assumed: `8517120000`, `6109100000` and the rest were invented for earlier phases and don't
+correspond to real 2026 CN-8 entries. One honest, minor side effect worth naming: the mock data's
+category labels predate `import_cn_codes.py`'s chapter-derived mapping and disagree with it in two
+places — chapter 64 (footwear) is `"Textile"` in the mock set but `"Footwear"` in the real one;
+chapter 09 (coffee) is `"Food"` in the mock set but `"Vegetable Products"` in the real one. Both
+labels appear on the live catalog for their respective chapters, unreconciled — the mock rows are
+also used by name in several pinned tests, so "fixing" them was out of scope here.
 
 The database is seeded with **20 representative CN/TARIC codes across 8 categories**, written in
-EU Combined Nomenclature style:
+EU Combined Nomenclature style — the original mock set, described above:
 
 | Category | Codes |
 |---|---|
@@ -1595,11 +1680,11 @@ one future-dated rate that the `valid_from` filter correctly ignores.
 > 🚨 **The rates and both trade agreements are fictional.** Real duty rates and preferential
 > origins come from the EU TARIC database; never use these figures for an actual declaration.
 
-### Importing the real CN nomenclature
+### Importing a CN nomenclature update
 
-The 20-row sample above is a demo dataset — **including on the [live demo](https://customsiq-gs0u.onrender.com/)**,
-which deliberately runs the mock data. To work with the full nomenclature locally, download the
-official CN reference file and import it:
+The live demo already runs the real 13,733-code EU Combined Nomenclature 2026 (see
+[🌍 The real EU Combined Nomenclature 2026](#-the-real-eu-combined-nomenclature-2026) above) — this
+section is for refreshing it, or importing a different single-language CN export locally:
 
 **1. Get the file** (manual — the importer never touches the network):
 
@@ -1641,9 +1726,13 @@ Excel input additionally needs `pip install openpyxl`; it is deliberately not a 
 dependency, since only this tool would ever use it. Exporting the sheet to CSV avoids it entirely.
 
 > 📜 **Attribution.** The Combined Nomenclature is public reference data of the European Union
-> (© European Union), reusable under the
-> [Commission's reuse policy](https://ec.europa.eu/info/legal-notice_en). CustomsIQ redistributes
-> none of it — you download it yourself from the sources above.
+> (© European Union), reusable — including redistribution of derived extracts, with attribution —
+> under the [Commission's reuse policy](https://ec.europa.eu/info/legal-notice_en).
+> `data/cn_nomenclature_2026.csv` **is** such an extract: 13,733 leaf codes and their English,
+> German and French descriptions, derived from the official Eurostat/DG TAXUD CIRCABC export and
+> committed to this repo under that policy — a change from earlier phases, which only referenced
+> the official sources rather than bundling data from them. The sanctioned-party list and duty
+> rates elsewhere on this page remain entirely fictional and are unaffected by this.
 
 ---
 
@@ -1665,6 +1754,7 @@ coverage gate:
 | `auth.py` (RBAC) | ✅ **Shipped** | Accounts, sessions and four roles; `reviewer_name` now comes from the session |
 | `document_extraction.py` | ✅ **Shipped** | Invoice PDF upload that pre-fills the classification, duty and risk forms |
 | `sap_gts_bridge.py` | ✅ **Shipped** | SAP GTS terminology view over existing results — a labelled simulation, not an integration |
+| Real EU Combined Nomenclature 2026 | ✅ **Shipped** | 13,733 real, trilingual leaf codes bundled and loaded at every startup, alongside the original mock data |
 
 Planned extensions: country-level embargo checks and product/destination restrictions, alias and
 transliteration handling for entity names, quota/anti-dumping components on top of the duty
@@ -1719,7 +1809,9 @@ CustomsIQ/
 │   │   ├── api.py               # FastAPI app (also serves the frontend)
 │   │   └── static/index.html    # web frontend — single file, no build step
 │   └── utils/validators.py      # CN/TARIC format & country code validation
-├── scripts/import_cn_codes.py   # official CN file → hs_codes, versioning changes (SCD Type 2)
+├── data/cn_nomenclature_2026.csv # bundled EU Combined Nomenclature 2026 — 13,733 leaf codes, EN/DE/FR
+├── scripts/import_cn_codes.py   # official CN file → hs_codes, versioning changes (SCD Type 2);
+│                                #   also builds the data/ bundle above (build-bundle subcommand)
 ├── tests/                       # 358 tests — unit, API, CLI, classification, screening, duty, review, import, dashboard, risk, auth/RBAC, extraction
 │   └── fixtures/                #   sample CN export + invoice PDFs (make_invoice_pdfs.py regenerates them)
 │   ├── conftest.py              #   lowers the password work factor for the suite

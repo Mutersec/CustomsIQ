@@ -18,9 +18,11 @@ from src.customsiq.config import settings
 from src.customsiq.dashboard import get_dashboard_stats
 from src.customsiq.database import (
     fetch_hs_code_history,
+    fetch_translations,
     fetch_users,
     get_by_code,
     get_connection,
+    load_bundled_cn_nomenclature,
     seed,
     update_user_role,
 )
@@ -45,6 +47,12 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 _conn: sqlite3.Connection = get_connection(settings.database_target)
 seed(_conn)
+# Adds the real EU Combined Nomenclature 2026 on top of the 20-row mock
+# SAMPLE_DATA seed() just wrote — not instead of it. The bundle is committed
+# to the repo (data/cn_nomenclature_2026.csv), so this needs no network
+# access and survives every cold start; upsert_hs_codes is idempotent, so
+# re-running this on every restart is safe and cheap (~90 ms).
+load_bundled_cn_nomenclature(_conn)
 if settings.seed_demo_users:
     auth.seed_demo_users(_conn)
 
@@ -445,6 +453,28 @@ def code_history(code: str) -> list[dict]:
         }
         for v in fetch_hs_code_history(_conn, code)
     ]
+
+
+@app.get("/codes/{code}/translations")
+def code_translations(code: str) -> dict:
+    """Return a CN code's description in German and French, alongside the English one.
+
+    404 only if the code itself is unknown. A code with no translations on
+    record (e.g. one of the 20 mock SAMPLE_DATA entries, which predate the
+    bundled EU Combined Nomenclature import) returns null for `de`/`fr` rather
+    than 404 — the code exists, it just has no supplementary language data.
+    """
+    try:
+        record = get_by_code(_conn, code)
+    except HSCodeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    translations = fetch_translations(_conn, code)
+    return {
+        "code": code,
+        "en": record.description,
+        "de": translations.get("de"),
+        "fr": translations.get("fr"),
+    }
 
 
 class Credentials(BaseModel):
