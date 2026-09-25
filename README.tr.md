@@ -771,9 +771,8 @@ gümrük sınıflandırmalarını onaylama yetkisi vermek, gerçek bir denetimde
 Üretime uygun sürümü tek satır: `auth.SELF_REGISTRATION_ROLE` değerini `VIEWER` yapın;
 yeni hesaplar bir yönetici `POST /auth/users/{username}/role` ile yükseltene kadar
 denetim izini okumaktan başka bir şey yapamaz — o uç nokta zaten var ve zaten yalnızca
-admin'e açık. Aşağıdaki demo hesaplarının parolalarının yayımlanmış olması da aynı
-gerekçeye dayanır: kurgusal veriyle çalışan bir portföy demosu için uygun, başka her yerde
-savunulamaz.
+admin'e açık. Demo hesaplarının var olması da aynı gerekçeye dayanır: kurgusal veriyle
+çalışan bir portföy demosu için uygun, başka her yerde savunulamaz.
 
 ### 🕰️ Geçmişteki serbest metin inceleyiciler olduğu gibi bırakıldı
 
@@ -943,7 +942,7 @@ ya da düzenleyin, sonra zaten bildiğiniz düğmeye basın.
 ```bash
 curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username": "demo_viewer", "password": "viewer-demo-2026"}'
+  -d '{"username": "<kullanıcı adı>", "password": "<parola>"}'
 
 curl -b cookies.txt -X POST "http://localhost:8000/extract-invoice" \
   -H "Content-Type: application/pdf" \
@@ -974,22 +973,15 @@ opak bir ikili dosya olarak kalmıyor.
 
 ### 🔐 Oturum açma
 
-Okumak ve hesaplamak için hesap gerekmez. İnceleme kaydetmek için gerekir.
+Okumak ve hesaplamak için hesap gerekmez. İnceleme kaydetmek için gerekir. Oturum açma
+artık ana uygulamadaki bir panel değil, kendi sayfasına sahip (`GET /login`) — başlıktaki
+**Oturum aç** bağlantısı oraya götürür ve başarılı girişten sonra `/` adresine döner.
 
 İlk çalıştırmada her rolden bir tane olmak üzere dört demo hesabı oluşturulur; böylece
-izin modeli okunmakla kalmaz, denenebilir:
-
-| Kullanıcı adı | Parola | Rol | Yapabildikleri |
-|---|---|---|---|
-| `demo_viewer` | `viewer-demo-2026` | viewer | Tüm denetim kaydını okur; hiçbir şeyi onaylayamaz |
-| `demo_analyst` | `analyst-demo-2026` | analyst | Sınıflandırma ve vergi sonuçlarını onaylar |
-| `demo_officer` | `officer-demo-2026` | uyum yetkilisi | Ayrıca yaptırım taramalarını da onaylar |
-| `demo_admin` | `admin-demo-2026` | admin | Her şey, ayrıca `/auth/users` ve rol değişiklikleri |
-
-> **Bunlar kurgusal veri üzerinde herkese açık kimlik bilgileridir.** Buraya asla gerçek
-> bir parola girmeyin. Yalnızca `users` tablosu boşken oluşturulurlar; böylece gerçek
-> hesapları olan bir dağıtıma yeniden başlatma yoluyla verilemezler ve
-> `CUSTOMSIQ_SEED_DEMO_USERS=false` bunları tamamen kapatır.
+izin modeli okunmakla kalmaz, denenebilir. Kimlik bilgileri burada veya sayfada
+yayımlanmaz, **istek üzerine paylaşılır**; yalnızca `users` tablosu boşken oluşturulurlar
+— böylece gerçek hesapları olan bir dağıtıma yeniden başlatma yoluyla verilemezler — ve
+`CUSTOMSIQ_SEED_DEMO_USERS=false` bunları tamamen kapatır.
 
 Kayıt olmak size `analyst` verir — [bunun neden bir demo tercihi olduğuna](#-kayıt-olan-analyst-olur--demo-tercihi-gerçek-işleyişin-modeli-değil) bakın.
 
@@ -997,7 +989,7 @@ Kayıt olmak size `analyst` verir — [bunun neden bir demo tercihi olduğuna](#
 # oturum açın (ya da kayıt olun), çerezi saklayın
 curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username": "demo_officer", "password": "officer-demo-2026"}'
+  -d '{"username": "<kullanıcı adı>", "password": "<parola>"}'
 
 # onayı yetkilendiren şey çerezdir
 curl -b cookies.txt -X POST "http://localhost:8000/review" \
@@ -1008,7 +1000,7 @@ curl -b cookies.txt "http://localhost:8000/auth/me"
 curl -b cookies.txt -X POST "http://localhost:8000/auth/logout"
 ```
 
-Tarayıcıda bu, **Oturum aç** panelidir; giriş yaptıktan sonra başlıkta kullanıcı adınız
+Tarayıcıda bu, **/login** sayfasıdır; giriş yaptıktan sonra başlıkta kullanıcı adınız
 ve rolünüz görünür, inceleme denetimleri ise tam olarak rolünüzün onaylayabileceği
 sonuçlarda belirir. Arayüzün geri kalanı gibi her şey çevrilidir (EN/TR/DE).
 

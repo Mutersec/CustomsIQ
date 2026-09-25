@@ -678,7 +678,7 @@ als die Grenze beim Namen zu nennen.
 
 | Maßnahme | Verhalten |
 |---|---|
-| Authentifizierung | Angemeldet, jede Rolle genügt (`document:extract` → `viewer`). Anonyme Aufrufe erhalten `401`, **bevor ein Byte gelesen wird**. Die Demo-Konten sind veröffentlicht, das Feature bleibt also für alle ausprobierbar |
+| Authentifizierung | Angemeldet, jede Rolle genügt (`document:extract` → `viewer`). Anonyme Aufrufe erhalten `401`, **bevor ein Byte gelesen wird**. Demo-Zugangsdaten sind auf Anfrage erhältlich, das Feature bleibt also für alle ausprobierbar |
 | Größe | 2 MB, über den eingehenden Stream gezählt und mitten in der Übertragung abgebrochen → `413`. Bewusst nicht `Content-Length` — ein Header kann lügen, und erst zu puffern ist genau der Fehler, den man hier nicht haben will |
 | Typ | Die Bytes müssen mit `%PDF-` beginnen → `415`. Dateiname und deklarierter `Content-Type` werden nie vertraut, der Dateiname landet in keinem Pfad |
 | Struktur | Höchstens 10 Seiten; verschlüsselte PDFs werden abgelehnt; jeder Parse-Fehler wird ein sauberer `400`, nie ein Traceback |
@@ -794,9 +794,8 @@ Zolleinreihungen freizugeben, wäre in jedem echten Audit ein Befund.
 Die produktionsnahe Variante ist eine Zeile: `auth.SELF_REGISTRATION_ROLE` auf `VIEWER`
 setzen — neue Konten dürfen dann nur das Prüfprotokoll lesen, bis eine Administratorin sie
 über `POST /auth/users/{username}/role` hochstuft, was es bereits gibt und bereits
-admin-only ist. Dieselbe Begründung gilt dafür, dass die Demo-Konten unten ihre Passwörter
-veröffentlichen: für eine Portfolio-Demo auf fiktiven Daten angemessen, anderswo nicht
-vertretbar.
+admin-only ist. Dieselbe Begründung gilt dafür, dass die Demo-Konten überhaupt existieren:
+für eine Portfolio-Demo auf fiktiven Daten angemessen, anderswo nicht vertretbar.
 
 ### 🕰️ Historische Freitext-Prüfer bleiben unangetastet
 
@@ -971,7 +970,7 @@ drücken Sie dann den Knopf, den Sie ohnehin kennen.
 ```bash
 curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username": "demo_viewer", "password": "viewer-demo-2026"}'
+  -d '{"username": "<Benutzername>", "password": "<Passwort>"}'
 
 curl -b cookies.txt -X POST "http://localhost:8000/extract-invoice" \
   -H "Content-Type: application/pdf" \
@@ -1002,22 +1001,17 @@ undurchsichtige Binärdatei.
 
 ### 🔐 Anmelden
 
-Lesen und Rechnen braucht kein Konto. Eine Prüfung zu erfassen schon.
+Lesen und Rechnen braucht kein Konto. Eine Prüfung zu erfassen schon. Die Anmeldung hat
+jetzt eine eigene Seite (`GET /login`) statt einer Karte in der Hauptanwendung — der Link
+**Anmelden** im Kopfbereich führt dorthin, und eine erfolgreiche Anmeldung leitet zu `/`
+zurück.
 
 Beim ersten Start werden vier Demo-Konten angelegt — eines je Rolle, damit sich das
-Berechtigungsmodell ausprobieren und nicht nur nachlesen lässt:
-
-| Benutzername | Passwort | Rolle | Darf |
-|---|---|---|---|
-| `demo_viewer` | `viewer-demo-2026` | viewer | Das vollständige Prüfprotokoll lesen; nichts freigeben |
-| `demo_analyst` | `analyst-demo-2026` | analyst | Einreihungs- und Zollergebnisse freigeben |
-| `demo_officer` | `officer-demo-2026` | Compliance-Officer | Zusätzlich Sanktionsprüfungen freigeben |
-| `demo_admin` | `admin-demo-2026` | admin | Alles, dazu `/auth/users` und Rollenwechsel |
-
-> **Das sind öffentliche Zugangsdaten auf fiktiven Daten.** Verwenden Sie hier nie ein
-> echtes Passwort. Sie werden nur angelegt, wenn die `users`-Tabelle leer ist — ein
-> Deployment mit echten Konten kann sie also durch einen Neustart nicht untergeschoben
-> bekommen — und `CUSTOMSIQ_SEED_DEMO_USERS=false` schaltet sie ganz ab.
+Berechtigungsmodell ausprobieren und nicht nur nachlesen lässt. Ihre Zugangsdaten werden
+weder hier noch auf der Seite veröffentlicht, sondern **auf Anfrage** herausgegeben; die
+Konten werden nur angelegt, wenn die `users`-Tabelle leer ist — ein Deployment mit echten
+Konten kann sie also durch einen Neustart nicht untergeschoben bekommen — und
+`CUSTOMSIQ_SEED_DEMO_USERS=false` schaltet sie ganz ab.
 
 Eine Registrierung vergibt `analyst` — siehe [warum das eine Demo-Entscheidung ist](#-selbstregistrierung-vergibt-analyst--eine-demo-entscheidung-kein-abbild-echter-rollenvergabe).
 
@@ -1025,7 +1019,7 @@ Eine Registrierung vergibt `analyst` — siehe [warum das eine Demo-Entscheidung
 # anmelden (oder registrieren) und das Cookie behalten
 curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username": "demo_officer", "password": "officer-demo-2026"}'
+  -d '{"username": "<Benutzername>", "password": "<Passwort>"}'
 
 # das Cookie ist es, was die Freigabe autorisiert
 curl -b cookies.txt -X POST "http://localhost:8000/review" \
@@ -1036,7 +1030,7 @@ curl -b cookies.txt "http://localhost:8000/auth/me"
 curl -b cookies.txt -X POST "http://localhost:8000/auth/logout"
 ```
 
-Im Browser ist das die Karte **Anmelden**; nach der Anmeldung zeigt der Kopfbereich
+Im Browser ist das die Seite **/login**; nach der Anmeldung zeigt der Kopfbereich
 Benutzernamen und Rolle, und die Prüf-Schaltflächen erscheinen genau an den Ergebnissen,
 die Ihre Rolle freigeben darf. Alles ist übersetzt (EN/TR/DE) wie der Rest der Oberfläche.
 

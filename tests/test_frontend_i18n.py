@@ -13,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
-INDEX = Path(__file__).resolve().parents[1] / "src" / "customsiq" / "static" / "index.html"
+STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "customsiq" / "static"
+INDEX = STATIC_DIR / "index.html"
+LOGIN = STATIC_DIR / "login.html"
 LANGUAGES = ("en", "tr", "de")
 
 
@@ -35,8 +37,7 @@ def source() -> str:
     return INDEX.read_text(encoding="utf-8")
 
 
-@pytest.fixture(scope="module")
-def dictionaries(source: str) -> dict:
+def _dictionaries(source: str) -> dict:
     """The three per-language STRINGS blocks, as raw text."""
     blocks = {}
     for language in LANGUAGES:
@@ -44,6 +45,11 @@ def dictionaries(source: str) -> dict:
         assert match, f"no {language} block in STRINGS"
         blocks[language] = _block(source, match.end() - 1)
     return blocks
+
+
+@pytest.fixture(scope="module")
+def dictionaries(source: str) -> dict:
+    return _dictionaries(source)
 
 
 def _resolve(block: str, dotted_key: str) -> bool:
@@ -79,6 +85,17 @@ def test_every_key_the_page_uses_exists_in_every_language(
 ) -> None:
     """EN, TR and DE must all define every key the page actually asks for."""
     missing = sorted(key for key in _used_keys(source) if not _resolve(dictionaries[language], key))
+    assert not missing, f"{language} is missing: {missing}"
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_login_page_every_key_it_uses_exists_in_every_language(language: str) -> None:
+    """login.html has its own small STRINGS object — checked the same way."""
+    login_source = LOGIN.read_text(encoding="utf-8")
+    dictionaries = _dictionaries(login_source)
+    keys = _used_keys(login_source)
+    assert len(keys) > 5
+    missing = sorted(key for key in keys if not _resolve(dictionaries[language], key))
     assert not missing, f"{language} is missing: {missing}"
 
 

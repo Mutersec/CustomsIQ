@@ -652,7 +652,7 @@ worse than naming the boundary.
 
 | Control | Behaviour |
 |---|---|
-| Authentication | Signed in, any role (`document:extract` → `viewer`). Anonymous callers get `401` **before a byte is read**. The demo accounts are published, so the feature stays tryable by anyone who signs in |
+| Authentication | Signed in, any role (`document:extract` → `viewer`). Anonymous callers get `401` **before a byte is read**. Demo accounts are available on request, so the feature stays tryable by anyone who signs in |
 | Size | 2 MB, counted over the incoming stream and aborted mid-transfer → `413`. Deliberately not `Content-Length` — a header can lie, and buffering first is the bug worth not having |
 | Type | The bytes must start with `%PDF-` → `415`. The filename and the declared `Content-Type` are never trusted, and the filename is never used in a path |
 | Structure | At most 10 pages read; encrypted PDFs refused; any parse failure becomes a clean `400`, never a traceback |
@@ -763,8 +763,8 @@ classifications would be a finding in any real audit.
 The production-shaped version is one line — set `auth.SELF_REGISTRATION_ROLE` to
 `VIEWER`, and new accounts can read the audit trail and nothing else until an admin
 promotes them through `POST /auth/users/{username}/role`, which already exists and is
-already admin-only. The same reasoning covers the demo accounts publishing their
-passwords below: appropriate for a mock-data portfolio demo, indefensible anywhere else.
+already admin-only. The same reasoning covers the demo accounts existing at all:
+appropriate for a mock-data portfolio demo, indefensible anywhere else.
 
 ### 🕰️ Historical free-text reviewers are left alone
 
@@ -929,7 +929,7 @@ you: review or edit the values, then press the button you already know.
 ```bash
 curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username": "demo_viewer", "password": "viewer-demo-2026"}'
+  -d '{"username": "<username>", "password": "<password>"}'
 
 curl -b cookies.txt -X POST "http://localhost:8000/extract-invoice" \
   -H "Content-Type: application/pdf" \
@@ -960,22 +960,15 @@ opaque binary in the repo.
 
 ### 🔐 Signing in
 
-Reading and computing needs no account. Recording a review does.
+Reading and computing needs no account. Recording a review does. Login now has its
+own page (`GET /login`) rather than a panel on the main app — the header's **Sign
+in** link navigates there, and a successful sign-in redirects back to `/`.
 
 Four demo accounts are seeded on first start — one per role, so the permission model
-can actually be tried rather than just read about:
-
-| Username | Password | Role | Can |
-|---|---|---|---|
-| `demo_viewer` | `viewer-demo-2026` | viewer | Read the full audit log; sign off on nothing |
-| `demo_analyst` | `analyst-demo-2026` | analyst | Sign off on classification and duty results |
-| `demo_officer` | `officer-demo-2026` | compliance officer | Also sign off on sanctions screening |
-| `demo_admin` | `admin-demo-2026` | admin | Everything, plus `/auth/users` and role changes |
-
-> **These are public credentials on mock data.** Never reuse a real password here.
-> They are seeded only when the `users` table is empty, so a deployment with real
-> accounts can't be handed them by a restart, and `CUSTOMSIQ_SEED_DEMO_USERS=false`
-> turns them off entirely.
+can actually be tried rather than just read about. Their credentials are **available
+on request** rather than published here or on the page; they're seeded only when the
+`users` table is empty, so a deployment with real accounts can't be handed them by a
+restart, and `CUSTOMSIQ_SEED_DEMO_USERS=false` turns them off entirely.
 
 Registering gives you `analyst` — see [why that's a demo choice](#-self-registration-grants-analyst--a-demo-choice-not-a-model-of-real-onboarding).
 
@@ -983,7 +976,7 @@ Registering gives you `analyst` — see [why that's a demo choice](#-self-regist
 # sign in (or register), keeping the session cookie
 curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username": "demo_officer", "password": "officer-demo-2026"}'
+  -d '{"username": "<username>", "password": "<password>"}'
 
 # the cookie is what authorises a sign-off
 curl -b cookies.txt -X POST "http://localhost:8000/review" \
@@ -994,7 +987,7 @@ curl -b cookies.txt "http://localhost:8000/auth/me"
 curl -b cookies.txt -X POST "http://localhost:8000/auth/logout"
 ```
 
-In the browser this is the **Sign in** panel; once signed in, the header shows your
+In the browser this is the **/login** page; once signed in, the header shows your
 username and role, and review controls appear on exactly the results your role may
 sign off on. Everything is translated (EN/TR/DE) like the rest of the UI.
 

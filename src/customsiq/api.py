@@ -181,6 +181,12 @@ def index() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
 
 
+@app.get("/login", response_class=FileResponse, include_in_schema=False)
+def login_page() -> FileResponse:
+    """Serve the dedicated sign-in page, separate from the main app."""
+    return FileResponse(_STATIC_DIR / "login.html")
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict:
     """Liveness check and basic service info."""
