@@ -13,6 +13,24 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from src.customsiq import auth, review, sap_gts_bridge
+from src.customsiq.api_schemas import (
+    ClassificationResultResponse,
+    CodeTranslationsResponse,
+    DashboardStatsResponse,
+    DutyCalculationResponse,
+    ExtractionResultResponse,
+    GtsDocumentResponse,
+    HealthResponse,
+    HSCodeVersionResponse,
+    LogoutResponse,
+    ReviewResponse,
+    RiskAssessmentResponse,
+    RoleChangeResponse,
+    ScreeningResultResponse,
+    SearchResult,
+    UserResponse,
+    WhoAmIResponse,
+)
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.dashboard import get_dashboard_stats
@@ -39,7 +57,15 @@ from src.customsiq.risk import assess_shipment
 from src.customsiq.search import search
 from src.customsiq.tariff_calculator import calculate_duty
 
-app = FastAPI(title="CustomsIQ")
+app = FastAPI(
+    title="CustomsIQ",
+    description=(
+        "An EU trade-compliance toolkit — HS/CN classification, denied-party "
+        "screening, duty calculation and composite risk scoring, on the real "
+        "EU Combined Nomenclature."
+    ),
+    version="1.0.0",
+)
 
 # Resolved from this module, not the working directory: the deployed process
 # may be started from anywhere, and a missing directory would raise on import.
@@ -57,6 +83,33 @@ if settings.seed_demo_users:
     auth.seed_demo_users(_conn)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next: Callable) -> Response:
+    """Attach a small set of low-effort, broadly-applicable security headers.
+
+    Applied globally, including to error responses — a 400/404 needs these
+    exactly as much as a 200 does, since they're about how the *browser*
+    treats the response, not about what the response says.
+
+    Deliberately not a Content-Security-Policy: the frontend is one file with
+    a large inline <script>/<style> block, so a CSP strict enough to mean
+    anything would need 'unsafe-inline' on both script-src and style-src
+    (defeating most of what a CSP is for) or a restructuring of the frontend
+    into external files, which is real, separate work outside "low-effort
+    headers". Shipping a CSP that's security theater would be worse than
+    naming the gap, so it's left out on purpose.
+    """
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Modern guidance is to explicitly disable this legacy header rather than
+    # enable it — on some older browsers, enabling it was itself an XSS vector.
+    response.headers["X-XSS-Protection"] = "0"
+    return response
+
 
 SESSION_COOKIE = "customsiq_session"
 
@@ -128,13 +181,13 @@ def index() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health() -> dict:
     """Liveness check and basic service info."""
     return {"service": "CustomsIQ API", "docs": "/docs", "status": "running"}
 
 
-@app.get("/search")
+@app.get("/search", response_model=list[SearchResult])
 def search_hs_codes(
     q: str = Query(..., description="Free-text product description"),
     limit: int = Query(5, ge=1, le=50),
@@ -159,7 +212,7 @@ def search_hs_codes(
     ]
 
 
-@app.get("/classify")
+@app.get("/classify", response_model=list[ClassificationResultResponse])
 def classify_description(
     description: str = Query(..., description="Free-text description of the goods"),
     top_n: int = Query(5, ge=1, le=50),
@@ -187,7 +240,7 @@ def classify_description(
     ]
 
 
-@app.get("/screen")
+@app.get("/screen", response_model=list[ScreeningResultResponse])
 def screen_name(
     name: str = Query(..., description="Person or organisation name to screen"),
 ) -> list[dict]:
@@ -213,7 +266,7 @@ def screen_name(
     ]
 
 
-@app.get("/calculate-duty")
+@app.get("/calculate-duty", response_model=DutyCalculationResponse)
 def calculate_duty_for_consignment(
     hs_code: str = Query(..., description="CN-8 or TARIC-10 code"),
     country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
@@ -244,7 +297,7 @@ def calculate_duty_for_consignment(
     }
 
 
-@app.get("/assess-risk")
+@app.get("/assess-risk", response_model=RiskAssessmentResponse)
 def assess_risk(
     country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
     party_name: str = Query(..., description="Person or organisation to screen"),
@@ -330,7 +383,7 @@ async def _read_capped_body(request: Request) -> bytes:
     return bytes(body)
 
 
-@app.post("/extract-invoice")
+@app.post("/extract-invoice", response_model=ExtractionResultResponse)
 async def extract_invoice_upload(
     request: Request,
     user: User = Depends(require_permission("document:extract")),
@@ -381,7 +434,7 @@ async def extract_invoice_upload(
     }
 
 
-@app.get("/sap-gts/compliance-check")
+@app.get("/sap-gts/compliance-check", response_model=GtsDocumentResponse)
 def sap_gts_compliance_check(
     country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
     party_name: str = Query(..., description="Person or organisation to screen"),
@@ -416,7 +469,7 @@ def sap_gts_compliance_check(
     return sap_gts_bridge.compliance_check(assessment, party_name, subject_reference).as_payload()
 
 
-@app.get("/sap-gts/legal-control/{subject_reference}")
+@app.get("/sap-gts/legal-control/{subject_reference}", response_model=GtsDocumentResponse)
 def sap_gts_legal_control(subject_reference: str) -> dict:
     """Render a subject's recorded review decisions as a block/release check log.
 
@@ -429,7 +482,7 @@ def sap_gts_legal_control(subject_reference: str) -> dict:
     return sap_gts_bridge.legal_control_log(decisions, subject_reference).as_payload()
 
 
-@app.get("/codes/{code}/history")
+@app.get("/codes/{code}/history", response_model=list[HSCodeVersionResponse])
 def code_history(code: str) -> list[dict]:
     """Return one CN code's version timeline, oldest first.
 
@@ -455,7 +508,7 @@ def code_history(code: str) -> list[dict]:
     ]
 
 
-@app.get("/codes/{code}/translations")
+@app.get("/codes/{code}/translations", response_model=CodeTranslationsResponse)
 def code_translations(code: str) -> dict:
     """Return a CN code's description in German and French, alongside the English one.
 
@@ -490,7 +543,7 @@ class RoleChange(BaseModel):
     role: str
 
 
-@app.post("/auth/register")
+@app.post("/auth/register", response_model=UserResponse)
 def register(body: Credentials, request: Request, response: Response) -> dict:
     """Create an account and sign it in.
 
@@ -506,7 +559,7 @@ def register(body: Credentials, request: Request, response: Response) -> dict:
     return _user_payload(user)
 
 
-@app.post("/auth/login")
+@app.post("/auth/login", response_model=UserResponse)
 def login(body: Credentials, request: Request, response: Response) -> dict:
     """Verify credentials and start a session."""
     try:
@@ -517,7 +570,7 @@ def login(body: Credentials, request: Request, response: Response) -> dict:
     return _user_payload(user)
 
 
-@app.post("/auth/logout")
+@app.post("/auth/logout", response_model=LogoutResponse)
 def logout(request: Request, response: Response) -> dict:
     """End the current session. Safe to call when not signed in."""
     auth.logout(_conn, request.cookies.get(SESSION_COOKIE))
@@ -525,7 +578,7 @@ def logout(request: Request, response: Response) -> dict:
     return {"signed_out": True}
 
 
-@app.get("/auth/me")
+@app.get("/auth/me", response_model=WhoAmIResponse)
 def whoami(user: Optional[User] = Depends(current_user)) -> dict:
     """Return the signed-in user, or `{"user": null}`.
 
@@ -535,13 +588,13 @@ def whoami(user: Optional[User] = Depends(current_user)) -> dict:
     return {"user": _user_payload(user) if user else None}
 
 
-@app.get("/auth/users")
+@app.get("/auth/users", response_model=list[UserResponse])
 def list_users(_: User = Depends(require_permission("users:manage"))) -> list[dict]:
     """List every account. Admins only."""
     return [_user_payload(u) for u in fetch_users(_conn)]
 
 
-@app.post("/auth/users/{username}/role")
+@app.post("/auth/users/{username}/role", response_model=RoleChangeResponse)
 def change_role(
     username: str,
     body: RoleChange,
@@ -569,7 +622,7 @@ class ReviewSubmission(BaseModel):
     comment: Optional[str] = None
 
 
-@app.post("/review")
+@app.post("/review", response_model=ReviewResponse)
 def submit_review(body: ReviewSubmission, user: Optional[User] = Depends(current_user)) -> dict:
     """Record a human reviewer's decision on a past classification, screening or duty result.
 
@@ -631,7 +684,7 @@ def _review_payload(decisions: list, authored: set) -> list[dict]:
     ]
 
 
-@app.get("/review/history")
+@app.get("/review/history", response_model=list[ReviewResponse])
 def review_history(
     subject_type: Optional[str] = Query(None),
     subject_reference: Optional[str] = Query(None),
@@ -651,7 +704,7 @@ def review_history(
     return _review_payload(results, review.authored_review_ids(_conn, results))
 
 
-@app.get("/dashboard/stats")
+@app.get("/dashboard/stats", response_model=DashboardStatsResponse)
 def dashboard_stats(user: Optional[User] = Depends(current_user)) -> dict:
     """Return aggregate stats over reference data, review activity and CN imports.
 

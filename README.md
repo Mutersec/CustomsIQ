@@ -1195,6 +1195,21 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/sap-gts/legal-control/{subject_reference}` | A subject's review decisions as a block/release check log (simulation) |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
+**Typed responses.** Every route above declares a Pydantic `response_model`, so `/docs` and
+`/openapi.json` show real field schemas — including the BAPIRET2 field names on the two
+`/sap-gts/*` routes — rather than an untyped `additionalProperties: true`. This is a typing
+addition only: every response body is unchanged, verified by diffing each route's actual JSON
+before and after the models were added.
+
+**Security headers.** Every response (successes and errors alike) carries `X-Content-Type-Options:
+nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin` and
+`X-XSS-Protection: 0`, added by a small global middleware. Deliberately **not** included: a
+Content-Security-Policy. The frontend is one file with a large inline `<script>`/`<style>` block,
+so a CSP strict enough to mean anything would need `'unsafe-inline'` on both `script-src` and
+`style-src` — defeating most of what a CSP is for — or a restructuring of the frontend into
+external files, which is real, separate work outside "low-effort headers." Shipping a CSP that's
+security theater would be worse than naming the gap.
+
 **`GET /search` parameters**
 
 | Parameter | Type | Default | Constraints | Description |
@@ -1807,7 +1822,10 @@ CustomsIQ/
 │   │   ├── logging_config.py    # shared logging setup
 │   │   ├── main.py              # CLI entry point
 │   │   ├── api.py               # FastAPI app (also serves the frontend)
-│   │   └── static/index.html    # web frontend — single file, no build step
+│   │   ├── api_schemas.py       # Pydantic response models — typing only, no logic
+│   │   └── static/
+│   │       ├── index.html       # web frontend — single file, no build step
+│   │       ├── favicon.png · apple-touch-icon.png · og-image.png  # brand assets (generated once)
 │   └── utils/validators.py      # CN/TARIC format & country code validation
 ├── data/cn_nomenclature_2026.csv # bundled EU Combined Nomenclature 2026 — 13,733 leaf codes, EN/DE/FR
 ├── scripts/import_cn_codes.py   # official CN file → hs_codes, versioning changes (SCD Type 2);
@@ -1818,8 +1836,9 @@ CustomsIQ/
 │   ├── helpers.py               #   signed-in TestClient helpers
 │                                #   + 13 Postgres parity tests, skipped unless a server is configured
 │   └── fixtures/                # sample CN export for the importer's tests
-├── pyproject.toml               # ruff · black · mypy · pytest · coverage
+├── pyproject.toml               # ruff · black · mypy · pytest · coverage · [project] metadata
 ├── requirements.txt
+├── LICENSE                      # MIT
 └── .env.example
 ```
 

@@ -1213,6 +1213,21 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/sap-gts/legal-control/{subject_reference}` | Bir konunun inceleme kararlarını bloke/serbest bırakma kaydı olarak gösterir (simülasyon) |
 | `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
 
+**Tipli yanıtlar.** Yukarıdaki her uç nokta bir Pydantic `response_model` bildirir; bu yüzden
+`/docs` ve `/openapi.json`, tipsiz bir `additionalProperties: true` yerine — iki `/sap-gts/*` uç
+noktasındaki BAPIRET2 alan adları dahil — gerçek alan şemaları gösterir. Bu yalnızca bir tipleme
+eklemesidir: her yanıt gövdesi değişmedi, bu modeller eklenmeden önce ve sonra her uç noktanın
+gerçek JSON'u karşılaştırılarak doğrulandı.
+
+**Güvenlik başlıkları.** Her yanıt (başarılı olanlar ve hatalar dahil) `X-Content-Type-Options:
+nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin` ve
+`X-XSS-Protection: 0` taşır; küçük, genel bir ara katman (middleware) tarafından eklenir. Bilinçli
+olarak **eklenmeyen**: bir Content-Security-Policy. Arayüz, büyük bir satır içi `<script>`/`<style>`
+bloğuna sahip tek bir dosyadır; bu yüzden anlamlı olacak kadar sıkı bir CSP hem `script-src` hem de
+`style-src` için `'unsafe-inline'` gerektirir — bir CSP'nin amacının çoğunu boşa çıkarır — ya da
+arayüzü harici dosyalara ayırmayı gerektirir, ki bu "düşük efor başlıklar"ın dışında gerçek, ayrı
+bir iştir. Güvenlik tiyatrosu olan bir CSP göndermek, boşluğu adlandırmaktan daha kötü olurdu.
+
 **`GET /search` parametreleri**
 
 | Parametre | Tip | Varsayılan | Kısıtlar | Açıklama |

@@ -1243,6 +1243,22 @@ for result in search(conn, "lithium battery", limit=3):
 | `GET` | `/sap-gts/legal-control/{subject_reference}` | Die Prüfentscheidungen eines Vorgangs als Sperr-/Freigabeprotokoll (Simulation) |
 | `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
 
+**Typisierte Antworten.** Jede Route oben deklariert ein Pydantic-`response_model`, sodass `/docs`
+und `/openapi.json` echte Feldschemas zeigen — einschließlich der BAPIRET2-Feldnamen der beiden
+`/sap-gts/*`-Routen — statt eines untypisierten `additionalProperties: true`. Das ist eine reine
+Typisierungsergänzung: jeder Antwortkörper ist unverändert, verifiziert durch einen Vergleich der
+tatsächlichen JSON-Antwort jeder Route vor und nach Hinzufügen dieser Modelle.
+
+**Sicherheits-Header.** Jede Antwort (Erfolge wie Fehler) trägt `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin` und
+`X-XSS-Protection: 0`, hinzugefügt durch eine kleine, global wirkende Middleware. Bewusst
+**nicht** enthalten: eine Content-Security-Policy. Das Frontend ist eine einzelne Datei mit einem
+großen inline `<script>`/`<style>`-Block; eine CSP, die streng genug wäre, um etwas zu bewirken,
+bräuchte `'unsafe-inline'` sowohl für `script-src` als auch `style-src` — was den meisten Zweck
+einer CSP zunichtemacht — oder eine Umstrukturierung des Frontends in externe Dateien, was echte,
+eigenständige Arbeit jenseits von „aufwandsarmen Headern" ist. Eine CSP zu versenden, die reines
+Sicherheitstheater wäre, wäre schlimmer, als die Lücke zu benennen.
+
 **Parameter von `GET /search`**
 
 | Parameter | Typ | Standard | Einschränkungen | Beschreibung |
