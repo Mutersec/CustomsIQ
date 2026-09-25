@@ -140,6 +140,44 @@ class TestValidation:
         assert isinstance(classify(conn, "Baumwoll-T-Shirts, gewirkt 📦"), list)
 
 
+class TestCodeShapedQuery:
+    """A code typed into classify must be an exact lookup, not tokenized noise.
+
+    Regression guard for QA audit Critical Bug #3: an all-digit description
+    became one opaque token sharing no vocabulary with any description, so
+    it scored zero against everything and vanished under the "no shared
+    term" rule even though the code exists.
+    """
+
+    def test_known_code_returns_the_exact_record_only(self, conn: sqlite3.Connection) -> None:
+        results = classify(conn, "8517120000")
+        assert len(results) == 1
+        assert results[0].hs_code.code == "8517120000"
+        assert results[0].score == 1.0
+        assert results[0].matched_terms == []
+
+    @pytest.mark.parametrize("formatted", ["8517.12.0000", "8517 12 0000"])
+    def test_separators_are_normalized_before_lookup(
+        self, conn: sqlite3.Connection, formatted: str
+    ) -> None:
+        results = classify(conn, formatted)
+        assert len(results) == 1
+        assert results[0].hs_code.code == "8517120000"
+
+    def test_code_shaped_but_nonexistent_code_returns_empty(self, conn: sqlite3.Connection) -> None:
+        assert classify(conn, "9999999999") == []
+
+    def test_numeric_but_not_code_shaped_still_falls_through_to_tfidf_scoring(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Wrong length (not 8 or 10 digits): unchanged pre-fix behavior.
+
+        A bare number shares no term with any description, so this still
+        legitimately returns nothing per the existing "no match" contract.
+        """
+        assert classify(conn, "12345") == []
+
+
 class TestIndexCache:
     """The per-connection index cache added when the real CN bundle made a
     rebuild-every-call noticeable (~150 ms at 13.7k codes). Must never change

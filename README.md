@@ -845,6 +845,24 @@ users type the singular. Without plural folding, `cable`, `biscuit`, `laptop` an
 scored **zero against every code**. The tokenizer therefore folds `-ies → y`, sibilant `-es`, and
 `-s`. It is not a stemmer — just the English plural rule the corpus demands.
 
+**QA audit Critical Bug #3: a code typed into either field was scored as if it were a
+description.** Both functions assumed their input was always free text. A bare code like
+`9505900000` went through the same paths as any description: `/search` diffed its digits
+character-by-character against every letters-only description and returned whatever scored
+marginally higher — an arbitrary, unrelated top result, the "laptop" row above in miniature but
+worse, since digits share almost nothing with letters rather than merely the wrong amount.
+`/classify` tokenized it into one opaque number that matched no term in any description's
+vocabulary, so — correctly, by its own "no shared term" rule — it dropped the row and returned
+`[]`, silently hiding a code that was sitting right there in the table. Neither function called the
+project's own `validate_cn_code` (`src/utils/validators.py`) or `database.get_by_code()`, both of
+which already existed and were already used elsewhere (`tariff_calculator.py`, invoice extraction,
+the `/codes/{code}/history` route) — this reference data just never had a code-lookup path *into*
+it. The fix: both functions now check, before scoring, whether the input (separators stripped, the
+same convention `document_extraction.py` already used) is a valid CN-8/TARIC-10 code, and if so
+return the exact `get_by_code()` hit — or a clean empty result if the code doesn't exist — instead
+of running it through text-similarity scoring at all. Free-text input is completely unaffected: the
+check is a pure early return that a real description never satisfies.
+
 ### 🚫 Name matching is not product matching
 
 Sanctions screening reuses the same `difflib` core for consistency and zero dependencies, but

@@ -83,3 +83,39 @@ def test_get_by_code_not_found(conn: sqlite3.Connection) -> None:
     """get_by_code() should raise HSCodeNotFoundError for an unknown code."""
     with pytest.raises(HSCodeNotFoundError):
         get_by_code(conn, "0000000000")
+
+
+class TestCodeShapedQuery:
+    """A code typed into search must be an exact lookup, not fuzzy noise.
+
+    Regression guard for QA audit Critical Bug #3: an all-digit query scored
+    against all-letter descriptions via difflib came back with an arbitrary,
+    unrelated top result, since digits share almost nothing with letters.
+    """
+
+    def test_known_code_returns_the_exact_record_only(self, conn: sqlite3.Connection) -> None:
+        results = search(conn, "8517120000")
+        assert len(results) == 1
+        assert results[0].hs_code.code == "8517120000"
+        assert results[0].hs_code.category == "Electronics"
+        assert results[0].score == 1.0
+
+    @pytest.mark.parametrize("formatted", ["8517.12.0000", "8517 12 0000", "8517-12-0000"])
+    def test_separators_are_normalized_before_lookup(
+        self, conn: sqlite3.Connection, formatted: str
+    ) -> None:
+        results = search(conn, formatted)
+        assert len(results) == 1
+        assert results[0].hs_code.code == "8517120000"
+
+    def test_code_shaped_but_nonexistent_code_returns_empty(self, conn: sqlite3.Connection) -> None:
+        """Code-shaped and absent must come back clean, not as fuzzy garbage."""
+        assert search(conn, "9999999999") == []
+
+    def test_numeric_but_not_code_shaped_still_falls_through_to_fuzzy_scoring(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Wrong length (not 8 or 10 digits): unchanged pre-fix behavior."""
+        results = search(conn, "12345")
+        assert len(results) == 5
+        assert all(isinstance(r.score, float) for r in results)

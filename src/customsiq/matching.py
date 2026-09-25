@@ -6,8 +6,10 @@ score text the same way and validate input in exactly one place.
 
 import re
 from difflib import SequenceMatcher
+from typing import Optional
 
 from src.customsiq.exceptions import InvalidQueryError
+from src.utils.validators import validate_cn_code
 
 MAX_QUERY_LENGTH = 500
 
@@ -35,6 +37,17 @@ def validate_query(text: str) -> None:
 def similarity(a: str, b: str) -> float:
     """Return a case-insensitive similarity ratio between two strings, in [0, 1]."""
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def as_code(query: str) -> Optional[str]:
+    """Return the normalized code if `query` looks like a CN/TARIC code, else None.
+
+    Mirrors document_extraction._normalize_hs_code's separator-stripping
+    convention (spaces, dots, dashes), applied to the whole query since here
+    the field is expected to BE a code, not a code embedded in a sentence.
+    """
+    candidate = re.sub(r"[\s.\-]", "", query)
+    return candidate if validate_cn_code(candidate) else None
 
 
 def _normalize(name: str) -> str:

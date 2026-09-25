@@ -13,8 +13,9 @@ import sqlite3
 from collections import Counter
 from typing import NamedTuple
 
-from src.customsiq.database import fetch_all
-from src.customsiq.matching import validate_query
+from src.customsiq.database import fetch_all, get_by_code
+from src.customsiq.exceptions import HSCodeNotFoundError
+from src.customsiq.matching import as_code, validate_query
 from src.customsiq.models import HSCode
 
 logger = logging.getLogger(__name__)
@@ -129,18 +130,34 @@ def classify(
     empty result is the honest answer, where returning zero-confidence rows
     would dress noise up as a suggestion.
 
+    A description that is itself a CN-8/TARIC-10 code is not tokenized and
+    scored: it would become one opaque token sharing no vocabulary with any
+    description, scoring zero against everything and vanishing under the
+    same "no match" rule above even though the code exists. Instead it's
+    routed to an exact lookup.
+
     Args:
         conn: An open database connection.
-        description: Free-text description of the goods.
+        description: Free-text description of the goods, or an HS/CN code.
         top_n: Maximum number of suggestions to return.
 
     Returns:
-        Suggestions above zero confidence, most likely first.
+        A single exact match at score 1.0, matched_terms=[], if `description`
+        is a known code; an empty list if it's code-shaped but no such code
+        exists; otherwise suggestions above zero confidence, most likely
+        first.
 
     Raises:
         InvalidQueryError: If the description is blank or too long.
     """
     validate_query(description)
+
+    code = as_code(description)
+    if code is not None:
+        try:
+            return [ClassificationResult(get_by_code(conn, code), 1.0, [])]
+        except HSCodeNotFoundError:
+            return []
 
     records = fetch_all(conn)
     idf, vectors = _index_for(conn, records)
