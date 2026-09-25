@@ -128,7 +128,12 @@ def classify(
 
     Codes sharing no term with the description score zero and are dropped: an
     empty result is the honest answer, where returning zero-confidence rows
-    would dress noise up as a suggestion.
+    would dress noise up as a suggestion. A description with no token longer
+    than one character gets the same honest empty result, before scoring is
+    even attempted: real documents in the corpus are sometimes short enough
+    ("175|g or more", "For a current exceeding 16|A...") that a single
+    stray character would otherwise dominate their normalized vector and
+    produce a confident-looking but meaningless top match.
 
     A description that is itself a CN-8/TARIC-10 code is not tokenized and
     scored: it would become one opaque token sharing no vocabulary with any
@@ -159,10 +164,15 @@ def classify(
         except HSCodeNotFoundError:
             return []
 
+    tokens = _tokenize(description)
+    if not any(len(token) > 1 for token in tokens):
+        logger.debug("no token longer than one character in %r; nothing to classify", description)
+        return []
+
     records = fetch_all(conn)
     idf, vectors = _index_for(conn, records)
 
-    counts = Counter(_tokenize(description))
+    counts = Counter(tokens)
     unseen = math.log(len(records) + 1) + 1  # IDF for a term absent from the corpus
     query = _normalise({term: count * idf.get(term, unseen) for term, count in counts.items()})
 

@@ -882,6 +882,28 @@ den Singular. Ohne Pluralfaltung erzielten `cable`, `biscuit`, `laptop` und `bat
 gegen jeden Code**. Der Tokenizer faltet daher `-ies → y`, das sibilantische `-es` und `-s`. Kein
 Stemmer — nur die englische Pluralregel, die der Datenbestand verlangt.
 
+**QA-Audit Bug #5: eine einzelne-Zeichen-Abfrage klassifizierte selbstbewusst, aber falsch.** Der
+Tokenizer (`_WORD = re.compile(r"[a-z0-9]+")`) hat keine Mindestlänge für Token, und `_singular()`
+faltet nur Wörter mit mehr als drei Zeichen — ein einzelnes Zeichen fließt also, wie auch immer es
+entsteht, wie ein echtes Wort direkt in den TF-IDF-Index ein. Der echte 13.753-Code-EU-KN-Bestand
+enthält 36 verschiedene einzelne Zeichen-Token (Ziffern `0`–`9`, Buchstaben `a`–`z`), meist
+Fragmente, die ein Bindestrich oder Apostroph abtrennt ("T-shirts" → `t` + `shirts`; "Men's" →
+`men` + `s`), oder Einheitensymbole in kurzen Beschreibungen ("175|g or more", "For a current
+exceeding 16|A..."). Die IDF-Gewichtung dämpft ein häufiges Token wie `a` etwas, tut aber nichts
+gegen die *Kürze des Dokuments selbst*: In `"175|g or more"` (insgesamt vier Token) beträgt das
+normalisierte Gewicht von `g` allein `0,509` — der dominante Term im gesamten Vektor. Vor der
+Behebung gemessen: `classify("g")` lieferte mit `0,5885` selbstbewusst einen unpassenden Treffer
+gegen einen unzusammenhängenden DNA-Sequenz-Chemiecode, `classify("a")` mit `0,4959` gegen ein
+unzusammenhängendes Ampere-Wert-Fragment — beide allein am Score nicht von einem echten Treffer zu
+unterscheiden. Die Behebung fügt `classify()` eine einzige Prüfung hinzu: Erzeugt die Tokenisierung
+einer Abfrage kein Token länger als ein Zeichen, liefert sie dasselbe ehrliche `[]`, das für
+Null-Term-Überschneidungen bereits dokumentiert und getestet ist — bevor überhaupt bewertet wird.
+Kein neuer Ausnahmetyp, denn das ist derselbe "nichts zu klassifizieren"-Fall, nur früher erkannt.
+Entscheidend: Dies ist nur eine Schutzmaßnahme auf Abfrageseite — der Korpus-Index selbst bleibt
+unangetastet, sodass eine echte Abfrage, die lediglich ein zufälliges einzelnes Zeichen-Fragment
+*enthält* — wie `"cotton t-shirt"` selbst — weiterhin exakt wie zuvor klassifiziert wird
+(`0,8464917087617252` gegen `6109100000`, bytegenau identisch).
+
 ### 🚫 Namensabgleich ist kein Produktabgleich
 
 Die Sanktionsprüfung nutzt aus Konsistenzgründen denselben `difflib`-Kern ohne zusätzliche

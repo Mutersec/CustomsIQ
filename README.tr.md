@@ -858,6 +858,28 @@ biri **her koda karşı sıfır** skor aldı. Bu yüzden tokenizer `-ies → y`,
 eklerini katlar. Bu bir gövdeleyici (stemmer) değil — yalnızca korpusun gerektirdiği İngilizce
 çoğul kuralı.
 
+**QA denetimi Hata #5: tek karakterlik bir sorgu, yanlış olsa da yüksek güvenle
+sınıflandırılıyordu.** Tokenizer'ın (`_WORD = re.compile(r"[a-z0-9]+")`) minimum bir token
+uzunluğu yok, ve `_singular()` yalnızca üç karakterden uzun kelimeleri katlıyor — bu yüzden tek
+karakterlik bir token, nereden gelirse gelsin, gerçek bir kelime gibi doğrudan TF-IDF indeksine
+giriyor. Gerçek 13.753 kodluk AB CN paketinde 36 farklı tek karakterlik token var (`0`–`9`
+rakamları, `a`–`z` harfleri); çoğu bir tire veya kesme işaretinin ayırdığı başıboş parçalar
+("T-shirts" → `t` + `shirts`; "Men's" → `men` + `s`) ya da kısa açıklamalar içindeki birim
+sembolleri ("175|g or more", "For a current exceeding 16|A..."). IDF ağırlıklandırması `a` gibi
+yaygın bir token'ı bir miktar düşürüyor, ama *belgenin ne kadar kısa olduğu* konusunda hiçbir şey
+yapmıyor: `"175|g or more"` içinde (toplam dört token) `g`'nin normalize edilmiş ağırlığı
+`0,509` — vektördeki baskın terim. Düzeltmeden önce ölçüldü: `classify("g")` ilgisiz bir DNA-dizisi
+kimyasal koduna karşı `0,5885` güvenle üst sıra eşleşmesi döndürüyordu, `classify("a")` ise ilgisiz
+bir amper-değeri parçasına karşı `0,4959` döndürüyordu — ikisi de yalnızca skora bakarak gerçek bir
+eşleşmeden ayırt edilemiyordu. Düzeltme `classify()`'a tek bir kontrol ekliyor: bir sorgunun
+tokenizasyonu bir karakterden uzun hiçbir token üretmiyorsa, sıfır-terim-örtüşmesi için zaten
+belgelenmiş ve test edilmiş aynı dürüst `[]` sonucunu, skorlama denenmeden önce döndürüyor — yeni
+bir istisna türü yok, çünkü bu zaten aynı "sınıflandıracak bir şey yok" durumu, yalnızca daha erken
+yakalanıyor. Önemlisi, bu yalnızca sorgu tarafında bir koruma: korpus indeksinin kendisi
+dokunulmadan kalıyor, bu yüzden yalnızca *içinde* rastgele tek karakterlik bir parça bulunan gerçek
+bir sorgu — `"cotton t-shirt"`'in kendisi gibi — düzeltmeden önceki gibi tam olarak
+sınıflandırılmaya devam ediyor (`6109100000`'e karşı `0,8464917087617252`, birebir aynı).
+
 ### 🚫 İsim eşleştirmesi, ürün eşleştirmesi değildir
 
 Yaptırım taraması tutarlılık ve sıfır bağımlılık için aynı `difflib` çekirdeğini kullanır; ancak

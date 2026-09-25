@@ -863,6 +863,30 @@ return the exact `get_by_code()` hit — or a clean empty result if the code doe
 of running it through text-similarity scoring at all. Free-text input is completely unaffected: the
 check is a pure early return that a real description never satisfies.
 
+**QA audit Bug #5: a bare single-character query classified confidently, but wrongly.** The
+tokenizer (`_WORD = re.compile(r"[a-z0-9]+")`) has no minimum token length, and `_singular()` only
+folds words longer than three characters — so a one-character token, however it arises, flows
+straight into the TF-IDF index like any real word. The real 13,753-code EU CN bundle contains 36
+distinct single-character tokens (digits `0`–`9`, letters `a`–`z`), mostly stray fragments a hyphen
+or apostrophe splits off ("T-shirts" → `t` + `shirts`; "Men's" → `men` + `s`) or unit symbols inside
+short descriptions ("175|g or more", "For a current exceeding 16|A..."). IDF weighting discounts a
+common token like `a` but does nothing about *how short the document is*: in `"175|g or more"`
+(four tokens total) the normalized weight of `g` alone is `0.509` — the dominant term in the whole
+vector. Measured before the fix: `classify("g")` returned a confident `0.5885` top match against an
+unrelated DNA-sequence chemical code, and `classify("a")` returned `0.4959` against an unrelated
+ampere-rating fragment — both indistinguishable, by score alone, from a genuine match. The fix adds
+one check to `classify()`: if a query's tokenization produces no token longer than one character, it
+returns the same honest `[]` already documented and tested for zero-term-overlap input, before
+scoring is even attempted — no new exception type, since this is the same "nothing to classify"
+case, just caught earlier. Critically, this is a query-side guard only: the corpus index itself is
+untouched, so a real query that merely *contains* an incidental single-character fragment — like
+`"cotton t-shirt"` itself — still classifies exactly as before (`0.8464917087617252` against
+`6109100000`, byte-for-byte). An index-time fix (stripping single-char tokens from every document,
+not just short queries) was measured and rejected: it would have shifted the README's own pinned
+`0.6609`/`0.0609` risk-score examples (which use the description `"cotton t-shirt"`) to
+`0.6781`/`0.0781` — a real behavior change for no additional protection the query-side guard doesn't
+already provide.
+
 ### 🚫 Name matching is not product matching
 
 Sanctions screening reuses the same `difflib` core for consistency and zero dependencies, but

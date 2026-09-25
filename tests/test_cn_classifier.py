@@ -4,8 +4,13 @@ import sqlite3
 
 import pytest
 
-from src.customsiq.cn_classifier import _index_cache, _singular, classify
-from src.customsiq.database import get_connection, seed, upsert_hs_codes
+from src.customsiq.cn_classifier import _index_cache, _normalise, _singular, classify
+from src.customsiq.database import (
+    get_connection,
+    load_bundled_cn_nomenclature,
+    seed,
+    upsert_hs_codes,
+)
 from src.customsiq.exceptions import InvalidQueryError
 from src.customsiq.matching import MAX_QUERY_LENGTH
 from src.customsiq.models import HSCode
@@ -17,6 +22,15 @@ def conn() -> sqlite3.Connection:
     """An in-memory database pre-seeded with the sample CN codes."""
     connection = get_connection(":memory:")
     seed(connection)
+    return connection
+
+
+@pytest.fixture
+def real_corpus_conn() -> sqlite3.Connection:
+    """The sample codes plus the real, committed 13,733-code EU CN bundle."""
+    connection = get_connection(":memory:")
+    seed(connection)
+    load_bundled_cn_nomenclature(connection)
     return connection
 
 
@@ -119,6 +133,70 @@ class TestNoMatch:
     def test_description_with_no_words_returns_nothing(self, conn: sqlite3.Connection) -> None:
         """Input that tokenises to nothing yields an empty, zero-length vector."""
         assert classify(conn, "!!! ??? ---") == []
+
+
+class TestNoRealSignalQuery:
+    """QA audit Bug #5: a bare single-character query classified confidently, but wrongly.
+
+    Real documents are sometimes short enough ("175|g or more") that a
+    single stray character dominates their normalized TF-IDF vector, so a
+    one-character query used to return a confident, meaningless top match
+    instead of the honest empty result classify() already gives for
+    zero-overlap input.
+    """
+
+    def test_hyphen_split_single_char_no_longer_confidently_wrong(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Before this fix: classify(conn, "t") -> 0.5324 "Cotton T-shirts, knitted".
+
+        "T-shirts" tokenises to "t" + "shirts" (the hyphen splits it), so a
+        bare "t" query used to hit that stray fragment with a real score.
+        """
+        assert classify(conn, "t") == []
+
+    def test_apostrophe_split_single_char_no_longer_confidently_wrong(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Before this fix: classify(conn, "s") -> 0.5014 "Men's cotton trousers"
+        (and the "Women's" code, tied). "Men's"/"Women's" tokenise to a
+        stray "s" fragment off the apostrophe.
+        """
+        assert classify(conn, "s") == []
+
+    @pytest.mark.parametrize("query", ["g", "a", "q", "1"])
+    def test_single_character_query_returns_nothing(
+        self, conn: sqlite3.Connection, query: str
+    ) -> None:
+        assert classify(conn, query) == []
+
+    def test_real_corpus_single_character_query_returns_nothing(
+        self, real_corpus_conn: sqlite3.Connection
+    ) -> None:
+        """Not synthetic: reproduces the diagnostic's exact live-corpus finding.
+
+        Before this fix, against the real 13,733-code EU CN bundle:
+        classify(conn, "g") -> 0.5885 (an unrelated DNA-sequence chemical
+        code), classify(conn, "a") -> 0.4959 ("For a current exceeding
+        16|A..."). Both must now return the honest empty result.
+        """
+        assert classify(real_corpus_conn, "g") == []
+        assert classify(real_corpus_conn, "a") == []
+
+    def test_a_real_query_with_an_incidental_single_char_token_is_unaffected(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The guard must not over-reject: "cotton t-shirt" has two real
+        words alongside the incidental "t" fragment, so it must classify
+        exactly as it did before this fix, byte-for-byte."""
+        result = classify(conn, "cotton t-shirt")[0]
+        assert result.hs_code.code == "6109100000"
+        assert result.score == pytest.approx(0.8464917087617252)
+
+    def test_normalise_of_an_empty_vector_is_still_reachable_directly(self) -> None:
+        """classify()'s new guard means no query reaches _normalise({}) via
+        the public API any more; this pins that branch's own behavior."""
+        assert _normalise({}) == {}
 
 
 class TestValidation:
