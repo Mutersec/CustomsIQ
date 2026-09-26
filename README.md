@@ -1008,6 +1008,10 @@ containing it. Screening takes the max of the applicable signals and is delibera
 over-inclusive: a false negative lets a sanctioned party through, a false positive costs an
 analyst one glance.
 
+QA audit Bug #4 flagged that the screening panel's own copy didn't mention this 2-token floor,
+claiming unqualified "partial name" tolerance — fixed by stating the limitation in the UI itself
+rather than changing the matching behavior, since the behavior was correct all along.
+
 **This — not product search — is what will justify `rapidfuzz` first.** Those two signals are
 hand-rolled versions of its `token_sort_ratio` and `token_set_ratio`, and it also brings
 `partial_ratio` and far faster scanning. The real EU Consolidated Financial Sanctions List holds

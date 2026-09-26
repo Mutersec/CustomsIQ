@@ -99,6 +99,37 @@ def test_login_page_every_key_it_uses_exists_in_every_language(language: str) ->
     assert not missing, f"{language} is missing: {missing}"
 
 
+#: QA audit Bug #4: the screening hint used to claim unqualified "partial
+#: name" tolerance, when matching.py's token-overlap signal is deliberately
+#: gated to names with >= 2 tokens. Each language's corrected hint must say
+#: so, not just resolve as a key — the plain existence check above would
+#: happily pass a hint that silently overclaims again.
+_HONEST_QUALIFIER = {
+    "en": "two or more",
+    "tr": "iki veya daha fazla",
+    "de": "zwei oder mehr",
+}
+
+
+def _screen_hint(block: str) -> str:
+    """The literal `screen.hint` string value out of one language block."""
+    match = re.search(r"\bscreen: {", block)
+    assert match, "no screen block in STRINGS"
+    screen_block = _block(block, match.end() - 1)
+    match = re.search(r'\bhint: "((?:[^"\\]|\\.)*)"', screen_block)
+    assert match, "screen.hint has no string value"
+    return match.group(1)
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_screening_hint_honestly_states_the_two_token_minimum(
+    dictionaries: dict, language: str
+) -> None:
+    """Regression guard for the "partial names" overclaim (QA audit Bug #4)."""
+    hint = _screen_hint(dictionaries[language])
+    assert _HONEST_QUALIFIER[language] in hint, f"{language} screen.hint: {hint!r}"
+
+
 def test_the_page_never_sends_a_reviewer_name(source: str) -> None:
     """Identity comes from the session cookie now.
 
