@@ -130,6 +130,52 @@ def test_screening_hint_honestly_states_the_two_token_minimum(
     assert _HONEST_QUALIFIER[language] in hint, f"{language} screen.hint: {hint!r}"
 
 
+#: Low-confidence warning: each language's copy must actually suggest English
+#: (the underlying corpus's language), not just resolve as a key.
+_SUGGESTS_ENGLISH = {
+    "en": "in English",
+    "tr": "İngilizce",
+    "de": "englischen",
+}
+
+
+def _leaf_value(block: str, dotted_key: str) -> str:
+    """The literal string value at `dotted_key` (e.g. "common.lowConfidence")."""
+    current = block
+    parts = dotted_key.split(".")
+    for part in parts[:-1]:
+        match = re.search(rf"\b{re.escape(part)}: {{", current)
+        assert match, f"{dotted_key!r} is missing at {part!r}"
+        current = _block(current, match.end() - 1)
+    match = re.search(rf'\b{re.escape(parts[-1])}:\s*"((?:[^"\\]|\\.)*)"', current)
+    assert match, f"{dotted_key!r} has no string value"
+    return match.group(1)
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_low_confidence_warning_suggests_english(dictionaries: dict, language: str) -> None:
+    """Every language's warning must point at the actual fix: English terms."""
+    text = _leaf_value(dictionaries[language], "common.lowConfidence")
+    assert _SUGGESTS_ENGLISH[language] in text, f"{language} common.lowConfidence: {text!r}"
+
+
+def test_low_confidence_threshold_exists_and_gates_both_panels(source: str) -> None:
+    """A lightweight check that the served JS actually has the logic, not just copy.
+
+    Doesn't re-derive the calibration (that's a design decision, documented in
+    the source comment next to the constant) — just pins that a threshold
+    constant exists, in a plausible range, and that both the Search and
+    Classify renderers call the same gate rather than only one of them.
+    """
+    match = re.search(r"const LOW_CONFIDENCE_THRESHOLD = ([\d.]+);", source)
+    assert match, "LOW_CONFIDENCE_THRESHOLD constant not found in served JS"
+    threshold = float(match.group(1))
+    assert 0.2 < threshold < 0.6, f"threshold {threshold} is outside a plausible range"
+
+    assert "searchBox.innerHTML = lowConfidenceBanner(rows) + rows.map" in source
+    assert "classifyBox.innerHTML = lowConfidenceBanner(rows) + rows.map" in source
+
+
 def test_the_page_never_sends_a_reviewer_name(source: str) -> None:
     """Identity comes from the session cookie now.
 

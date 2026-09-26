@@ -1179,6 +1179,8 @@
         working: "Working…",
         requestFailed: (status) => `Request failed (HTTP ${status}).`,
         couldNotReach: "Could not reach the API. Check your connection and try again.",
+        lowConfidence:
+          "⚠ These results score below 45% and may not be reliable — try describing the goods in English, since the reference data is English-language.",
       },
       footer: {
         disclaimer:
@@ -1388,6 +1390,8 @@
         working: "İşleniyor…",
         requestFailed: (status) => `İstek başarısız oldu (HTTP ${status}).`,
         couldNotReach: "API'ye ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.",
+        lowConfidence:
+          "⚠ Bu sonuçlar %45'in altında ve güvenilir olmayabilir — açıklamayı İngilizce yazmayı deneyin, çünkü referans veriler İngilizce.",
       },
       footer: {
         disclaimer:
@@ -1597,6 +1601,8 @@
         working: "Wird verarbeitet…",
         requestFailed: (status) => `Anfrage fehlgeschlagen (HTTP ${status}).`,
         couldNotReach: "Die API konnte nicht erreicht werden. Verbindung prüfen und erneut versuchen.",
+        lowConfidence:
+          "⚠ Diese Ergebnisse liegen unter 45 % und sind möglicherweise nicht zuverlässig — versuchen Sie es mit einer englischen Beschreibung, da die Referenzdaten englischsprachig sind.",
       },
       footer: {
         disclaimer:
@@ -1726,6 +1732,18 @@
   // ---------- shared helpers ----------
   const pct = (score) => Math.round(score * 100);
   const pct0 = (count, total) => (total > 0 ? Math.round((count / total) * 100) : 0);
+
+  // Below this, a percentage-looking score is more likely to mislead than
+  // inform: every pinned "real" match in this project's own worked examples
+  // (0.57, 0.74, 0.85) sits comfortably above it, while an unrelated result —
+  // e.g. a non-English query scored against this English-only corpus — has
+  // been observed landing at 0.38-0.40. The scores themselves are untouched;
+  // this only decides when to show a caveat alongside them.
+  const LOW_CONFIDENCE_THRESHOLD = 0.45;
+  const lowConfidenceBanner = (rows) =>
+    rows.length && rows[0].score < LOW_CONFIDENCE_THRESHOLD
+      ? `<div class="state warn">${escapeHtml(t("common.lowConfidence"))}</div>`
+      : "";
 
   const escapeHtml = (value) =>
     String(value).replace(/[&<>"']/g, (ch) => ({
@@ -1900,7 +1918,7 @@
           setState(searchBox, "", t("search.noMatches"));
           return;
         }
-        searchBox.innerHTML = rows.map((row) => `
+        searchBox.innerHTML = lowConfidenceBanner(rows) + rows.map((row) => `
           <article class="card">
             <div class="card-top">
               <span class="card-title mono">${escapeHtml(row.code)}</span>
@@ -1969,7 +1987,7 @@
           setState(classifyBox, "", t("classify.noMatches"));
           return;
         }
-        classifyBox.innerHTML = rows.map((row) => `
+        classifyBox.innerHTML = lowConfidenceBanner(rows) + rows.map((row) => `
           <article class="card cls">
             <div class="card-top">
               <span class="card-title mono">${escapeHtml(row.code)}</span>
