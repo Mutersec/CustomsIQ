@@ -383,6 +383,47 @@ the HS-code path, not free-text description: a flat REPL line can't unambiguousl
 separate free-text fields (description and party name) the way `duty <code> <country> <value>`
 and `screen <name>` can each hold one. The API and frontend (structured form fields) support both.
 
+### 🛑 QA audit Bug #6: some findings are absolute, and a blend can't say so
+
+**What was wrong.** A shipment with a confirmed denied-party match scored `0.6609` — over the
+"high" line, and correctly so. But a blended number still *reads* as "elevated, use judgement",
+and there is no judgement to use: a confirmed sanctions hit is a stop, full stop. The weighted
+score was answering a question ("how much total risk is here?") that isn't the question a
+compliance officer needs answered first ("may this ship at all?").
+
+**Why the score was kept anyway.** The obvious fix — force the composite to `1.0` on a hit — was
+rejected. It would destroy the very thing the score is for: the weights make the reasoning
+auditable, and flattening them throws away the classification and duty evidence that is still
+worth reading *about a shipment that happens to be blocked*. The two answers are different
+kinds of statement, so they're now two fields, not one number carrying both jobs:
+
+| | |
+|---|---|
+| `composite_score` / `level` | unchanged, still `0.6609` / `high` — how much risk, and why |
+| `override` | `"sanctions_hit"` or `null` — whether the answer is already settled |
+
+The trigger is the **screening factor alone**: `screening.score == 1.0`, a match at
+`screen_entity()`'s normal compliance threshold. It is deliberately independent of the other
+two factors — no confidently classified, low-duty shipment can soften a confirmed match — and
+the 0.4 near-miss tier deliberately doesn't qualify, because a near miss is a prompt to look
+closer, not a decision. A string rather than a boolean, because it records *which* rule fired:
+"blocked because of a confirmed hit" is a different audit statement from "blocked because a
+blend crossed 0.5", and the frontend uses the same value to pick its message.
+
+**What it caught.** `sap_gts_bridge` derived `DOCUMENT_STATUS` from the level, mapping
+`high → BLOCKED`. That was already right for every confirmed hit — but only by arithmetic
+accident: a hit contributes `1.0 × 0.6 = 0.6`, which clears the `0.5` threshold on its own.
+Those are two independently tunable constants. Rebalance the weights to `0.45`, or lift the
+threshold to `0.65` — both ordinary tuning changes — and a confirmed sanctions match would
+quietly stop being BLOCKED, with no test to catch it. GTS now reads the override, so the block
+follows the finding rather than the blend. Emitted `TYPE`/`NUMBER`/`MESSAGE` values and row
+order are byte-identical; only the status derivation's basis changed. There's a regression test
+that retunes the threshold and asserts the document is still BLOCKED.
+
+In the UI the override is a solid red banner **above** the score, never instead of it — the
+categorical answer first, the weighted evidence for it immediately underneath. Translated
+EN/TR/DE like the rest of the interface.
+
 ### ☁️ What RBAC needs on Render: nothing
 
 **No new environment variable is required for login to work on the live demo, and

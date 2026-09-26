@@ -328,6 +328,7 @@ def assess_risk(
     return {
         "level": result.level,
         "composite_score": result.composite_score,
+        "override": result.override,
         "hs_code": result.hs_code,
         "factors": [
             {

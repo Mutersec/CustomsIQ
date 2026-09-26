@@ -718,6 +718,29 @@
   .level-chip.medium { background: #fdf3e6; color: #7a4a08; border: 1px solid var(--amber); }
   .level-chip.high { background: #fbeceb; color: #8c2018; border: 1px solid var(--red); }
 
+  /* An absolute stop, not another severity tint: solid rather than tinted,
+     full width rather than a pill, so it can't be read as one more level. */
+  .risk-override {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border-radius: 4px;
+    background: var(--red);
+    color: #ffffff;
+  }
+
+  .risk-override .label {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .risk-override .detail { font-size: 13.5px; }
+
   .risk-factor-row {
     display: grid;
     grid-template-columns: 120px 1fr 50px;
@@ -1059,6 +1082,13 @@
         validationRequired: "Enter a description or HS code, a country of origin, a party name and a customs value.",
         valueMustBeNumber: "Customs value must be a number.",
         level: { low: "low", medium: "medium", high: "high" },
+        override: {
+          sanctions_hit: {
+            label: "⚠ Sanctions match — absolute block",
+            detail:
+              "This party is on the denied-party list. The shipment is blocked outright; the score below explains the assessment but does not soften this.",
+          },
+        },
         factor: { screening: "Screening", classification: "Classification", duty: "Duty" },
         explanation: {
           screeningHit: (p) => `real sanctions match: ${p.name} (${p.score.toFixed(2)})`,
@@ -1260,6 +1290,13 @@
         validationRequired: "Bir açıklama veya HS kodu, menşe ülke, taraf ismi ve gümrük kıymeti girin.",
         valueMustBeNumber: "Gümrük kıymeti sayısal olmalı.",
         level: { low: "düşük", medium: "orta", high: "yüksek" },
+        override: {
+          sanctions_hit: {
+            label: "⚠ Yaptırım eşleşmesi — mutlak engel",
+            detail:
+              "Bu taraf yasaklı taraf listesinde. Sevkiyat doğrudan engellenir; aşağıdaki skor değerlendirmeyi açıklar, ancak bu kararı yumuşatmaz.",
+          },
+        },
         factor: { screening: "Tarama", classification: "Sınıflandırma", duty: "Vergi" },
         explanation: {
           screeningHit: (p) =>
@@ -1462,6 +1499,13 @@
         validationRequired: "Geben Sie eine Beschreibung oder einen HS-Code, ein Ursprungsland, einen Namen und einen Zollwert ein.",
         valueMustBeNumber: "Der Zollwert muss eine Zahl sein.",
         level: { low: "niedrig", medium: "mittel", high: "hoch" },
+        override: {
+          sanctions_hit: {
+            label: "⚠ Sanktionstreffer — absolute Sperre",
+            detail:
+              "Diese Partei steht auf der Verbotsliste. Die Sendung wird unmittelbar gesperrt; der Wert unten erläutert die Bewertung, mildert diese Entscheidung aber nicht.",
+          },
+        },
         factor: { screening: "Prüfung", classification: "Einreihung", duty: "Zoll" },
         explanation: {
           screeningHit: (p) =>
@@ -2175,8 +2219,19 @@
           </div>
           <p class="risk-factor-explain">${escapeHtml(explain(t("risk.explanation"), f))}</p>
         `).join("");
+        // The override is shown above the score, never instead of it: the
+        // categorical answer comes first, with the weighted evidence for it
+        // still right underneath.
+        const override = r.override ? t("risk.override")[r.override] : null;
+        const overrideBanner = override
+          ? `<div class="risk-override">
+               <span class="label">${escapeHtml(override.label)}</span>
+               <span class="detail">${escapeHtml(override.detail)}</span>
+             </div>`
+          : "";
         riskBox.innerHTML = `
           <article class="card">
+            ${overrideBanner}
             <div class="risk-result-header">
               <span class="risk-score">${r.composite_score.toFixed(4)}</span>
               <span class="level-chip ${r.level}">${escapeHtml(t(`risk.level.${r.level}`))}</span>

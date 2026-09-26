@@ -408,7 +408,17 @@ def compliance_check(
 
     return GtsDocument(
         document_type="COMPLIANCE_CHECK",
-        status=_STATUS_FOR_LEVEL.get(assessment.level, STATUS_PENDING),
+        # An absolute stop blocks the document on its own terms. Deriving this
+        # from the level alone happened to give the same answer — a confirmed
+        # hit scores 0.6 before anything else is counted, which clears the 0.5
+        # "high" line — but that is an accident of two independently tunable
+        # constants, not a rule. Rebalance the weights and BLOCKED would
+        # quietly stop meaning "a real match was found".
+        status=(
+            STATUS_BLOCKED
+            if assessment.override
+            else _STATUS_FOR_LEVEL.get(assessment.level, STATUS_PENDING)
+        ),
         subject_reference=subject_reference,
         messages=messages,
         generated_at=_now(),

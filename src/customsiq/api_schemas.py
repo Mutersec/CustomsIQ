@@ -94,6 +94,7 @@ class RiskAssessmentResponse(BaseModel):
 
     level: str
     composite_score: float
+    override: Optional[str]
     hs_code: Optional[str]
     factors: list[RiskFactorResponse]
 

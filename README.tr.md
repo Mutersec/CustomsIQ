@@ -389,6 +389,49 @@ destekler, serbest metin açıklamayı değil: düz bir REPL satırı iki ayrı 
 `screen <isim>`'in her birinin tek bir alan tutabildiği gibi. API ve frontend (yapılandırılmış
 form alanları) ikisini de destekler.
 
+### 🛑 QA denetimi Hata #6: bazı bulgular mutlaktır, harmanlanmış bir skor bunu söyleyemez
+
+**Sorun neydi.** Yasaklı taraf listesinde doğrulanmış bir eşleşmesi olan bir sevkiyat `0.6609`
+alıyordu — "yüksek" eşiğinin üzerinde ve doğru biçimde. Ama harmanlanmış bir sayı yine de
+"yükselmiş, muhakeme kullanın" gibi *okunur*; oysa burada kullanılacak bir muhakeme yok:
+doğrulanmış bir yaptırım eşleşmesi kesin bir duraktır. Ağırlıklı skor ("burada toplam ne kadar
+risk var?") bir uyum yetkilisinin önce yanıtlanmasını istediği soruyu ("bu sevkiyat hiç
+gidebilir mi?") yanıtlamıyordu.
+
+**Skor neden yine de korundu.** Aşikâr çözüm — eşleşmede toplamı `1.0`'a sabitlemek —
+reddedildi. Bu, skorun var oluş nedenini yok ederdi: ağırlıklar gerekçeyi denetlenebilir kılar
+ve onları düzleştirmek, *zaten engellenmiş bir sevkiyat hakkında* hâlâ okumaya değer
+sınıflandırma ve vergi kanıtını çöpe atar. İki yanıt farklı türden ifadelerdir; bu yüzden artık
+tek bir sayının iki işi birden taşıması yerine iki alan var:
+
+| | |
+|---|---|
+| `composite_score` / `level` | değişmedi, hâlâ `0.6609` / `high` — ne kadar risk ve neden |
+| `override` | `"sanctions_hit"` ya da `null` — yanıtın zaten kesinleşip kesinleşmediği |
+
+Tetikleyici **yalnızca tarama faktörüdür**: `screening.score == 1.0`, yani `screen_entity()`'nin
+normal uyum eşiğindeki bir eşleşme. Diğer iki faktörden bilinçli olarak bağımsızdır — güvenle
+sınıflandırılmış, düşük vergili hiçbir sevkiyat doğrulanmış bir eşleşmeyi yumuşatamaz — ve 0,4
+kıl payı katmanı bilerek nitelenmez, çünkü kıl payı eşleşme bir karar değil, daha yakından
+bakma çağrısıdır. Boole yerine metin, çünkü *hangi* kuralın işlediğini kaydeder: "doğrulanmış
+eşleşme nedeniyle engellendi", "harmanlanmış skor 0,5'i aştığı için engellendi"den farklı bir
+denetim ifadesidir; arayüz de mesajını aynı değerden seçer.
+
+**Neyi yakaladı.** `sap_gts_bridge`, `DOCUMENT_STATUS` değerini seviyeden türetiyor ve
+`high → BLOCKED` eşlemesi yapıyordu. Bu, her doğrulanmış eşleşme için zaten doğruydu — ama
+yalnızca aritmetik bir tesadüfle: bir eşleşme `1.0 × 0.6 = 0.6` katkı verir ve bu tek başına
+`0.5` eşiğini aşar. Bunlar birbirinden bağımsız olarak ayarlanabilen iki sabittir. Ağırlıkları
+`0.45`'e çekin ya da eşiği `0.65`'e yükseltin — ikisi de sıradan ayar değişiklikleri — ve
+doğrulanmış bir yaptırım eşleşmesi sessizce BLOCKED olmaktan çıkardı; üstelik bunu yakalayacak
+bir test de yoktu. GTS artık override'ı okuyor; yani engel, harmandan değil bulgudan geliyor.
+Üretilen `TYPE`/`NUMBER`/`MESSAGE` değerleri ve satır sırası birebir aynı; yalnızca durum
+türetiminin dayanağı değişti. Eşiği yeniden ayarlayıp belgenin hâlâ BLOCKED olduğunu doğrulayan
+bir regresyon testi var.
+
+Arayüzde override, skorun **üstünde** duran dolu kırmızı bir şerittir; asla skorun yerine
+geçmez — önce kategorik yanıt, hemen altında onu destekleyen ağırlıklı kanıt. Arayüzün geri
+kalanı gibi EN/TR/DE çevrilidir.
+
 ### ☁️ RBAC'ın Render'da gerektirdiği şey: hiçbir şey
 
 **Canlı demoda girişin çalışması için yeni bir ortam değişkeni gerekmiyor ve

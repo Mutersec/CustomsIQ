@@ -47,10 +47,18 @@ class RiskFactor(NamedTuple):
 
 
 class RiskAssessment(NamedTuple):
-    """A shipment's composite risk score, with each factor's contribution shown."""
+    """A shipment's composite risk score, with each factor's contribution shown.
+
+    `override` is a categorical stop that sits on top of the weighted score
+    rather than inside it: some findings are absolute, and a blended number —
+    however high — still reads as "elevated" rather than "do not ship". The
+    score stays exactly what it was so the reasoning remains auditable; the
+    override says, separately, that the answer is already settled.
+    """
 
     level: str  # "low" | "medium" | "high"
     composite_score: float
+    override: Optional[str]  # "sanctions_hit" when an absolute stop applies
     hs_code: Optional[str]  # resolved from description, given directly, or None
     factors: list[RiskFactor]
 
@@ -230,9 +238,16 @@ def assess_shipment(
         + classification.score * classification.weight
         + duty.score * duty.weight
     )
+    # A confirmed sanctions match is absolute on its own: no combination of a
+    # confidently classified, low-duty shipment can soften it, so this is
+    # decided from the screening factor alone and never from the composite.
+    # Exact equality is safe because the factor only ever takes one of three
+    # values, and the 0.4 near-miss tier deliberately isn't one of them.
+    override = "sanctions_hit" if screening.score == _SCREENING_HIT else None
     return RiskAssessment(
         level=_level_for(composite),
         composite_score=composite,
+        override=override,
         hs_code=resolved_code,
         factors=[screening, classification, duty],
     )

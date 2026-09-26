@@ -303,6 +303,7 @@ class TestIndexedTranslationTablesAgreeAcrossLanguages:
     TABLES = (
         "duty.explanation",
         "risk.explanation",
+        "risk.override",
         "duty.rateType",
         "risk.factor",
         "risk.level",

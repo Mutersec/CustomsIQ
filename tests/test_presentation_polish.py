@@ -165,7 +165,10 @@ class TestResponseBodyUnchanged:
                 "description": "cotton t-shirt",
             },
         ).json()
-        assert set(body) == {"level", "composite_score", "hs_code", "factors"}
+        # `override` was added deliberately: a categorical absolute stop layered
+        # on top of the weighted score, which itself is unchanged. See the
+        # sanctions-override note in the README.
+        assert set(body) == {"level", "composite_score", "override", "hs_code", "factors"}
         # explanation_key/explanation_params were added deliberately alongside
         # the English explanation so the UI can render it in the viewer's own
         # language; `explanation` itself is unchanged. See the localization

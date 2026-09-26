@@ -394,6 +394,50 @@ Freitextbeschreibung: Eine flache REPL-Zeile kann nicht eindeutig zwei separate 
 `screen <name>`, die jeweils eines enthalten können. API und Frontend (strukturierte
 Formularfelder) unterstützen beides.
 
+### 🛑 QA-Audit Bug #6: manche Befunde sind absolut, ein Mischwert kann das nicht sagen
+
+**Was falsch war.** Eine Sendung mit bestätigtem Treffer auf der Verbotsliste erhielt `0.6609` —
+über der Schwelle „hoch“, und das zu Recht. Aber eine gemischte Zahl *liest* sich trotzdem als
+„erhöht, bitte abwägen“, und hier gibt es nichts abzuwägen: Ein bestätigter Sanktionstreffer ist
+ein Stopp, Punkt. Der gewichtete Wert beantwortete die Frage „wie viel Risiko steckt insgesamt
+darin?“ — nicht die Frage, die eine Compliance-Verantwortliche zuerst beantwortet braucht: „darf
+das überhaupt versendet werden?“
+
+**Warum der Wert trotzdem bleibt.** Die naheliegende Lösung — den Mischwert bei einem Treffer auf
+`1.0` zu setzen — wurde verworfen. Sie zerstörte genau das, wofür der Wert da ist: Die
+Gewichtung macht die Begründung prüfbar, und sie plattzumachen wirft die Einreihungs- und
+Zollbelege weg, die *über eine ohnehin gesperrte Sendung* weiterhin lesenswert sind. Die beiden
+Antworten sind Aussagen verschiedener Art, also sind es jetzt zwei Felder statt einer Zahl mit
+zwei Aufgaben:
+
+| | |
+|---|---|
+| `composite_score` / `level` | unverändert, weiterhin `0.6609` / `high` — wie viel Risiko, und warum |
+| `override` | `"sanctions_hit"` oder `null` — ob die Antwort bereits feststeht |
+
+Ausgelöst wird er **allein vom Prüfungsfaktor**: `screening.score == 1.0`, also ein Treffer an
+der normalen Compliance-Schwelle von `screen_entity()`. Bewusst unabhängig von den beiden anderen
+Faktoren — keine sicher eingereihte, zollgünstige Sendung mildert einen bestätigten Treffer — und
+die 0,4-Beinahe-Stufe qualifiziert bewusst nicht, denn ein Beinahe-Treffer ist eine Aufforderung
+zum genaueren Hinsehen, keine Entscheidung. Ein String statt eines Booleans, weil er festhält,
+*welche* Regel griff: „gesperrt wegen eines bestätigten Treffers“ ist eine andere Prüfaussage als
+„gesperrt, weil ein Mischwert 0,5 überschritt“ — und das Frontend wählt daraus seine Meldung.
+
+**Was dabei auffiel.** `sap_gts_bridge` leitete `DOCUMENT_STATUS` aus dem Level ab und bildete
+`high → BLOCKED` ab. Für jeden bestätigten Treffer war das bereits richtig — aber nur durch
+arithmetischen Zufall: Ein Treffer steuert `1.0 × 0.6 = 0.6` bei und überschreitet die Schwelle
+`0.5` schon allein. Das sind zwei unabhängig voneinander einstellbare Konstanten. Verschiebt man
+die Gewichte auf `0.45` oder hebt die Schwelle auf `0.65` — beides gewöhnliche Justierungen —,
+wäre ein bestätigter Sanktionstreffer still nicht mehr BLOCKED gewesen, ohne dass ein Test das
+bemerkt hätte. GTS liest jetzt den Override; die Sperre folgt also dem Befund statt dem
+Mischwert. Ausgegebene `TYPE`/`NUMBER`/`MESSAGE`-Werte und die Zeilenreihenfolge sind bytegleich,
+geändert hat sich nur die Grundlage der Statusableitung. Ein Regressionstest verstellt die
+Schwelle und prüft, dass das Dokument weiterhin BLOCKED ist.
+
+In der Oberfläche ist der Override ein durchgehend roter Balken **über** dem Wert, nie an seiner
+Stelle — zuerst die kategorische Antwort, direkt darunter die gewichteten Belege dafür. Übersetzt
+in EN/TR/DE wie der Rest der Oberfläche.
+
 ### ☁️ Was RBAC auf Render braucht: nichts
 
 **Damit die Anmeldung in der Live-Demo funktioniert, ist keine neue Umgebungsvariable
