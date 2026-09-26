@@ -880,6 +880,68 @@ dokunulmadan kalıyor, bu yüzden yalnızca *içinde* rastgele tek karakterlik b
 bir sorgu — `"cotton t-shirt"`'in kendisi gibi — düzeltmeden önceki gibi tam olarak
 sınıflandırılmaya devam ediyor (`6109100000`'e karşı `0,8464917087617252`, birebir aynı).
 
+### 🌍 QA denetimi Hata #8: sunucunun ürettiği metni yerelleştirme
+
+**Sorun neydi.** Bu projede tüm çeviri istemci tarafında,
+`static/index.html` içindeki `STRINGS`/`t()` sözlüğünde yapılır. Python'ın
+*kurduğu* her şey — vergi açıklaması, her risk faktörünün açıklaması, GTS
+mesaj metni, istisna mesajları — sayfaya ham olarak basılıyordu; yani
+kullanıcı EN/TR/DE'den hangisini seçerse seçsin İngilizce kalıyordu. Bir
+cümlenin yarısı dil değiştiriyor, diğer yarısı değiştirmiyordu.
+
+**Çözüm ve neden ekleme yöntemiyle.** Vergi ve risk açıklamaları artık iki
+biçimde birden geliyor: hiç değişmeyen, önceden oluşturulmuş İngilizce cümle
+ve aynı gerekçeyi yapısal olarak taşıyan `explanation_key` ile
+`explanation_params` (`{"rate": 12.0, "agreement": "EEA", "origin": "NO"}`).
+Tarayıcı bu parametreleri kendi dile özgü şablonundan geçirir; CLI ve düz API
+istemcileri cümleyi okumaya devam eder. Değiştirmek yerine eklemek gerçek bir
+kısıttan doğdu — `main.py`, `result.explanation` değerini hiç i18n sistemi
+olmayan bir CLI'ya basıyor — ve iki kez işe yaradı: REST API geriye dönük
+uyumlu kaldı ve İngilizce metni doğrulayan mevcut testlerin tamamı
+dokunulmadan geçmeye devam etti.
+
+Bu, çevrilmiş bir kalıba sayı sıkıştırmaktan daha önemli. Yalnızca yüzde
+işareti bile üç dilde yer değiştiriyor — EN `12%`, TR `%12`, DE `12 %`
+(DIN 5008) — ondalık ayırıcı da öyle (`0.82` yerine `0,82`); yani kelime
+sırası dahil her dil kendi cümlesinin sahibi. Arayüz şablonu
+`t("duty.explanation")[key]` biçiminde arar; bu, mevcut
+`t("duty.rateType")[rate_type]` kalıbını yansıtır ve anahtarı kaynakta
+i18n bütünlük testinin görebileceği bir sabit olarak tutar.
+
+**Bilinçli olarak İngilizce kalanlar ve nedeni.** SAP GTS `MESSAGE` alanı.
+BAPIRET2 *zaten* anahtar-artı-parametre tasarımıdır — `NUMBER` ile
+`MESSAGE_V1..V4` — ve gerçek SAP, mesaj metnini istek başına değil, tek bir
+oturum dilinde T100 tablolarından çözer; istek başına çevirmek simülasyonu
+daha sadık değil, daha az sadık yapardı. Bu panelin tüm ilkesi şudur: çerçeve
+çevrilir, veri içeriği olduğu gibi kalır — `DOCUMENT_STATUS`,
+`FUNCTIONAL_AREAS`, `SOURCE_SYSTEM` ve sorumluluk reddi zaten çevrilmiyor,
+ham sistem çıktısı gibi eşaralıklı yazıyla gösteriliyor. Yerelleştirilmiş
+metin isteyen bir tüketici, tıpkı gerçek bir sistemde yapacağı gibi `NUMBER`
+ile değişkenleri kendi mesaj tablosuna karşı kullanır. Pratik bir neden de
+var: `MESSAGE`, gerçek 220 karakterlik BAPIRET2 uzunluğuna kırpılır ve
+Almanca karşılıklar İngilizceden uzun olduğu için çeviriler kelimenin
+ortasından sessizce kesilirdi.
+
+İstisna mesajları (`InvalidQueryError` ve benzerleri) ile fatura okuma
+notları da **şimdilik** İngilizce kalıyor: 20 fırlatma noktasının 13'ü bu
+değişikliğin kapsamı dışındaki modüllerde ve FastAPI'nin kendi 422 doğrulama
+metni Pydantic tarafından üretiliyor, özel bir istisna işleyicisi gerektiriyor.
+Hata yüzeyinin üçte birini çevirmek, uygulamanın bazı hataları Türkçe bazılarını
+İngilizce yanıtlamasına yol açardı; bu da hepsini tutarlı biçimde yanıtlamaktan
+kötüdür. Bu, tamamlanmış bir iş değil, bilinen bir eksik.
+
+**Yol boyunca bulunan iki şey.** `sap_gts_bridge.render_duty`, tam da
+yerelleştirilen cümleye karşı İngilizce metne göre dallanıyordu —
+`explanation.startswith("preferential")` — yani ilk çeviri, her vergi mesajını
+sessizce "belirlenemedi" uyarısına yönlendirip `TYPE`/`NUMBER` kodlarını
+değiştirecekti. Artık yapısal ayırıcıyı okuyor; üretilen kodlar birebir aynı ve
+testlerle sabitlendi. Ayrıca arayüzdeki `payload.detail || t(...)` ifadesi, bir
+422'nin `detail` alanını — Pydantic hata nesnelerinden oluşan ve doğru sayılan
+bir *liste* — metin gibi ele alıyor ve hata kutusuna harfi harfine
+`[object Object]` yazıyordu. Artık önce türü kontrol ediyor; böylece sunucu
+tarafında asla çevrilemeyecek olan tek hata sınıfı, en azından istemci
+tarafında çevriliyor.
+
 ### 🚫 İsim eşleştirmesi, ürün eşleştirmesi değildir
 
 Yaptırım taraması tutarlılık ve sıfır bağımlılık için aynı `difflib` çekirdeğini kullanır; ancak

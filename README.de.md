@@ -904,6 +904,71 @@ unangetastet, sodass eine echte Abfrage, die lediglich ein zufälliges einzelnes
 *enthält* — wie `"cotton t-shirt"` selbst — weiterhin exakt wie zuvor klassifiziert wird
 (`0,8464917087617252` gegen `6109100000`, bytegenau identisch).
 
+### 🌍 QA-Audit Bug #8: serverseitig erzeugten Text lokalisieren
+
+**Was falsch war.** Sämtliche Übersetzung in diesem Projekt passiert
+clientseitig, im `STRINGS`/`t()`-Wörterbuch von `static/index.html`. Alles,
+was Python *zusammensetzt* — die Zollerklärung, die Erklärung jedes
+Risikofaktors, GTS-Meldungstexte, Ausnahmemeldungen — wurde roh in die Seite
+geschrieben und blieb damit englisch, gleich welche der drei Sprachen
+eingestellt war. Die halbe Aussage wechselte die Sprache, die andere Hälfte
+nicht.
+
+**Die Lösung, und warum additiv.** Zoll- und Risikoerklärungen reisen jetzt
+doppelt: als unveränderter, vorgerenderter englischer Satz und zusätzlich als
+`explanation_key` plus `explanation_params`, die dieselbe Begründung
+strukturiert tragen (`{"rate": 12.0, "agreement": "EEA", "origin": "NO"}`).
+Der Browser rendert die Parameter durch seine eigene sprachspezifische
+Vorlage; CLI und einfache API-Clients lesen weiter den Satz. Ergänzen statt
+Ersetzen erzwang eine reale Randbedingung — `main.py` gibt
+`result.explanation` an eine CLI aus, die überhaupt kein i18n-System hat —
+und zahlte sich doppelt aus: Die REST-API bleibt rückwärtskompatibel, und
+jeder bestehende Test auf den englischen Text lief unverändert weiter.
+
+Das wiegt schwerer, als eine Zahl in einen übersetzten Rahmen zu schieben.
+Allein das Prozentzeichen wandert in allen drei Sprachen — EN `12%`,
+TR `%12`, DE `12 %` (DIN 5008) — und das Dezimaltrennzeichen mit ihm
+(`0.82` gegenüber `0,82`); jede Sprache besitzt also ihren ganzen Satz
+einschließlich der Wortstellung. Das Frontend schlägt die Vorlage als
+`t("duty.explanation")[key]` nach, analog zum bestehenden
+`t("duty.rateType")[rate_type]`, womit der Schlüssel als Literal im Quelltext
+steht, wo ihn der i18n-Vollständigkeitstest sieht.
+
+**Was bewusst englisch bleibt, und warum.** Das SAP-GTS-Feld `MESSAGE`.
+BAPIRET2 *ist bereits* ein Schlüssel-plus-Parameter-Entwurf — `NUMBER` mit
+`MESSAGE_V1..V4` — und echtes SAP löst Meldungstexte aus T100-Tabellen in
+einer einzigen Sitzungssprache auf, nicht pro Anfrage; eine Übersetzung pro
+Anfrage machte die Simulation weniger getreu, nicht getreuer. Das Prinzip
+dieses Panels lautet: Rahmen übersetzt, Nutzdaten wörtlich —
+`DOCUMENT_STATUS`, `FUNCTIONAL_AREAS`, `SOURCE_SYSTEM` und der Haftungshinweis
+bleiben bereits unübersetzt und erscheinen dicktengleich als rohe
+Systemausgabe. Wer lokalisierten Text braucht, nutzt `NUMBER` plus die
+Variablen gegen die eigene Meldungstabelle, genau wie an einem echten System.
+Es gibt auch einen praktischen Grund: `MESSAGE` wird auf die echte
+BAPIRET2-Länge von 220 Zeichen gekürzt, und deutsche Fassungen geraten länger
+als englische — Übersetzungen würden also still mitten im Wort abgeschnitten.
+
+Ausnahmemeldungen (`InvalidQueryError` und Verwandte) sowie die Hinweise der
+Rechnungsauslesung bleiben **vorerst** ebenfalls englisch: 13 der 20
+Auslösestellen liegen in Modulen außerhalb dieser Änderung, und FastAPIs
+eigener 422-Validierungstext stammt von Pydantic und bräuchte einen eigenen
+Exception-Handler. Ein Drittel der Fehleroberfläche zu übersetzen hieße, dass
+die Anwendung manche Fehler deutsch und andere englisch beantwortet — schlechter,
+als alle einheitlich zu beantworten. Das ist eine bekannte Lücke, keine
+abgeschlossene Arbeit.
+
+**Zwei Funde nebenbei.** `sap_gts_bridge.render_duty` verzweigte auf
+englischen Fließtext — `explanation.startswith("preferential")` — ausgerechnet
+auf den Satz, der lokalisiert werden sollte. Die erste Übersetzung hätte also
+jede Zollmeldung still in die Warnung „konnte nicht ermittelt werden“ geleitet
+und ihre `TYPE`/`NUMBER`-Codes gekippt. Jetzt liest sie den strukturierten
+Diskriminator; die ausgegebenen Codes sind bytegleich und per Test
+festgeschrieben. Und `payload.detail || t(...)` im Frontend behandelte das
+`detail` eines 422 — eine *Liste* von Pydantic-Fehlerobjekten und damit wahr —
+wie einen String und schrieb wörtlich `[object Object]` in die Fehlerbox. Jetzt
+wird erst der Typ geprüft, sodass die eine Fehlerklasse, die serverseitig nie
+übersetzt werden kann, wenigstens clientseitig übersetzt ist.
+
 ### 🚫 Namensabgleich ist kein Produktabgleich
 
 Die Sanktionsprüfung nutzt aus Konsistenzgründen denselben `difflib`-Kern ohne zusätzliche

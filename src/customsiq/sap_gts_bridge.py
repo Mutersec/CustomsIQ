@@ -27,6 +27,7 @@ from typing import Optional
 
 from src.customsiq.models import ReviewDecision
 from src.customsiq.risk import RiskAssessment, RiskFactor
+from src.customsiq.tariff_calculator import PREFERENTIAL, STANDARD
 
 #: GTS is organised into three functional areas. SPL screening, embargo checks
 #: and Legal Control sit in Compliance Management; declarations, classification
@@ -304,7 +305,11 @@ def render_duty(factor: RiskFactor) -> GtsMessage:
     Management — so a preferential outcome is tagged to that area.
     """
     explanation = factor.explanation
-    if explanation.startswith("preferential"):
+    # Branch on the factor's structured discriminator, not on its English
+    # prose: the sentence is now localizable, and sniffing it here would
+    # route every duty message to the no-rate warning the moment it changed.
+    rate_type = factor.explanation_params.get("rate_type")
+    if rate_type == PREFERENTIAL:
         return GtsMessage(
             type="S",
             number=MSG_DUTY_PREFERENTIAL,
@@ -314,7 +319,7 @@ def render_duty(factor: RiskFactor) -> GtsMessage:
             area=AREA_RISK,
             variables=(explanation, f"{factor.score:.2f}"),
         )
-    if explanation.startswith("standard"):
+    if rate_type == STANDARD:
         return GtsMessage(
             type="I",
             number=MSG_DUTY_STANDARD,

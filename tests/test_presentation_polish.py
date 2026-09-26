@@ -166,7 +166,18 @@ class TestResponseBodyUnchanged:
             },
         ).json()
         assert set(body) == {"level", "composite_score", "hs_code", "factors"}
-        assert set(body["factors"][0]) == {"name", "score", "weight", "explanation"}
+        # explanation_key/explanation_params were added deliberately alongside
+        # the English explanation so the UI can render it in the viewer's own
+        # language; `explanation` itself is unchanged. See the localization
+        # note in the README.
+        assert set(body["factors"][0]) == {
+            "name",
+            "score",
+            "weight",
+            "explanation",
+            "explanation_key",
+            "explanation_params",
+        }
 
     def test_sap_gts_response_shape_is_unchanged(self) -> None:
         body = client.get(

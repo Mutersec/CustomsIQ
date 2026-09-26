@@ -30,12 +30,20 @@ _LEVEL_MEDIUM = 0.2
 
 
 class RiskFactor(NamedTuple):
-    """One sub-factor's contribution to a composite risk score."""
+    """One sub-factor's contribution to a composite risk score.
+
+    `explanation` is the rendered English sentence, kept for the CLI and for
+    API clients that just want text. `explanation_key` and `explanation_params`
+    are the same reasoning in structured form, so a UI can render it in the
+    viewer's own language instead — see the localization note in the README.
+    """
 
     name: str  # "screening" | "classification" | "duty"
     score: float  # 0..1, before weighting
     weight: float
     explanation: str
+    explanation_key: str
+    explanation_params: dict
 
 
 class RiskAssessment(NamedTuple):
@@ -57,6 +65,8 @@ def _screening_factor(conn: sqlite3.Connection, party_name: str) -> RiskFactor:
             _SCREENING_HIT,
             _WEIGHT_SCREENING,
             f"real sanctions match: {top.entity.name} ({top.score:.2f})",
+            "screeningHit",
+            {"name": top.entity.name, "score": top.score},
         )
 
     near_matches = screen_entity(conn, party_name, threshold=_NEAR_MISS_THRESHOLD)
@@ -67,9 +77,18 @@ def _screening_factor(conn: sqlite3.Connection, party_name: str) -> RiskFactor:
             _SCREENING_NEAR_MISS,
             _WEIGHT_SCREENING,
             f"near-miss: {top.entity.name} ({top.score:.2f}, below the compliance threshold)",
+            "screeningNearMiss",
+            {"name": top.entity.name, "score": top.score},
         )
 
-    return RiskFactor("screening", _SCREENING_CLEAN, _WEIGHT_SCREENING, "no sanctions match")
+    return RiskFactor(
+        "screening",
+        _SCREENING_CLEAN,
+        _WEIGHT_SCREENING,
+        "no sanctions match",
+        "screeningClean",
+        {},
+    )
 
 
 def _classification_factor(
@@ -78,7 +97,14 @@ def _classification_factor(
     """Score classification uncertainty; returns the factor and the resolved code."""
     if hs_code is not None:
         return (
-            RiskFactor("classification", 0.0, _WEIGHT_CLASSIFICATION, "HS code given directly"),
+            RiskFactor(
+                "classification",
+                0.0,
+                _WEIGHT_CLASSIFICATION,
+                "HS code given directly",
+                "classificationDirect",
+                {},
+            ),
             hs_code,
         )
 
@@ -90,6 +116,8 @@ def _classification_factor(
                 1.0,
                 _WEIGHT_CLASSIFICATION,
                 "no code shares a term with the description",
+                "classificationNone",
+                {},
             ),
             None,
         )
@@ -101,6 +129,8 @@ def _classification_factor(
             1 - top.score,
             _WEIGHT_CLASSIFICATION,
             f"top match {top.hs_code.code} at {top.score:.2%} confidence",
+            "classificationTop",
+            {"code": top.hs_code.code, "confidence": top.score},
         ),
         top.hs_code.code,
     )
@@ -114,7 +144,14 @@ def _duty_factor(
 ) -> RiskFactor:
     """Score duty exposure: high/preferential rates and missing data raise risk."""
     if resolved_code is None:
-        return RiskFactor("duty", 0.0, _WEIGHT_DUTY, "not assessed: no HS code available")
+        return RiskFactor(
+            "duty",
+            0.0,
+            _WEIGHT_DUTY,
+            "not assessed: no HS code available",
+            "dutyNotAssessed",
+            {},
+        )
 
     try:
         result = calculate_duty(conn, resolved_code, country_of_origin, customs_value)
@@ -124,13 +161,20 @@ def _duty_factor(
             _DUTY_MISSING_RATE_SCORE,
             _WEIGHT_DUTY,
             "no tariff rate on record for this code",
+            "dutyNoRate",
+            {},
         )
 
     score = min(result.rate_percent / _DUTY_RATE_CEILING, 1.0)
     if result.rate_type == PREFERENTIAL:
         score = min(score + _DUTY_PREFERENTIAL_BUMP, 1.0)
     return RiskFactor(
-        "duty", score, _WEIGHT_DUTY, f"{result.rate_type} rate {result.rate_percent}%"
+        "duty",
+        score,
+        _WEIGHT_DUTY,
+        f"{result.rate_type} rate {result.rate_percent}%",
+        "dutyRate",
+        {"rate_type": result.rate_type, "rate": result.rate_percent},
     )
 
 

@@ -1036,6 +1036,12 @@
         dutyLabel: "Duty",
         totalPayable: "Total payable",
         rateType: { standard: "standard", preferential: "preferential" },
+        explanation: {
+          preferential: (p) =>
+            `Preferential rate of ${p.rate}% applied under the ${p.agreement}, for which origin ${p.origin} qualifies.`,
+          standard: (p) =>
+            `Standard MFN rate of ${p.rate}% applied — no preferential agreement covers origin ${p.origin} for this code.`,
+        },
       },
       risk: {
         title: "Shipment Risk Assessment",
@@ -1054,6 +1060,19 @@
         valueMustBeNumber: "Customs value must be a number.",
         level: { low: "low", medium: "medium", high: "high" },
         factor: { screening: "Screening", classification: "Classification", duty: "Duty" },
+        explanation: {
+          screeningHit: (p) => `real sanctions match: ${p.name} (${p.score.toFixed(2)})`,
+          screeningNearMiss: (p) =>
+            `near-miss: ${p.name} (${p.score.toFixed(2)}, below the compliance threshold)`,
+          screeningClean: () => "no sanctions match",
+          classificationDirect: () => "HS code given directly",
+          classificationNone: () => "no code shares a term with the description",
+          classificationTop: (p) =>
+            `top match ${p.code} at ${(p.confidence * 100).toFixed(2)}% confidence`,
+          dutyNotAssessed: () => "not assessed: no HS code available",
+          dutyNoRate: () => "no tariff rate on record for this code",
+          dutyRate: (p) => `${t("duty.rateType")[p.rate_type] || p.rate_type} rate ${p.rate}%`,
+        },
       },
       invoice: {
         title: "Invoice Extraction",
@@ -1218,6 +1237,12 @@
         dutyLabel: "Vergi",
         totalPayable: "Ödenecek toplam",
         rateType: { standard: "standart", preferential: "tercihli" },
+        explanation: {
+          preferential: (p) =>
+            `${p.agreement} kapsamında %${p.rate} tercihli oran uygulandı; ${p.origin} menşei bu orandan yararlanıyor.`,
+          standard: (p) =>
+            `%${p.rate} standart MFN oranı uygulandı — bu kod için ${p.origin} menşeini kapsayan tercihli bir anlaşma yok.`,
+        },
       },
       risk: {
         title: "Sevkiyat Risk Değerlendirmesi",
@@ -1236,6 +1261,20 @@
         valueMustBeNumber: "Gümrük kıymeti sayısal olmalı.",
         level: { low: "düşük", medium: "orta", high: "yüksek" },
         factor: { screening: "Tarama", classification: "Sınıflandırma", duty: "Vergi" },
+        explanation: {
+          screeningHit: (p) =>
+            `gerçek yaptırım eşleşmesi: ${p.name} (${p.score.toFixed(2).replace(".", ",")})`,
+          screeningNearMiss: (p) =>
+            `kıl payı eşleşme: ${p.name} (${p.score.toFixed(2).replace(".", ",")}, uyum eşiğinin altında)`,
+          screeningClean: () => "yaptırım eşleşmesi yok",
+          classificationDirect: () => "HS kodu doğrudan verildi",
+          classificationNone: () => "açıklamayla ortak terim taşıyan kod yok",
+          classificationTop: (p) =>
+            `en iyi eşleşme ${p.code}, %${(p.confidence * 100).toFixed(2).replace(".", ",")} güvenle`,
+          dutyNotAssessed: () => "değerlendirilmedi: HS kodu yok",
+          dutyNoRate: () => "bu kod için kayıtlı vergi oranı yok",
+          dutyRate: (p) => `%${p.rate} ${t("duty.rateType")[p.rate_type] || p.rate_type} oran`,
+        },
       },
       invoice: {
         title: "Fatura Okuma",
@@ -1400,6 +1439,12 @@
         dutyLabel: "Zoll",
         totalPayable: "Gesamtbetrag",
         rateType: { standard: "Regelsatz", preferential: "Präferenzsatz" },
+        explanation: {
+          preferential: (p) =>
+            `Präferenzsatz von ${p.rate} % angewendet nach dem ${p.agreement}; der Ursprung ${p.origin} erfüllt dessen Voraussetzungen.`,
+          standard: (p) =>
+            `Regelsatz (MFN) von ${p.rate} % angewendet — für diesen Code deckt kein Präferenzabkommen den Ursprung ${p.origin} ab.`,
+        },
       },
       risk: {
         title: "Sendungs-Risikobewertung",
@@ -1418,6 +1463,20 @@
         valueMustBeNumber: "Der Zollwert muss eine Zahl sein.",
         level: { low: "niedrig", medium: "mittel", high: "hoch" },
         factor: { screening: "Prüfung", classification: "Einreihung", duty: "Zoll" },
+        explanation: {
+          screeningHit: (p) =>
+            `echter Sanktionstreffer: ${p.name} (${p.score.toFixed(2).replace(".", ",")})`,
+          screeningNearMiss: (p) =>
+            `Beinahe-Treffer: ${p.name} (${p.score.toFixed(2).replace(".", ",")}, unterhalb der Compliance-Schwelle)`,
+          screeningClean: () => "kein Sanktionstreffer",
+          classificationDirect: () => "HS-Code direkt angegeben",
+          classificationNone: () => "kein Code teilt einen Begriff mit der Beschreibung",
+          classificationTop: (p) =>
+            `bester Treffer ${p.code} mit ${(p.confidence * 100).toFixed(2).replace(".", ",")} % Konfidenz`,
+          dutyNotAssessed: () => "nicht bewertet: kein HS-Code vorhanden",
+          dutyNoRate: () => "für diesen Code ist kein Zollsatz hinterlegt",
+          dutyRate: (p) => `${t("duty.rateType")[p.rate_type] || p.rate_type} ${p.rate} %`,
+        },
       },
       invoice: {
         title: "Rechnungsauslesung",
@@ -1634,6 +1693,25 @@
   }
 
   /**
+   * Render a server-supplied explanation in the viewer's language.
+   *
+   * The API sends each explanation twice over: a pre-rendered English
+   * sentence, and the same reasoning as a key plus its parameters. The CLI
+   * and plain API clients keep the sentence; the browser re-renders it here
+   * from `table`, so word order, the decimal separator and where the percent
+   * sign goes are each language's own business rather than English's.
+   *
+   * `table` is passed in already resolved (e.g. t("duty.explanation")) so the
+   * key stays a literal in the source, where the i18n completeness test can
+   * see it. An unknown key falls back to the English sentence rather than
+   * rendering nothing.
+   */
+  function explain(table, row) {
+    const template = table[row.explanation_key];
+    return template ? template(row.explanation_params) : row.explanation;
+  }
+
+  /**
    * Markup for the Approve/Reject/Flag controls on one result card.
    * subjectReference is always the value the backend computed and returned
    * with that result — never re-derived here — so review actions always
@@ -1725,7 +1803,12 @@
   /**
    * Call an endpoint and hand the parsed rows to `render`.
    * The API answers a blank or oversized query with HTTP 400 and a `detail`
-   * message, so surface that text rather than a generic failure.
+   * message, so surface that text rather than a generic failure — but only
+   * when it really is text. FastAPI's own 422 validation errors put a list of
+   * objects in `detail`, which is truthy, so passing it straight through used
+   * to render the literal string "[object Object]". Those are the one error
+   * class that can't be translated server-side, so falling back here gives
+   * the viewer a translated message instead of Pydantic's English.
    */
   async function submit({ url, input, button, box, busyLabel, idleLabel, render }) {
     const value = input.value.trim();
@@ -1743,7 +1826,8 @@
       const response = await fetch(url(value));
       const payload = await response.json();
       if (!response.ok) {
-        setState(box, "error", payload.detail || t("common.requestFailed")(response.status));
+        const detail = typeof payload.detail === "string" ? payload.detail : "";
+        setState(box, "error", detail || t("common.requestFailed")(response.status));
         return;
       }
       render(payload);
@@ -1910,7 +1994,7 @@
               <span>${escapeHtml(t("duty.dutyLabel"))} <b>${money(r.duty_amount)}</b></span>
               <span>${escapeHtml(t("duty.totalPayable"))} <b>${money(r.total_payable)}</b></span>
             </div>
-            <p class="card-desc">${escapeHtml(r.explanation)}</p>
+            <p class="card-desc">${escapeHtml(explain(t("duty.explanation"), r))}</p>
             <span class="chip">${escapeHtml(r.hs_code)}</span>
             <span class="chip">${escapeHtml(r.country_of_origin)}</span>
             ${agreement}
@@ -2089,7 +2173,7 @@
             <div class="bar"><span class="${f.name}" style="width:${Math.round(f.score * 100)}%"></span></div>
             <span>${Math.round(f.score * 100)}%</span>
           </div>
-          <p class="risk-factor-explain">${escapeHtml(f.explanation)}</p>
+          <p class="risk-factor-explain">${escapeHtml(explain(t("risk.explanation"), f))}</p>
         `).join("");
         riskBox.innerHTML = `
           <article class="card">

@@ -887,6 +887,68 @@ not just short queries) was measured and rejected: it would have shifted the REA
 `0.6781`/`0.0781` — a real behavior change for no additional protection the query-side guard doesn't
 already provide.
 
+### 🌍 QA audit Bug #8: localizing text the server generates
+
+**What was wrong.** All translation in this project happens client-side, in
+`static/index.html`'s `STRINGS`/`t()` dictionary. Anything Python *composed* —
+the duty explanation, each risk factor's explanation, GTS message text,
+exception messages — was injected into the page raw, so it stayed English no
+matter which of EN/TR/DE the viewer had selected. Half a sentence would flip
+language and the other half wouldn't.
+
+**The fix, and why it's additive.** Duty and risk explanations now travel
+twice over: the pre-rendered English sentence, unchanged, plus
+`explanation_key` and `explanation_params` carrying the same reasoning
+structurally (`{"rate": 12.0, "agreement": "EEA", "origin": "NO"}`). The
+browser renders the params through its own per-language template; the CLI and
+plain API clients keep reading the sentence. Adding rather than replacing was
+forced by a real constraint — `main.py` prints `result.explanation` to a CLI
+that has no i18n system at all — and it pays off twice: the REST API stays
+backwards compatible, and every existing test that asserts on the English
+text kept passing untouched.
+
+This matters more than splicing a number into a translated frame would.
+The percent sign alone moves in all three languages — EN `12%`, TR `%12`,
+DE `12 %` (DIN 5008) — and the decimal separator with it (`0.82` vs `0,82`),
+so each language owns its whole sentence, including word order. The frontend
+looks the template up as `t("duty.explanation")[key]`, mirroring the existing
+`t("duty.rateType")[rate_type]` idiom, which keeps the key literal in the
+source where the i18n completeness test can see it.
+
+**What deliberately stays English, and why.** The SAP GTS `MESSAGE` field.
+BAPIRET2 *already is* a key-plus-parameters design — `NUMBER` with
+`MESSAGE_V1..V4` — and real SAP resolves message text from T100 tables in a
+single session language, not per request; translating per request would make
+the simulation less faithful, not more. This panel's whole invariant is that
+chrome is translated and payload contents are verbatim: `DOCUMENT_STATUS`,
+`FUNCTIONAL_AREAS`, `SOURCE_SYSTEM` and the disclaimer are all already
+untranslated, rendered monospace as raw system output. A consumer wanting
+localized text uses `NUMBER` + the variables against their own message table,
+exactly as they would against a real system. There's a practical reason too:
+`MESSAGE` is truncated to its real 220-character BAPIRET2 length, and German
+renderings run longer than English, so translations would be silently cut
+mid-word.
+
+Exception messages (`InvalidQueryError` and friends) and invoice-extraction
+notes also stay English **for now** — 13 of the 20 raise sites live in
+modules outside this change's scope, and FastAPI's own 422 validation text is
+Pydantic-generated and needs a custom exception handler. Translating a third
+of the error surface would leave the app answering some errors in Turkish and
+others in English, which is worse than answering all of them consistently.
+This is a known remaining gap, not a finished job.
+
+**Two things found while doing it.** `sap_gts_bridge.render_duty` was
+branching on English prose — `explanation.startswith("preferential")` —
+against the very sentence being localized, so the first translation would
+have silently routed every duty message to the "could not be determined"
+warning and flipped its `TYPE`/`NUMBER` codes. It now reads the structured
+discriminator; the emitted codes are byte-identical, pinned by tests. And the
+frontend's `payload.detail || t(...)` treated a 422's `detail` — a *list* of
+Pydantic error objects, which is truthy — as a string, rendering the literal
+text `[object Object]` in the error box. It now checks the type first, so the
+one error class that can never be translated server-side is at least
+translated client-side.
+
 ### 🚫 Name matching is not product matching
 
 Sanctions screening reuses the same `difflib` core for consistency and zero dependencies, but

@@ -299,6 +299,8 @@ def calculate_duty_for_consignment(
         "duty_amount": float(result.duty_amount),
         "total_payable": float(result.total_payable),
         "explanation": result.explanation,
+        "explanation_key": result.explanation_key,
+        "explanation_params": result.explanation_params,
         "subject_reference": review.reference_for_duty(hs_code, country_of_origin, customs_value),
     }
 
@@ -333,6 +335,8 @@ def assess_risk(
                 "score": f.score,
                 "weight": f.weight,
                 "explanation": f.explanation,
+                "explanation_key": f.explanation_key,
+                "explanation_params": f.explanation_params,
             }
             for f in result.factors
         ],

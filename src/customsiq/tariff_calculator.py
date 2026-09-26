@@ -20,7 +20,13 @@ _CENTS = Decimal("0.01")
 
 
 class DutyCalculation(NamedTuple):
-    """The duty owed on a consignment, and the reasoning behind the rate."""
+    """The duty owed on a consignment, and the reasoning behind the rate.
+
+    `explanation` is the rendered English sentence, kept for the CLI and for
+    API clients that just want text. `explanation_key` and `explanation_params`
+    are the same reasoning in structured form, so a UI can render it in the
+    viewer's own language instead — see the localization note in the README.
+    """
 
     hs_code: str
     country_of_origin: str
@@ -31,6 +37,8 @@ class DutyCalculation(NamedTuple):
     duty_amount: Decimal
     total_payable: Decimal
     explanation: str
+    explanation_key: str
+    explanation_params: dict
 
 
 def _applicable(rates: list[TariffRate], as_of: date) -> list[TariffRate]:
@@ -71,16 +79,34 @@ def select_rate(
     return standard[0] if standard else None
 
 
-def _explain(rate: TariffRate, origin: str) -> str:
-    """Describe in words why this rate was applied, for an auditable result."""
+def _explain(rate: TariffRate, origin: str) -> tuple[str, str, dict]:
+    """Describe why this rate was applied, in English and in structured form.
+
+    Returns (english_sentence, translation_key, params). Both come off the
+    same inputs in the same branch, so the rendered text and the structured
+    form can't drift apart. The frontend renders `params` through its own
+    per-language template; the sentence stays for the CLI and API clients.
+    """
     if rate.rate_type == PREFERENTIAL:
         return (
-            f"Preferential rate of {rate.rate_percent:g}% applied under the "
-            f"{rate.trade_agreement}, for which origin {origin} qualifies."
+            (
+                f"Preferential rate of {rate.rate_percent:g}% applied under the "
+                f"{rate.trade_agreement}, for which origin {origin} qualifies."
+            ),
+            PREFERENTIAL,
+            {
+                "rate": rate.rate_percent,
+                "agreement": rate.trade_agreement,
+                "origin": origin,
+            },
         )
     return (
-        f"Standard MFN rate of {rate.rate_percent:g}% applied — no preferential "
-        f"agreement covers origin {origin} for this code."
+        (
+            f"Standard MFN rate of {rate.rate_percent:g}% applied — no preferential "
+            f"agreement covers origin {origin} for this code."
+        ),
+        STANDARD,
+        {"rate": rate.rate_percent, "origin": origin},
     )
 
 
@@ -146,6 +172,7 @@ def calculate_duty(
         value,
         duty,
     )
+    explanation, explanation_key, explanation_params = _explain(rate, origin)
     return DutyCalculation(
         hs_code=hs_code,
         country_of_origin=origin,
@@ -155,5 +182,7 @@ def calculate_duty(
         trade_agreement=rate.trade_agreement,
         duty_amount=duty,
         total_payable=(value + duty).quantize(_CENTS, rounding=ROUND_HALF_UP),
-        explanation=_explain(rate, origin),
+        explanation=explanation,
+        explanation_key=explanation_key,
+        explanation_params=explanation_params,
     )

@@ -73,6 +73,8 @@ class DutyCalculationResponse(BaseModel):
     duty_amount: float
     total_payable: float
     explanation: str
+    explanation_key: str
+    explanation_params: dict
     subject_reference: str
 
 
@@ -83,6 +85,8 @@ class RiskFactorResponse(BaseModel):
     score: float
     weight: float
     explanation: str
+    explanation_key: str
+    explanation_params: dict
 
 
 class RiskAssessmentResponse(BaseModel):
