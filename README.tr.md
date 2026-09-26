@@ -985,6 +985,75 @@ bir *liste* — metin gibi ele alıyor ve hata kutusuna harfi harfine
 tarafında asla çevrilemeyecek olan tek hata sınıfı, en azından istemci
 tarafında çevriliyor.
 
+### 🇩🇪 Pakete gömülü Almanca (ve Fransızca) nomanklatüre karşı eşleştirme
+
+**Eksik olan neydi.** TARIC paketi 13.733 yaprak kodun tamamı için gerçek EN/DE/FR
+açıklamalarını `hs_code_translations` tablosuna aktarmıştı, ama eşleştirme yalnızca
+İngilizce `hs_codes.description` sütununu okuyordu — çeviriler sadece
+`GET /codes/{code}/translations` ile gösterilmek için vardı. Almanca bir sorgu İngilizce
+metne karşı puanlanıyordu. En çarpıcı örnek: `classify("Haselnüsse")` **hiçbir şey**
+döndürmüyordu, çünkü `"Hazelnuts"` ile ortak bir terimi yok — tam Almanca karşılığı bir
+join ötede veritabanında dururken.
+
+**Mimari: ikisinin en iyisini al; ne değiştir ne de birleştir.** Bir dil verildiğinde her
+kod hem İngilizce açıklamasına hem de o dildeki açıklamasına karşı puanlanır ve hangisi
+daha iyi uyuyorsa o kalır. Ölçülüp elenen iki alternatif:
+
+- *İngilizceyi çeviriyle değiştirmek* en bariz durumda başarısız olur — Almanca arayüzü
+  kullanan biri yine de zaman zaman `"cotton t-shirt"` yazar.
+- *Dilleri tek bir belgede birleştirmek* İngilizceyi **ölçülebilir biçimde bozuyor**.
+  EN+DE birleştirildiğinde `"optical glass"` en iyi sonucunu tamamen kaybetti
+  (`1.0 → 0.6588`) ve `"cotton t-shirt knitted"`'in üçüncü sonucu `0.4601 → 0.316`'ya
+  düştü. Birleştirme belge uzunluğunu şişirir; bu da her İngilizce terimin normalize
+  edilmiş TF-IDF ağırlığını seyreltir. Her dili ayrı puanlayıp en iyisini almak, bir
+  kaydın İngilizce skorunu bit düzeyinde aynı bırakır.
+
+Dil bir parametredir, global değil: `search(conn, q, language="de")`. Dil vermeyen her
+şey — CLI, mevcut tüm testler, İngilizce arayüz — tam olarak eskisi gibi, tam olarak
+eski maliyetiyle çalışır. Fransızca da aynı mekanizmayla çalışır (`language="fr"`) ve
+API'de bugün kullanılabilir; arayüz Almancayı sunar çünkü Almanca bir arayüz dilidir.
+
+**Yol boyunca bir tokenizer hatası çıktı.** `_WORD` deseni `[a-z0-9]+` idi — yalnızca
+ASCII; yani aksanlı her kelime parçalara bölünüyordu ve bu sadece Almancada değil:
+`Gruyère` → `gruy` + `re`, `Bergkäse` → `bergk` + `se` şeklinde, **13.753 İngilizce
+paket açıklamasının 260'ında**. Bu parçalar ilgisiz kelimeler arasında çakışır; nitekim
+`"grüne Küchengeräte"` bu yüzden `"Drehspäne, Frässpäne, Hobelspäne"` ile eşleşiyordu.
+Artık `re.UNICODE` ile `[^\W_]+`. Bu değişiklik **20 SAMPLE_DATA satırının 0'ının**
+tokenizasyonunu değiştiriyor; sabitlenmiş her skorun — `0.6609`, `"knitted cotton
+shirt"` sıralaması, çoğul katlama tablosu — bundan etkilenmemesinin nedeni tam olarak
+budur.
+
+**Ölçüm, gerçek 13,7k paket:**
+
+| | yalnızca İngilizce | `language="de"` ile |
+|---|---|---|
+| `search()` | 398 ms | 572 ms |
+| `classify()`, önbellekli | 17,8 ms | 25,7 ms |
+| `classify()`, ilk çağrı (indeks kurar) | ~120 ms | ~274 ms (iki indeks) |
+
+İndeks önbelleği `(bağlantı, dil)` ile anahtarlanır; böylece iki indeks birbirini
+atmadan yan yana durur ve Almanca metin tazelik karşılaştırmasına dahil olur —
+düzenlenen bir çeviri, düzenlenen bir açıklamayla aynı nedenle indeksi geçersiz kılar.
+Yukarıdaki İngilizce sayılar bu özellikten önceki değerlerle aynıdır, çünkü İngilizce
+yol eskisine *denk* değil, eskisinin *ta kendisidir*.
+
+**Ölçülen kazanç:** `search("Haselnüsse")` `0,63 → 1,00`; `classify("Haselnüsse")` boş
+sonuçtan doğru koda `1,00` ile ulaşıyor.
+
+**İki Almanca sınırlılığı bilinçli olarak duruyor.** `_singular()` hâlâ İngilizce çoğul
+kurallarını uyguluyor (`haus → hau`); bu Almanca için yanlış ama burada zararsız: sorguya
+ve korpusa *simetrik* uygulandığı için iki taraf da aynı şekilde katlanır ve eşleştirme
+çalışmaya devam eder. Bileşik kelimeler de ayrıştırılmaz — `Alkohol`, `Alkoholgehalt`'ı
+bulmaz — bu kelime düzeyinde TF-IDF'in doğasında var; bileşik ayrıştırıcı ise bu projenin
+bilinçli olarak almadığı bir bağımlılık.
+
+**Türkçe desteklenmiyor ve dürüst yanıt bu.** AB, Kombine Nomanklatürü resmî dillerinde
+yayımlar; Türkçe bunlardan biri değil, dolayısıyla pakete gömülecek yetkili bir Türkçe CN
+metni yok. Makine çevirisi kullanmak, *resmî görünen* ama olmayan bir tarife
+sınıflandırma metni üretirdi — bir uyum aracının yapmaması gereken tam da budur. Türkçe
+kullanan biri İngilizce korpusu, Türkçe arayüzü ve Türkçe bir sorgu İngilizce metne karşı
+kötü puan aldığında düşük güven uyarısını alır.
+
 ### 🚫 İsim eşleştirmesi, ürün eşleştirmesi değildir
 
 Yaptırım taraması tutarlılık ve sıfır bağımlılık için aynı `difflib` çekirdeğini kullanır; ancak

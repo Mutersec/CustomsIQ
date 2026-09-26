@@ -990,6 +990,76 @@ text `[object Object]` in the error box. It now checks the type first, so the
 one error class that can never be translated server-side is at least
 translated client-side.
 
+### 🇩🇪 Matching against the bundled German (and French) nomenclature
+
+**What was missing.** The TARIC bundle imported real EN/DE/FR descriptions for all
+13,733 leaf codes into `hs_code_translations`, but matching only ever read the English
+`hs_codes.description` column — the translations existed solely to be displayed by
+`GET /codes/{code}/translations`. A German query was scored against English text. The
+sharpest case: `classify("Haselnüsse")` returned **nothing at all**, because it shares
+no token with `"Hazelnuts"`, even though the exact German term was sitting in the
+database one join away.
+
+**The architecture: take the best of both, don't replace and don't merge.** Passing a
+language makes each code score against its English description *and* its description in
+that language, keeping whichever fits better. Two alternatives were measured and
+rejected:
+
+- *Replacing English with the translation* fails the obvious case — someone reading the
+  German UI still types `"cotton t-shirt"` sometimes.
+- *Concatenating the languages into one document* measurably **degrades English**.
+  Merged EN+DE, `"optical glass"` lost its top hit entirely (score `1.0 → 0.6588`) and
+  `"cotton t-shirt knitted"`'s third result fell `0.4601 → 0.316`. Concatenation inflates
+  document length, which dilutes every English term's normalised TF-IDF weight. Scoring
+  each language separately and taking the max leaves a record's English score bit-for-bit
+  what it was.
+
+The language is a parameter, not a global: `search(conn, q, language="de")`. Anything
+that doesn't pass one — the CLI, every existing test, the English UI — takes exactly the
+path it took before, at exactly the cost it cost before. French works through the same
+mechanism (`language="fr"`) and is available on the API today; the UI exposes German
+because German is a UI language.
+
+**A tokenizer bug fell out of it.** `_WORD` was `[a-z0-9]+` — ASCII-only, so every
+accented word was split into fragments, and not only in German: `Gruyère` tokenized as
+`gruy` + `re` and `Bergkäse` as `bergk` + `se` in **260 of the 13,753 bundled English
+descriptions**. Those fragments then collide across unrelated words, which is how
+`"grüne Küchengeräte"` used to top-match `"Drehspäne, Frässpäne, Hobelspäne"`. Now
+`[^\W_]+` with `re.UNICODE`. This changes the tokenization of **0 of the 20 SAMPLE_DATA
+rows**, which is precisely why every pinned score — `0.6609`, the `"knitted cotton
+shirt"` ranking, the plural-folding table — is untouched by it.
+
+**Measured, real 13.7k bundle:**
+
+| | English only | with `language="de"` |
+|---|---|---|
+| `search()` | 398 ms | 572 ms |
+| `classify()`, cached | 17.8 ms | 25.7 ms |
+| `classify()`, first call (builds the index) | ~120 ms | ~274 ms (both indexes) |
+
+The index cache is keyed by `(connection, language)` so the two indexes sit side by side
+instead of evicting each other, and the German text joins the freshness comparison — an
+edited translation invalidates the index for the same reason an edited description does.
+The English numbers above are unchanged from before this feature, because the English
+path is not merely *equivalent* to the old one, it *is* the old one.
+
+**Measured gain:** `search("Haselnüsse")` goes `0.63 → 1.00`; `classify("Haselnüsse")`
+goes from an empty result to the correct code at `1.00`.
+
+**Two German limitations stay, on purpose.** `_singular()` still applies English plural
+rules (`haus → hau`), which is wrong German but harmless here: it is applied
+*symmetrically* to query and corpus, so both sides fold identically and matching still
+works. And compounds don't decompose — `Alkohol` won't find `Alkoholgehalt` — which is
+inherent to word-level TF-IDF; a decompounder is a dependency this project deliberately
+doesn't take.
+
+**Turkish stays unsupported, and that's the honest answer.** The EU publishes the
+Combined Nomenclature in its official languages; Turkish isn't one of them, so there is
+no authoritative Turkish CN text to bundle. Machine-translating it would produce
+tariff-classification text that *looks* official and isn't — the one thing a compliance
+tool must not do. A Turkish user gets the English corpus, the UI in Turkish, and the
+low-confidence warning when a Turkish query scores badly against English text.
+
 ### 🚫 Name matching is not product matching
 
 Sanctions screening reuses the same `difflib` core for consistency and zero dependencies, but

@@ -1907,7 +1907,9 @@
   document.getElementById("search-form").addEventListener("submit", (event) => {
     event.preventDefault();
     submit({
-      url: (v) => `/search?q=${encodeURIComponent(v)}&limit=8`,
+      // The UI language rides along so a German query is also matched against
+      // the bundled German nomenclature text, not just the English column.
+      url: (v) => `/search?q=${encodeURIComponent(v)}&limit=8&language=${encodeURIComponent(lang)}`,
       input: document.getElementById("search-input"),
       button: document.getElementById("search-btn"),
       box: searchBox,
@@ -1976,7 +1978,8 @@
   document.getElementById("classify-form").addEventListener("submit", (event) => {
     event.preventDefault();
     submit({
-      url: (v) => `/classify?description=${encodeURIComponent(v)}&top_n=5`,
+      url: (v) =>
+        `/classify?description=${encodeURIComponent(v)}&top_n=5&language=${encodeURIComponent(lang)}`,
       input: document.getElementById("classify-input"),
       button: document.getElementById("classify-btn"),
       box: classifyBox,

@@ -11,9 +11,9 @@ import math
 import re
 import sqlite3
 from collections import Counter
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
-from src.customsiq.database import fetch_all, get_by_code
+from src.customsiq.database import fetch_all, fetch_all_translations, get_by_code
 from src.customsiq.exceptions import HSCodeNotFoundError
 from src.customsiq.matching import as_code, validate_query
 from src.customsiq.models import HSCode
@@ -22,7 +22,16 @@ logger = logging.getLogger(__name__)
 
 TOP_TERMS = 3
 
-_WORD = re.compile(r"[a-z0-9]+")
+# Unicode-aware rather than [a-z0-9]+: the ASCII form split every accented
+# word into fragments, which mattered even for the English corpus — "Gruyère"
+# tokenized as "gruy" + "re", "Bergkäse" as "bergk" + "se" (260 of the 13,753
+# bundled English descriptions were affected). Those fragments then collide
+# across unrelated words, which is how "grüne Küchengeräte" used to top-match
+# "Drehspäne, Frässpäne, Hobelspäne". `[^\W_]` is `\w` minus the underscore,
+# so it keeps letters and digits in any script and still splits on punctuation.
+# Verified: this changes the tokenization of 0 of the 20 SAMPLE_DATA rows, so
+# every pinned score built on that corpus is untouched.
+_WORD = re.compile(r"[^\W_]+", re.UNICODE)
 
 # ponytail: this index used to be rebuilt unconditionally on every call — fine
 # at 0.1 ms for the 20-code mock catalog, but ~150 ms/call once the real CN
@@ -41,13 +50,20 @@ _WORD = re.compile(r"[a-z0-9]+")
 _index_cache: dict = {}
 
 
-def _index_for(conn: sqlite3.Connection, records: list[HSCode]) -> tuple:
-    """Return (idf, vectors) for `records`, rebuilding only if they changed."""
-    cached = _index_cache.get(id(conn))
-    if cached is not None and cached[0] == records:
+def _index_for(conn: sqlite3.Connection, texts: list, language: Optional[str] = None) -> tuple:
+    """Return (idf, vectors) for `texts`, rebuilding only if they changed.
+
+    Keyed by language as well as connection, so the English index and a
+    translated one are cached side by side rather than evicting each other.
+    `texts` is what was actually read this call — including translated text
+    when there is any — so an edited translation invalidates the index for
+    exactly the same reason an edited description does.
+    """
+    cached = _index_cache.get((id(conn), language))
+    if cached is not None and cached[0] == texts:
         return cached[1], cached[2]
-    idf, vectors = _build_index(records)
-    _index_cache[id(conn)] = (records, idf, vectors)
+    idf, vectors = _build_index(texts)
+    _index_cache[(id(conn), language)] = (texts, idf, vectors)
     return idf, vectors
 
 
@@ -92,20 +108,21 @@ def _normalise(weights: dict[str, float]) -> dict[str, float]:
     return {term: weight / length for term, weight in weights.items()}
 
 
-def _build_index(records: list[HSCode]) -> tuple[dict[str, float], list[dict[str, float]]]:
+def _build_index(texts: list) -> tuple[dict[str, float], list[dict[str, float]]]:
     """Compute inverse document frequencies and unit document vectors.
 
     Uses the smoothed IDF `log((N + 1) / (df + 1)) + 1`, which keeps terms that
     appear in every document at a small positive weight instead of zero.
 
     Args:
-        records: The corpus to index.
+        texts: One string per code — the text to index, in whichever language
+            is being indexed. Parallel to the record list it was built from.
 
     Returns:
-        The IDF per term, and one normalised weight vector per record.
+        The IDF per term, and one normalised weight vector per text.
     """
-    tokenised = [_tokenize(record.description) for record in records]
-    total = len(records)
+    tokenised = [_tokenize(text) for text in texts]
+    total = len(texts)
     frequencies = Counter(term for tokens in tokenised for term in set(tokens))
     idf = {term: math.log((total + 1) / (count + 1)) + 1 for term, count in frequencies.items()}
 
@@ -116,8 +133,37 @@ def _build_index(records: list[HSCode]) -> tuple[dict[str, float], list[dict[str
     return idf, vectors
 
 
+def _score_against(
+    conn: sqlite3.Connection, texts: list, language: Optional[str], counts: Counter
+) -> dict:
+    """Score one already-tokenized query against one language's index.
+
+    Returns {position: (score, matched_terms)} for the codes that share at
+    least one term, keyed by position in the record list so a caller can
+    merge the results of several languages.
+    """
+    idf, vectors = _index_for(conn, texts, language)
+    unseen = math.log(len(texts) + 1) + 1  # IDF for a term absent from the corpus
+    query = _normalise({term: count * idf.get(term, unseen) for term, count in counts.items()})
+
+    scored = {}
+    for position, vector in enumerate(vectors):
+        shared = query.keys() & vector.keys()
+        if not shared:
+            continue
+        # Every weight is positive (TF >= 1, smoothed IDF >= 1), so a shared
+        # term guarantees a positive score — no zero-score guard needed here.
+        contributions = {term: query[term] * vector[term] for term in shared}
+        terms = sorted(contributions, key=lambda term: contributions[term], reverse=True)
+        scored[position] = (sum(contributions.values()), terms[:TOP_TERMS])
+    return scored
+
+
 def classify(
-    conn: sqlite3.Connection, description: str, top_n: int = 5
+    conn: sqlite3.Connection,
+    description: str,
+    top_n: int = 5,
+    language: Optional[str] = None,
 ) -> list[ClassificationResult]:
     """Suggest the CN codes a product description most likely belongs to.
 
@@ -141,10 +187,18 @@ def classify(
     same "no match" rule above even though the code exists. Instead it's
     routed to an exact lookup.
 
+    With `language`, each code is also scored against its description in that
+    language and keeps whichever score is higher. English is never dropped —
+    someone reading the German UI may still type an English product name —
+    and `matched_terms` comes from whichever language actually won, so the
+    reasoning stays readable either way.
+
     Args:
         conn: An open database connection.
         description: Free-text description of the goods, or an HS/CN code.
         top_n: Maximum number of suggestions to return.
+        language: Also score against this language's bundled descriptions,
+            e.g. "de". Defaults to English-only.
 
     Returns:
         A single exact match at score 1.0, matched_terms=[], if `description`
@@ -170,24 +224,22 @@ def classify(
         return []
 
     records = fetch_all(conn)
-    idf, vectors = _index_for(conn, records)
-
     counts = Counter(tokens)
-    unseen = math.log(len(records) + 1) + 1  # IDF for a term absent from the corpus
-    query = _normalise({term: count * idf.get(term, unseen) for term, count in counts.items()})
+    scored = _score_against(conn, [record.description for record in records], None, counts)
 
-    results = []
-    for record, vector in zip(records, vectors):
-        shared = query.keys() & vector.keys()
-        if not shared:
-            continue
-        # Every weight is positive (TF >= 1, smoothed IDF >= 1), so a shared
-        # term guarantees a positive score — no zero-score guard needed here.
-        contributions = {term: query[term] * vector[term] for term in shared}
-        score = sum(contributions.values())
-        terms = sorted(contributions, key=lambda term: contributions[term], reverse=True)
-        results.append(ClassificationResult(record, score, terms[:TOP_TERMS]))
+    translations = fetch_all_translations(conn, language)
+    if translations:
+        texts = [translations.get(record.code, "") for record in records]
+        for position, hit in _score_against(conn, texts, language, counts).items():
+            best = scored.get(position)
+            if best is None or hit[0] > best[0]:
+                scored[position] = hit
 
+    # Sorted by position first so ties break on record order, then stably by
+    # score — which leaves the English-only path ordered exactly as before.
+    results = [
+        ClassificationResult(records[position], *scored[position]) for position in sorted(scored)
+    ]
     results.sort(key=lambda result: result.score, reverse=True)
     logger.debug("classified %r into %d suggestion(s)", description, len(results))
     return results[:top_n]

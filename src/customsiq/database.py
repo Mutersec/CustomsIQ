@@ -466,6 +466,37 @@ def fetch_translations(conn: sqlite3.Connection, code: str) -> dict:
     return {language: description for language, description in rows}
 
 
+def fetch_all_translations(conn: sqlite3.Connection, language: Optional[str]) -> dict:
+    """Return every stored description in one language, keyed by HS code.
+
+    The bulk counterpart to `fetch_translations`, which answers for a single
+    code. Matching needs the whole column at once: scoring a query against
+    13.7k codes one `SELECT` at a time would dominate the search itself.
+
+    English is the base `hs_codes.description` column rather than a
+    translation, so asking for it — or for no language at all — is answered
+    with an empty mapping rather than a query. That is what lets a caller
+    pass the UI's language straight through without special-casing English.
+
+    Args:
+        conn: An open database connection.
+        language: Language code to fetch, e.g. "de" or "fr". None or "en"
+            returns {} without touching the database.
+
+    Returns:
+        {code: description} for every code that has text in `language`.
+        Empty when the language isn't stored — which is what makes matching
+        fall back to English-only rather than fail.
+    """
+    if language is None or language == "en":
+        return {}
+    rows = conn.execute(
+        "SELECT code, description FROM hs_code_translations WHERE language = ?",
+        (language,),
+    ).fetchall()
+    return {code: description for code, description in rows}
+
+
 def load_bundled_cn_nomenclature(conn: sqlite3.Connection, path: Optional[Path] = None) -> int:
     """Load the committed EU Combined Nomenclature bundle into hs_codes.
 

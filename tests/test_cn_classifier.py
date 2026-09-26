@@ -269,9 +269,12 @@ class TestIndexCache:
         assert first == second
 
     def test_a_cache_entry_exists_after_a_call(self, conn: sqlite3.Connection) -> None:
-        _index_cache.pop(id(conn), None)
+        # The key gained a language component when translated matching landed,
+        # so the English index and a translated one can be cached side by side
+        # instead of evicting each other. `None` is the English entry.
+        _index_cache.pop((id(conn), None), None)
         classify(conn, "cotton shirt")
-        assert id(conn) in _index_cache
+        assert (id(conn), None) in _index_cache
 
     def test_an_in_place_description_change_is_not_served_stale(
         self, conn: sqlite3.Connection

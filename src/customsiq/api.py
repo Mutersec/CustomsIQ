@@ -197,6 +197,9 @@ def health() -> dict:
 def search_hs_codes(
     q: str = Query(..., description="Free-text product description"),
     limit: int = Query(5, ge=1, le=50),
+    language: Optional[str] = Query(
+        None, description="Also match against this language's bundled descriptions, e.g. 'de'"
+    ),
 ) -> list[dict]:
     """Return the HS codes whose description best matches `q`.
 
@@ -204,7 +207,7 @@ def search_hs_codes(
     so ranking logic is defined in exactly one place.
     """
     try:
-        results = search(_conn, q, limit=limit)
+        results = search(_conn, q, limit=limit, language=language)
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return [
@@ -222,6 +225,9 @@ def search_hs_codes(
 def classify_description(
     description: str = Query(..., description="Free-text description of the goods"),
     top_n: int = Query(5, ge=1, le=50),
+    language: Optional[str] = Query(
+        None, description="Also match against this language's bundled descriptions, e.g. 'de'"
+    ),
 ) -> list[dict]:
     """Suggest the CN codes a description most likely belongs to, with reasoning.
 
@@ -230,7 +236,7 @@ def classify_description(
     terms drove each suggestion.
     """
     try:
-        results = classify(_conn, description, top_n=top_n)
+        results = classify(_conn, description, top_n=top_n, language=language)
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return [

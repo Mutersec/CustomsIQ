@@ -1013,6 +1013,78 @@ wie einen String und schrieb wörtlich `[object Object]` in die Fehlerbox. Jetzt
 wird erst der Typ geprüft, sodass die eine Fehlerklasse, die serverseitig nie
 übersetzt werden kann, wenigstens clientseitig übersetzt ist.
 
+### 🇩🇪 Abgleich gegen die mitgelieferte deutsche (und französische) Nomenklatur
+
+**Was fehlte.** Das TARIC-Bundle hat für alle 13.733 Endcodes echte EN/DE/FR-Beschreibungen
+nach `hs_code_translations` importiert, doch der Abgleich las ausschließlich die englische
+Spalte `hs_codes.description` — die Übersetzungen existierten nur zur Anzeige über
+`GET /codes/{code}/translations`. Eine deutsche Anfrage wurde gegen englischen Text
+bewertet. Der schärfste Fall: `classify("Haselnüsse")` lieferte **überhaupt nichts**, weil
+es mit `"Hazelnuts"` keinen Begriff teilt — während der exakte deutsche Ausdruck einen
+Join entfernt in der Datenbank lag.
+
+**Die Architektur: das Beste aus beiden nehmen, nicht ersetzen und nicht zusammenführen.**
+Mit einer Sprache wird jeder Code gegen seine englische *und* seine fremdsprachige
+Beschreibung bewertet; der bessere Wert zählt. Zwei Alternativen wurden gemessen und
+verworfen:
+
+- *Englisch durch die Übersetzung ersetzen* scheitert am naheliegenden Fall — wer die
+  deutsche Oberfläche nutzt, tippt trotzdem manchmal `"cotton t-shirt"`.
+- *Die Sprachen in ein Dokument zusammenführen* **verschlechtert Englisch messbar**. Mit
+  zusammengeführtem EN+DE verlor `"optical glass"` seinen besten Treffer vollständig
+  (`1.0 → 0.6588`), und das dritte Ergebnis von `"cotton t-shirt knitted"` fiel von
+  `0.4601` auf `0.316`. Zusammenführen bläht die Dokumentlänge auf, was das normalisierte
+  TF-IDF-Gewicht jedes englischen Begriffs verdünnt. Jede Sprache separat zu bewerten und
+  das Maximum zu nehmen lässt den englischen Wert eines Datensatzes bytegleich.
+
+Die Sprache ist ein Parameter, nichts Globales: `search(conn, q, language="de")`. Alles,
+was keine übergibt — die CLI, jeder bestehende Test, die englische Oberfläche —, nimmt
+exakt den bisherigen Weg zu exakt den bisherigen Kosten. Französisch läuft über denselben
+Mechanismus (`language="fr"`) und ist über die API bereits nutzbar; die Oberfläche bietet
+Deutsch an, weil Deutsch eine Oberflächensprache ist.
+
+**Dabei fiel ein Tokenizer-Fehler auf.** `_WORD` war `[a-z0-9]+` — reines ASCII, also
+wurde jedes akzentuierte Wort in Fragmente zerlegt, und zwar nicht nur im Deutschen:
+`Gruyère` wurde zu `gruy` + `re`, `Bergkäse` zu `bergk` + `se` — in **260 der 13.753
+mitgelieferten englischen Beschreibungen**. Diese Fragmente kollidieren dann über
+unzusammenhängende Wörter hinweg; so kam es, dass `"grüne Küchengeräte"` früher
+`"Drehspäne, Frässpäne, Hobelspäne"` als besten Treffer lieferte. Jetzt `[^\W_]+` mit
+`re.UNICODE`. Das ändert die Tokenisierung von **0 der 20 SAMPLE_DATA-Zeilen** — genau
+deshalb bleibt jeder festgeschriebene Wert unberührt: `0.6609`, die Rangfolge bei
+`"knitted cotton shirt"`, die Pluralfaltungstabelle.
+
+**Gemessen, echtes 13,7k-Bundle:**
+
+| | nur Englisch | mit `language="de"` |
+|---|---|---|
+| `search()` | 398 ms | 572 ms |
+| `classify()`, im Cache | 17,8 ms | 25,7 ms |
+| `classify()`, erster Aufruf (baut den Index) | ~120 ms | ~274 ms (beide Indizes) |
+
+Der Index-Cache ist mit `(Verbindung, Sprache)` verschlüsselt, sodass beide Indizes
+nebeneinander liegen statt einander zu verdrängen, und der deutsche Text geht in den
+Aktualitätsvergleich ein — eine geänderte Übersetzung invalidiert den Index aus demselben
+Grund wie eine geänderte Beschreibung. Die englischen Werte oben sind unverändert, denn
+der englische Pfad ist dem alten nicht bloß *gleichwertig*, er *ist* der alte.
+
+**Gemessener Gewinn:** `search("Haselnüsse")` steigt von `0,63` auf `1,00`;
+`classify("Haselnüsse")` geht von einem leeren Ergebnis auf den richtigen Code mit `1,00`.
+
+**Zwei deutsche Einschränkungen bleiben bewusst bestehen.** `_singular()` wendet weiterhin
+englische Pluralregeln an (`haus → hau`) — für das Deutsche falsch, hier aber unschädlich:
+Die Regel trifft Anfrage und Datenbestand *symmetrisch*, beide Seiten falten identisch,
+der Abgleich funktioniert weiter. Und Komposita werden nicht zerlegt — `Alkohol` findet
+`Alkoholgehalt` nicht —, was in wortbasiertem TF-IDF systembedingt ist; ein Dekompositum-
+Zerleger wäre eine Abhängigkeit, die dieses Projekt bewusst nicht eingeht.
+
+**Türkisch bleibt ohne Unterstützung, und das ist die ehrliche Antwort.** Die EU
+veröffentlicht die Kombinierte Nomenklatur in ihren Amtssprachen; Türkisch gehört nicht
+dazu, also gibt es keinen autoritativen türkischen KN-Text zum Mitliefern. Ihn maschinell
+zu übersetzen ergäbe Einreihungstext, der *amtlich aussieht* und es nicht ist — genau das,
+was ein Compliance-Werkzeug nicht tun darf. Türkischsprachige Nutzer bekommen den
+englischen Datenbestand, die Oberfläche auf Türkisch und den Niedrigkonfidenz-Hinweis,
+wenn eine türkische Anfrage gegen englischen Text schlecht abschneidet.
+
 ### 🚫 Namensabgleich ist kein Produktabgleich
 
 Die Sanktionsprüfung nutzt aus Konsistenzgründen denselben `difflib`-Kern ohne zusätzliche
