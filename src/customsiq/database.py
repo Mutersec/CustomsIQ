@@ -112,6 +112,21 @@ CREATE TABLE IF NOT EXISTS hs_code_translations (
     description TEXT NOT NULL,
     PRIMARY KEY (code, language)
 );
+
+-- The ancestor text a leaf's own description leaves out. Its own table rather
+-- than a column on `hs_codes` so that an already-deployed database needs no
+-- ALTER TABLE: `CREATE TABLE IF NOT EXISTS` covers a fresh install and an
+-- existing one identically. English is a real row here, unlike in
+-- `hs_code_translations` where English is the base `hs_codes.description`
+-- column, because a leaf's *context* is missing in every language including
+-- English. Only rows that need context have one — see `needs_context` in
+-- scripts/import_cn_codes.py.
+CREATE TABLE IF NOT EXISTS hs_code_contexts (
+    code TEXT NOT NULL,
+    language TEXT NOT NULL,
+    context TEXT NOT NULL,
+    PRIMARY KEY (code, language)
+);
 """
 
 # Sentinel origin for a standard (MFN) rate, which applies whatever the origin.
@@ -497,6 +512,57 @@ def fetch_all_translations(conn: sqlite3.Connection, language: Optional[str]) ->
     return {code: description for code, description in rows}
 
 
+def upsert_contexts(conn: sqlite3.Connection, rows: Sequence[tuple]) -> int:
+    """Insert or update the hierarchical context of HS codes.
+
+    Args:
+        conn: An open database connection.
+        rows: (code, language, context) tuples, e.g.
+            ("0106900090", "en", "Other live animals").
+
+    Returns:
+        The number of rows written.
+    """
+    rows = list(rows)
+    conn.executemany(
+        "INSERT INTO hs_code_contexts (code, language, context) VALUES (?, ?, ?) "
+        "ON CONFLICT(code, language) DO UPDATE SET context = excluded.context",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def fetch_all_contexts(conn: sqlite3.Connection, language: Optional[str]) -> dict:
+    """Return every stored hierarchical context in one language, keyed by HS code.
+
+    The counterpart to `fetch_all_translations`, and read the same way: in bulk,
+    because the classifier needs the whole column at once. Two differences from
+    it, both deliberate:
+
+    - `None` and "en" are answered from the table rather than with `{}`. A
+      leaf's context is missing from its English description just as much as
+      from its German one, so English has real rows here.
+    - A code absent from the result has no *usable* context, not an untranslated
+      one. Roughly half the corpus is absent by design: a leaf whose own text
+      stands alone ("Hazelnuts") is deliberately left exactly as it is.
+
+    Args:
+        conn: An open database connection.
+        language: Language code, e.g. "en", "de" or "fr". None means English.
+
+    Returns:
+        {code: context} for every code that has context in `language`. Empty for
+        a corpus with no contexts stored at all — SAMPLE_DATA, for instance,
+        which is what makes matching fall back to bare descriptions unchanged.
+    """
+    rows = conn.execute(
+        "SELECT code, context FROM hs_code_contexts WHERE language = ?",
+        (language or "en",),
+    ).fetchall()
+    return {code: context for code, context in rows}
+
+
 def load_bundled_cn_nomenclature(conn: sqlite3.Connection, path: Optional[Path] = None) -> int:
     """Load the committed EU Combined Nomenclature bundle into hs_codes.
 
@@ -528,14 +594,23 @@ def load_bundled_cn_nomenclature(conn: sqlite3.Connection, path: Optional[Path] 
 
     records = []
     translations: list[tuple] = []
+    contexts: list[tuple] = []
     with path.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             records.append(HSCode(row["cn_code"], row["description_en"], row["category"]))
             translations.append((row["cn_code"], "de", row["description_de"]))
             translations.append((row["cn_code"], "fr", row["description_fr"]))
+            # Only about half the rows carry context, and an empty string is
+            # not stored: "has no usable ancestor" and "has context that is
+            # blank" would otherwise be indistinguishable to the classifier.
+            for language in ("en", "de", "fr"):
+                context = row.get(f"context_{language}") or ""
+                if context:
+                    contexts.append((row["cn_code"], language, context))
 
     count = upsert_hs_codes(conn, records)
     upsert_translations(conn, translations)
+    upsert_contexts(conn, contexts)
     logger.info("loaded %d bundled CN codes from %s", count, path)
     return count
 

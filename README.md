@@ -1131,6 +1131,169 @@ tariff-classification text that *looks* official and isn't — the one thing a c
 tool must not do. A Turkish user gets the English corpus, the UI in Turkish, and the
 low-confidence warning when a Turkish query scores badly against English text.
 
+### 🌳 Hierarchical context: the fragment leaves the source data never explains
+
+**What was wrong.** The EU publishes the Combined Nomenclature as a *tree*, and a child
+row never repeats its ancestors' text. So half the bundle's leaves describe themselves
+only relative to a parent they never name: **7,095 of 13,733 leaf codes (51.7%)** carry
+text like `Other`, `For feeding purpose` or `Of cotton`. `0106900090` — the residual
+basket for other live animals — was the four-character string `Other`. Matching those
+against a query means matching a fragment, and the results were exactly as bad as that
+implies:
+
+```
+classify("live leeches for medical purposes")   BEFORE
+  0.4701  03063210    Live
+  0.4530  2707100090  For other purposes    ┐
+  0.4530  2707200090  For other purposes    │ ranks 2-5: four petroleum residues,
+  0.4530  2707300090  For other purposes    │ matched on the word "purposes" alone
+  0.4530  2707500089  For other purposes    ┘
+```
+
+Nothing in `For other purposes` says "petroleum", so nothing could stop it. The
+hierarchy that *does* say so was in the source sheets all along — the bundle builder read
+`Hier. Pos.` and threw `Indent` away.
+
+**Reconstructing the tree.** `Indent` is the authoritative signal, not `Hier. Pos.`: the
+two disagree routinely, and a single 8-digit `Hier. Pos.` spans several indent levels
+(`0102292100` appears at indent 4 as a non-declarable grouping header and at indent 5 as
+the declarable row beneath it). Reading the level off `Hier. Pos.` would make a row its
+own sibling. So depth is `1 + indent.count("-")`, with chapters and headings — which
+carry no indent at all — placed at 0 and 1 by `Hier. Pos.` instead. A depth-indexed stack
+then walks the sheet in file order: each row closes every entry at or below its own
+depth, what remains is its ancestry, and it becomes the entry for its own depth. The
+file's order *is* the tree, so sorting it would destroy the hierarchy.
+
+Verified against the real export before trusting it: **one depth discontinuity in 25,846
+rows**, in chapter 99 (national/special use), whose single heading holds a bulleted list
+instead of a subtree. The chain produced there is still correct, just shorter — so the
+walk tolerates a jump rather than asserting against one, and no special case was written.
+
+**Only the leaves that need it, which is what protects every pinned score.** A full
+breadcrumb for every row was measured and rejected: median indexed text goes from 25 to
+**321 characters** (max 1,634), and it *destroys* exact matches — `hazelnuts` falls from
+a flat **1.0000** on `Hazelnuts` to **0.2398** on `Hazelnut paste`. So context is added
+only to a leaf whose own text cannot stand alone: a residual (`Other`) or something
+grammatically dependent on an antecedent it never names (`For…`, `Of…`, `Containing…`).
+The other 6,638 leaves — `Hazelnuts`, `Optical glass`, `T-shirts` — are left
+byte-identical, which is precisely why their 1.0000 scores are still 1.0000. The rule
+matches whole words, so `Offal` is not `Of`.
+
+Two ancestors are kept, chapter excluded and residual ancestors skipped:
+
+| | |
+|---|---|
+| kept | the nearest **2 non-residual** ancestors |
+| chapter dropped | `ELECTRICAL MACHINERY AND EQUIPMENT AND PARTS THEREOF; SOUND RECORDERS…` is shouted and near-content-free, and is already represented by the row's `category` |
+| residuals skipped | prepending `Other` to `Other` explains nothing |
+
+Skipping residuals is also what handles the **nested-generic** case, without a special
+case for it: 1,412 leaves (10.3%) have a residual immediate parent and 941 (6.9%) have
+two or more, and `0106900090`'s own parent is itself `Other` — skipping it reaches
+`Other live animals`. Two ancestors rather than one because one is not enough: with two,
+`leather jacket` reaches chapter 42 (articles of leather) and `knitted cotton shirt`
+reaches heading 6109, which one ancestor does not manage.
+
+**One rule for three languages, decided positionally.** Whether a leaf stands alone is
+decided **once, from the English sheet**, and the *positions* of the chosen ancestors are
+then applied to the German and French chains — verified to be positionally identical for
+all 13,733 leaves. Filtering each language's own text instead would mean teaching the
+residual-word rule that German's residual is `andere`, French's is `autres`, and so on
+for every future language. Positions need none of that:
+
+```
+0106900090   en  Other live animals    de  Andere Tiere, lebend    fr  Autres animaux vivants
+```
+
+**Stored beside the corpus, not inside it.** `hs_code_contexts(code, language, context)`
+is its own table rather than a column on `hs_codes`, so an already-deployed database
+needs no `ALTER TABLE` — `CREATE TABLE IF NOT EXISTS` covers a fresh install and an
+existing one identically. English is a real row here, unlike in `hs_code_translations`
+where English *is* the base `hs_codes.description` column: a leaf's context is missing in
+English just as much as in German. A code absent from the table has no *usable* context
+rather than an untranslated one, and about half the corpus is absent by design.
+
+**`search()` is deliberately not wired to this, and the measurement is why.**
+`difflib.SequenceMatcher.ratio()` is `2·M/T` over the **combined** length of both
+strings. A 33-character query scores 0.5926 against the 21-character `For military
+purposes` largely *because both strings are short*; append ancestors and `T` grows, so
+the ratio falls even when the text is more relevant. Five breadcrumb variants were
+measured with `max(leaf, enriched)`: three left the top 3 **byte-identical**, and the two
+that moved anything moved it the wrong way — `For feeding purpose` at 0.6471, more
+confident garbage than before — while shifting the low-confidence calibration floor
+(`leather jacket` 0.5600 → 0.5556) and costing ~1.6× (602 ms → 957 ms at 33 characters).
+Richer text cannot fix a character-overlap ratio; that is a property of the metric, not
+of the data. So `search()` keeps scoring `hs_codes.description`, which this phase left
+byte-identical, and every one of its pinned scores is unchanged and pinned again in
+`tests/test_hierarchical_context.py::TestSearchIsDeliberatelyUntouched`.
+
+What `search()` got instead is one line of honesty: when its top result falls below the
+0.50 low-confidence threshold, the warning banner now also points at the Classify panel,
+in all three UI languages, because Classify genuinely does better on this class of query
+and Search cannot be made to.
+
+**After:**
+
+```
+classify("live leeches for medical purposes")   AFTER
+  0.3884  03063210    Live                                          terms: live
+  0.3229  48189010    Articles of a kind used for surgical,          terms: medical, purpos, for
+                      medical or hygienic purposes
+  0.3006  0301998590  Other        (Other live fish)                terms: live
+  0.2735  0106900090  Other        (Other live animals)   <-- the leech basket
+  0.2688  2712903990  Other        (Crude > For other purposes)     terms: purpos, for
+```
+
+Four petroleum residues become one, at rank 5. `0106900090` goes from **absent from the
+results entirely** — its bare `Other` shared no token with the query, so it scored zero
+and was dropped by classify's "no shared term is not a suggestion" rule — to **rank 4 at
+0.2735**.
+
+**The honest limit, which is the source data's and not the algorithm's.** The word
+"leech" does not appear **anywhere** in the EU Combined Nomenclature — verified across
+all 25,846 source rows, and pinned by a test so this claim cannot quietly go stale.
+Leeches are genuinely classified in the residual basket `0106 90 00`, "Other live
+animals — Other". So a term match on "leeches" is not achievable and never will be by
+this route: the row above is reached by `live`, inherited from its ancestor, and
+`matched_terms` says exactly that — `['live']`, not `['leech']`. This is a ceiling of the
+nomenclature's vocabulary, not something breadcrumb enrichment left on the table. The fix
+here is that the correct code became *reachable and explainable*; it is not, and cannot
+be, a confident exact match.
+
+**Cost.** The `classify()` index build goes 125 ms → 244 ms, paid **once per corpus** and
+not per request — the existing `_index_for` freshness check already caches it, and
+per-query scoring is unchanged at 3–9 ms because the cosine loop is sparse and
+insensitive to document length. `search()` is unchanged because `search()` is unchanged.
+The security phase's `max_length=100` input cap still stands untouched: it bounds the
+*query*, and nothing here touches the query side.
+
+**Scores that moved, reported rather than absorbed.** No `search()` score moved at all.
+`classify()` scores moved on rows whose own text did **not** change, because TF-IDF is a
+global model: enriching any document shifts document frequencies and therefore every IDF
+weight. Every changed real-corpus value, by name:
+
+| query | before | after | |
+|---|---|---|---|
+| `live leeches for medical purposes` | 0.4701 `03063210` | 0.3884 `03063210` | the fix; ranks 2–5 replaced |
+| `leather jacket` | 0.4737 `64059010` | 0.5423 `42050090` | now chapter 42, articles of leather |
+| `cotton t-shirt` | 0.8835 `6109100000` | 0.8919 `6109100000` | same code, IDF drift |
+| `knitted cotton shirt` | 0.8818 `6109100000` | 0.8423 `6109100000` | same code, IDF drift |
+| `lithium battery` | 0.8017 `8507600000` | 0.7973 `8507600000` | same code, IDF drift |
+| `mobile phone` | 0.7554 `8517120000` | 0.7738 `8517120000` | same code, IDF drift |
+| `Haselnüsse` (de) | 1.0000 `2008191930` | **1.0000** `2008191930` | unchanged |
+| `hazelnuts` / `optical glass` | 1.0000 | **1.0000** | unchanged |
+
+And one test's premise stopped being true, which is the feature working: `classify`'s
+"unrelated input returns an empty list" test used `"zephyr quokka bagpipes"`. Heading
+9205's own text is *"Wind musical instruments (for example, keyboard pipe organs,
+accordions, clarinets, trumpets, bagpipes)"*, and it now sits behind that heading's
+residual `Other` leaf — so `bagpipes` is real corpus vocabulary and matching it is
+correct. The query became `"quokka zephyr wombat"`; the assertion did not change.
+
+**Result cards are unchanged.** The display shape did not change, because the context
+lives in its own table and only `classify()` reads it — so `models.HSCode`, `fetch_all`,
+the API schemas and the result-card markup are all untouched.
+
 ### 🚫 Name matching is not product matching
 
 Sanctions screening reuses the same `difflib` core for consistency and zero dependencies, but
@@ -1774,13 +1937,13 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # tests + coverage
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100% |
 | `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` · `risk.py` | 🟢 100% |
-| `scripts/import_cn_codes.py` | 🟢 91% |
+| `scripts/import_cn_codes.py` | 🟡 75% |
 | `logging_config.py` | 🟢 100% |
 | `main.py` | 🟢 98% |
 | `pg_adapter.py` | 🟢 96% |
 | `auth.py` | 🟢 100% |
 | `document_extraction.py` | 🟢 99% |
-| **Total** | **🟢 96.28%** (420 tests in ~5.7 s, gate at 80%) — **no module is excluded from the gate**. `scripts/import_cn_codes.py`'s openpyxl-dependent Excel-reading path is the reason the total isn't higher: openpyxl is optional and not installed in CI, so that code is untested there — the same treatment its pre-existing `_read_excel_rows` already had. The suffix-collapse and leaf-selection *logic* that path calls is extracted into pure functions and fully tested. |
+| **Total** | **🟢 96.58%** (637 tests in ~49 s, gate at 80%) — **no module is excluded from the gate**. `scripts/import_cn_codes.py`'s openpyxl-dependent Excel-reading path is the reason the total isn't higher: openpyxl is optional and not installed in CI, so that code is untested there — the same treatment its pre-existing `_read_excel_rows` already had. The suffix-collapse, leaf-selection, hierarchy-walk and breadcrumb *logic* that path calls is extracted into pure functions and fully tested — which is why its percentage dropped when the hierarchy reconstruction landed: the new code is split the same way, but the reader that feeds it grew. |
 
 The 13 PostgreSQL parity tests are *not* in that count: they skip unless `CUSTOMSIQ_TEST_POSTGRES_URL`
 points at a real server (CI sets it; a plain local `pytest` needs no Postgres and no driver).

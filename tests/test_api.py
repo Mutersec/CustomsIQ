@@ -70,8 +70,16 @@ def test_classify_endpoint_respects_top_n() -> None:
 
 
 def test_classify_endpoint_returns_empty_for_unrelated_input() -> None:
-    """No shared term means an empty list, not zero-confidence noise."""
-    response = client.get("/classify", params={"description": "zephyr quokka bagpipes"})
+    """No shared term means an empty list, not zero-confidence noise.
+
+    "bagpipes" used to be nonsense here and is not any more: the hierarchical
+    context phase put heading 9205's own text — "Wind musical instruments (for
+    example, keyboard pipe organs, accordions, clarinets, trumpets, bagpipes)"
+    — into the index behind its residual "Other" leaf, so the word is now real
+    corpus vocabulary and matching it is correct. "wombat" replaces it; the
+    assertion this test exists for is unchanged.
+    """
+    response = client.get("/classify", params={"description": "quokka zephyr wombat"})
     assert response.status_code == 200
     assert response.json() == []
 

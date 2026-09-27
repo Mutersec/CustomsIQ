@@ -1126,6 +1126,173 @@ sınıflandırma metni üretirdi — bir uyum aracının yapmaması gereken tam 
 kullanan biri İngilizce korpusu, Türkçe arayüzü ve Türkçe bir sorgu İngilizce metne karşı
 kötü puan aldığında düşük güven uyarısını alır.
 
+### 🌳 Hiyerarşik bağlam: kaynak verinin hiç açıklamadığı parça yapraklar
+
+**Sorun neydi.** AB, Kombine Nomanklatürü bir **ağaç** olarak yayımlar ve bir alt satır
+üst satırların metnini asla tekrarlamaz. Dolayısıyla pakete gömülü yaprakların yarısı
+kendisini, adını hiç anmadığı bir ebeveyne göre tanımlıyor: **13.733 yaprak kodun 7.095'i
+(%51,7)** `Other`, `For feeding purpose` ya da `Of cotton` gibi bir metin taşıyor. Diğer
+canlı hayvanların artık sepeti olan `0106900090`, dört karakterlik `Other` dizesiydi.
+Bunları bir sorguyla eşleştirmek, bir parçayı eşleştirmek demektir ve sonuçlar tam da
+bunun ima ettiği kadar kötüydü:
+
+```
+classify("live leeches for medical purposes")   ÖNCE
+  0.4701  03063210    Live
+  0.4530  2707100090  For other purposes    ┐
+  0.4530  2707200090  For other purposes    │ 2-5. sıralar: dört petrol kalıntısı,
+  0.4530  2707300090  For other purposes    │ yalnızca "purposes" kelimesiyle eşleşmiş
+  0.4530  2707500089  For other purposes    ┘
+```
+
+`For other purposes` içinde "petrol" diyen hiçbir şey yok; dolayısıyla bunu durdurabilecek
+hiçbir şey de yoktu. Bunu söyleyen hiyerarşi ise kaynak dosyalarda baştan beri vardı —
+paket üreticisi `Hier. Pos.`'u okuyup `Indent`'i çöpe atıyordu.
+
+**Ağacı yeniden kurmak.** Yetkili sinyal `Hier. Pos.` değil `Indent`'tir: ikisi rutin
+olarak çelişir ve tek bir 8 haneli `Hier. Pos.` birkaç girinti seviyesine yayılır
+(`0102292100`, girinti 4'te beyan edilemez bir grup başlığı, girinti 5'te ise onun
+altındaki beyan edilebilir satır olarak görünür). Seviyeyi `Hier. Pos.`'tan okumak bir
+satırı kendi kardeşi yapardı. Bu yüzden derinlik `1 + indent.count("-")`; hiç girinti
+taşımayan fasıl ve pozisyonlar ise `Hier. Pos.` ile 0 ve 1'e yerleştirilir. Ardından
+derinliğe göre indekslenmiş bir yığın, sayfayı dosya sırasıyla yürür: her satır kendi
+derinliğindeki ve altındaki tüm kayıtları kapatır, kalan kısım onun atalarıdır ve satır
+kendi derinliğinin kaydı olur. Dosyanın sırası **ağacın kendisidir**; sıralamak
+hiyerarşiyi yok ederdi.
+
+Güvenmeden önce gerçek dışa aktarıma karşı doğrulandı: **25.846 satırda bir tek derinlik
+kopukluğu**, 99. fasılda (ulusal/özel kullanım) — ki tek pozisyonu bir alt ağaç yerine
+madde işaretli bir liste taşıyor. Orada üretilen zincir yine doğru, sadece daha kısa — bu
+yüzden yürüyüş bir atlamaya karşı iddia öne sürmek yerine onu tolere ediyor ve hiçbir özel
+durum yazılmadı.
+
+**Yalnızca ihtiyacı olan yapraklar — sabitlenmiş her puanı koruyan da bu.** Her satır için
+tam bir kırıntı yolu ölçüldü ve reddedildi: indekslenen metnin ortancası 25'ten **321
+karaktere** çıkıyor (en fazla 1.634) ve tam eşleşmeleri **yok ediyor** — `hazelnuts`,
+`Hazelnuts` üzerindeki düz **1.0000**'dan `Hazelnut paste` üzerindeki **0.2398**'e
+düşüyor. Bu yüzden bağlam yalnızca kendi metni tek başına duramayan yapraklara ekleniyor:
+bir artık (`Other`) ya da adını hiç anmadığı bir öncüle dilbilgisel olarak bağımlı olan
+bir şey (`For…`, `Of…`, `Containing…`). Diğer 6.638 yaprak — `Hazelnuts`, `Optical glass`,
+`T-shirts` — bayt bayt aynı bırakıldı; 1.0000 puanlarının hâlâ 1.0000 olmasının nedeni tam
+olarak bu. Kural tam kelime eşler, yani `Offal`, `Of` değildir.
+
+İki ata tutulur; fasıl dışarıda bırakılır ve artık atalar atlanır:
+
+| | |
+|---|---|
+| tutulan | en yakın **2 artık-olmayan** ata |
+| fasıl atılır | `ELECTRICAL MACHINERY AND EQUIPMENT AND PARTS THEREOF; SOUND RECORDERS…` bağırarak yazılmış ve neredeyse içeriksiz; ayrıca satırın `category` alanında zaten temsil ediliyor |
+| artıklar atlanır | `Other`ın önüne `Other` eklemek hiçbir şey açıklamaz |
+
+Artıkları atlamak, **iç içe genel** durumu da özel bir durum yazmadan çözen şeydir: 1.412
+yaprağın (%10,3) doğrudan ebeveyni artık, 941'inin (%6,9) iki veya daha fazla artık atası
+var ve `0106900090`'ın kendi ebeveyni de `Other` — onu atlamak `Other live animals`'a
+ulaşır. Bir değil iki ata, çünkü bir yetmiyor: ikiyle `leather jacket` 42. fasıla (deri
+eşya) ve `knitted cotton shirt` 6109 pozisyonuna ulaşıyor; tek ata bunu başaramıyor.
+
+**Üç dil için tek kural, konumsal olarak verilmiş.** Bir yaprağın tek başına durup
+durmadığına **bir kez, İngilizce dosyadan** karar verilir; seçilen ataların **konumları**
+sonra Almanca ve Fransızca zincirlere uygulanır — 13.733 yaprağın tamamı için konumsal
+olarak birebir aynı oldukları doğrulandı. Her dilin kendi metnini filtrelemek yerine bu;
+aksi hâlde artık-kelime kuralına Almancanın artığının `andere`, Fransızcanınkinin `autres`
+olduğunu ve gelecekteki her dil için aynısını öğretmek gerekirdi. Konumlar bunların
+hiçbirine ihtiyaç duymaz:
+
+```
+0106900090   en  Other live animals    de  Andere Tiere, lebend    fr  Autres animaux vivants
+```
+
+**Korpusun yanında, içinde değil.** `hs_code_contexts(code, language, context)`,
+`hs_codes` üzerinde bir kolon değil kendi tablosu; böylece hâlihazırda dağıtılmış bir
+veritabanı `ALTER TABLE` gerektirmiyor — `CREATE TABLE IF NOT EXISTS` temiz kurulumu da
+mevcut kurulumu da aynı şekilde karşılıyor. İngilizce burada gerçek bir satır;
+`hs_code_translations`'ta İngilizce temel `hs_codes.description` kolonunun **kendisi**
+olduğu hâlde: bir yaprağın bağlamı Almancada olduğu kadar İngilizcede de eksiktir.
+Tablodan yoksun bir kodun çevirisi eksik değil, **kullanılabilir bağlamı** yoktur ve
+korpusun yaklaşık yarısı tasarım gereği yoktur.
+
+**`search()` bilinçli olarak buna bağlanmadı; nedeni ölçüm.**
+`difflib.SequenceMatcher.ratio()`, iki dizenin **toplam** uzunluğu üzerinden `2·M/T`'dir.
+33 karakterlik bir sorgu, 21 karakterlik `For military purposes`'a karşı 0.5926 alıyor —
+büyük ölçüde **her iki dize de kısa olduğu için**; ata metni eklerseniz `T` büyür ve metin
+daha alakalı olsa bile oran düşer. `max(yaprak, zenginleştirilmiş)` ile beş kırıntı
+varyantı ölçüldü: üçü ilk 3 sonucu **bayt bayt aynı** bıraktı, bir şeyi oynatan ikisi ise
+yanlış yöne oynattı — `For feeding purpose` 0.6471'de, yani eskisinden daha kendinden emin
+bir saçmalık — ayrıca düşük güven kalibrasyon tabanını kaydırdı (`leather jacket` 0.5600 →
+0.5556) ve ~1,6× maliyet getirdi (33 karakterde 602 ms → 957 ms). Daha zengin metin bir
+karakter-örtüşme oranını düzeltemez; bu, verinin değil **metriğin** bir özelliğidir. Bu
+yüzden `search()`, bu fazın bayt bayt aynı bıraktığı `hs_codes.description`'ı puanlamaya
+devam ediyor ve sabitlenmiş puanlarının her biri değişmedi ve
+`tests/test_hierarchical_context.py::TestSearchIsDeliberatelyUntouched` içinde yeniden
+sabitlendi.
+
+`search()`'ün bunun yerine aldığı şey bir satır dürüstlük: ilk sonucu 0,50 düşük güven
+eşiğinin altına düştüğünde uyarı banner'ı artık üç arayüz dilinin hepsinde Sınıflandırma
+paneline de işaret ediyor — çünkü bu sorgu sınıfında Sınıflandırma gerçekten daha iyi ve
+Arama daha iyi hâle getirilemiyor.
+
+**Sonra:**
+
+```
+classify("live leeches for medical purposes")   SONRA
+  0.3884  03063210    Live                                          terimler: live
+  0.3229  48189010    Articles of a kind used for surgical,          terimler: medical, purpos, for
+                      medical or hygienic purposes
+  0.3006  0301998590  Other        (Other live fish)                terimler: live
+  0.2735  0106900090  Other        (Other live animals)   <-- sülük sepeti
+  0.2688  2712903990  Other        (Crude > For other purposes)     terimler: purpos, for
+```
+
+Dört petrol kalıntısı bire iniyor, 5. sırada. `0106900090`, **sonuçlarda hiç
+görünmemekten** — çıplak `Other`ı sorguyla hiçbir terim paylaşmıyordu, bu yüzden sıfır
+puan alıp classify'ın "ortak terimi olmayan bir öneri değildir" kuralıyla düşüyordu —
+**0.2735 ile 4. sıraya** çıkıyor.
+
+**Dürüst sınır: algoritmanın değil, kaynak verinin sınırı.** "leech" kelimesi AB Kombine
+Nomanklatürünün **hiçbir yerinde** geçmiyor — 25.846 kaynak satırın tamamında doğrulandı
+ve bu iddianın sessizce eskimemesi için bir testle sabitlendi. Sülükler gerçekten
+`0106 90 00` artık sepetinde, "Diğer canlı hayvanlar — Diğer" altında sınıflandırılır.
+Yani "leeches" üzerinden bir terim eşleşmesi bu yolla ne mümkündür ne de olacaktır:
+yukarıdaki satıra atasından miras alınan `live` ile ulaşılıyor ve `matched_terms` tam
+olarak bunu söylüyor — `['live']`, `['leech']` değil. Bu, nomanklatürün söz dağarcığının
+bir tavanıdır; kırıntı zenginleştirmesinin masada bıraktığı bir şey değil. Buradaki
+düzeltme, doğru kodun **ulaşılabilir ve açıklanabilir** hâle gelmesidir; kendinden emin
+bir tam eşleşme değildir ve olamaz.
+
+**Maliyet.** `classify()` indeks kurulumu 125 ms → 244 ms, **istek başına değil korpus
+başına bir kez** ödeniyor — mevcut `_index_for` tazelik kontrolü bunu zaten önbelleğe
+alıyor ve sorgu başına puanlama 3–9 ms'de değişmiyor, çünkü kosinüs döngüsü seyrek ve
+belge uzunluğuna duyarsız. `search()` değişmedi çünkü `search()` değişmedi. Güvenlik
+fazının `max_length=100` girdi sınırı olduğu gibi duruyor: o **sorguyu** sınırlıyor ve
+burada sorgu tarafına dokunan bir şey yok.
+
+**Kayan puanlar: emilmek yerine raporlanıyor.** Hiçbir `search()` puanı kaymadı.
+`classify()` puanları, kendi metni **değişmemiş** satırlarda da kaydı; çünkü TF-IDF küresel
+bir modeldir: herhangi bir belgeyi zenginleştirmek belge frekanslarını, dolayısıyla her
+IDF ağırlığını kaydırır. Değişen her gerçek korpus değeri, adıyla:
+
+| sorgu | önce | sonra | |
+|---|---|---|---|
+| `live leeches for medical purposes` | 0.4701 `03063210` | 0.3884 `03063210` | düzeltme; 2–5. sıralar değişti |
+| `leather jacket` | 0.4737 `64059010` | 0.5423 `42050090` | artık 42. fasıl, deri eşya |
+| `cotton t-shirt` | 0.8835 `6109100000` | 0.8919 `6109100000` | aynı kod, IDF kayması |
+| `knitted cotton shirt` | 0.8818 `6109100000` | 0.8423 `6109100000` | aynı kod, IDF kayması |
+| `lithium battery` | 0.8017 `8507600000` | 0.7973 `8507600000` | aynı kod, IDF kayması |
+| `mobile phone` | 0.7554 `8517120000` | 0.7738 `8517120000` | aynı kod, IDF kayması |
+| `Haselnüsse` (de) | 1.0000 `2008191930` | **1.0000** `2008191930` | değişmedi |
+| `hazelnuts` / `optical glass` | 1.0000 | **1.0000** | değişmedi |
+
+Ve bir testin öncülü doğru olmaktan çıktı — ki bu, özelliğin çalıştığının kanıtı:
+`classify`'ın "alakasız girdi boş liste döndürür" testi `"zephyr quokka bagpipes"`
+kullanıyordu. 9205 pozisyonunun kendi metni *"Wind musical instruments (for example,
+keyboard pipe organs, accordions, clarinets, trumpets, bagpipes)"* ve artık o pozisyonun
+artık `Other` yaprağının arkasında duruyor — yani `bagpipes` gerçek korpus söz dağarcığı
+ve onu eşleştirmek doğru. Sorgu `"quokka zephyr wombat"` oldu; iddia değişmedi.
+
+**Sonuç kartları değişmedi.** Görüntüleme biçimi değişmedi, çünkü bağlam kendi tablosunda
+yaşıyor ve yalnızca `classify()` onu okuyor — dolayısıyla `models.HSCode`, `fetch_all`, API
+şemaları ve sonuç kartı işaretlemesi hiç ellenmedi.
+
 ### 🚫 İsim eşleştirmesi, ürün eşleştirmesi değildir
 
 Yaptırım taraması tutarlılık ve sıfır bağımlılık için aynı `difflib` çekirdeğini kullanır; ancak
@@ -1725,13 +1892,13 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # testler + kapsam
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 %100 |
 | `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` · `risk.py` | 🟢 %100 |
-| `scripts/import_cn_codes.py` | 🟢 %91 |
+| `scripts/import_cn_codes.py` | 🟡 %75 |
 | `logging_config.py` | 🟢 %100 |
 | `main.py` | 🟢 %98 |
 | `pg_adapter.py` | 🟢 %96 |
 | `auth.py` | 🟢 %100 |
 | `document_extraction.py` | 🟢 %99 |
-| **Toplam** | **🟢 %96,28** (~5,7 sn'de 420 test, eşik %80) — **hiçbir modül eşiğin dışında değil**. `scripts/import_cn_codes.py`'nin openpyxl'e bağlı Excel-okuma yolu toplamın daha yüksek olmamasının nedeni: openpyxl isteğe bağlıdır ve CI'de kurulu değildir, bu yüzden o kod orada test edilmez — önceden var olan `_read_excel_rows` da aynı muameleyi görüyordu. O yolun çağırdığı sonek-birleştirme ve yaprak-seçim *mantığı* saf fonksiyonlara ayrıştırılmış ve tam test edilmiştir. |
+| **Toplam** | **🟢 %96,58** (~49 sn'de 637 test, eşik %80) — **hiçbir modül eşiğin dışında değil**. `scripts/import_cn_codes.py`'nin openpyxl'e bağlı Excel-okuma yolu toplamın daha yüksek olmamasının nedeni: openpyxl isteğe bağlıdır ve CI'de kurulu değildir, bu yüzden o kod orada test edilmez — önceden var olan `_read_excel_rows` da aynı muameleyi görüyordu. O yolun çağırdığı sonek-birleştirme, yaprak-seçim, hiyerarşi-yürüyüşü ve kırıntı *mantığı* saf fonksiyonlara ayrıştırılmış ve tam test edilmiştir — yüzdesinin hiyerarşi yeniden kurulumuyla düşmesinin nedeni de bu: yeni kod aynı şekilde ayrılmış, ama onu besleyen okuyucu büyüdü. |
 
 13 PostgreSQL parite testi bu sayıya dahil değildir: `CUSTOMSIQ_TEST_POSTGRES_URL` gerçek bir
 sunucuyu göstermedikçe atlanırlar (CI bunu tanımlar; yerel düz bir `pytest` için ne Postgres ne de

@@ -1181,6 +1181,8 @@
         couldNotReach: "Could not reach the API. Check your connection and try again.",
         lowConfidence:
           "⚠ These results score below 50% and may not be reliable — try describing the goods in English, since the reference data is English-language.",
+        tryClassify:
+          " The Classify panel reads each code's place in the tariff hierarchy as well as its own text, so it often does better on a query like this.",
       },
       footer: {
         disclaimer:
@@ -1392,6 +1394,8 @@
         couldNotReach: "API'ye ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.",
         lowConfidence:
           "⚠ Bu sonuçlar %50'nin altında ve güvenilir olmayabilir — açıklamayı İngilizce yazmayı deneyin, çünkü referans veriler İngilizce.",
+        tryClassify:
+          " Sınıflandırma panelini de deneyin: her kodun tarife hiyerarşisindeki yerini de okuduğu için bu tür sorgularda genellikle daha iyi sonuç verir.",
       },
       footer: {
         disclaimer:
@@ -1603,6 +1607,8 @@
         couldNotReach: "Die API konnte nicht erreicht werden. Verbindung prüfen und erneut versuchen.",
         lowConfidence:
           "⚠ Diese Ergebnisse liegen unter 50 % und sind möglicherweise nicht zuverlässig — versuchen Sie es mit einer englischen Beschreibung, da die Referenzdaten englischsprachig sind.",
+        tryClassify:
+          " Versuchen Sie auch das Klassifizierungs-Panel: Es liest zusätzlich die Stellung jedes Codes in der Zolltarif-Hierarchie und liefert bei solchen Anfragen oft bessere Ergebnisse.",
       },
       footer: {
         disclaimer:
@@ -1749,10 +1755,20 @@
   // catches every case. The scores themselves are untouched; this only
   // decides when to show a caveat alongside them.
   const LOW_CONFIDENCE_THRESHOLD = 0.5;
-  const lowConfidenceBanner = (rows) =>
-    rows.length && rows[0].score < LOW_CONFIDENCE_THRESHOLD
-      ? `<div class="state warn">${escapeHtml(t("common.lowConfidence"))}</div>`
-      : "";
+  // `suggestClassify` is for the Search panel only. Search scores raw character
+  // overlap against a code's own description, and half the real nomenclature's
+  // leaves describe themselves only relative to a parent they never name
+  // ("Other", "For feeding purpose") — so a weak search result is often the
+  // corpus's shape rather than the user's wording. Classify reads the
+  // hierarchical context those leaves are missing and does measurably better on
+  // exactly this class of query, which makes it worth pointing at. Suggesting
+  // it from inside Classify itself would be nonsense, hence the flag.
+  const lowConfidenceBanner = (rows, suggestClassify = false) => {
+    if (!rows.length || rows[0].score >= LOW_CONFIDENCE_THRESHOLD) return "";
+    const advice =
+      t("common.lowConfidence") + (suggestClassify ? t("common.tryClassify") : "");
+    return `<div class="state warn">${escapeHtml(advice)}</div>`;
+  };
 
   const escapeHtml = (value) =>
     String(value).replace(/[&<>"']/g, (ch) => ({
@@ -1929,7 +1945,7 @@
           setState(searchBox, "", t("search.noMatches"));
           return;
         }
-        searchBox.innerHTML = lowConfidenceBanner(rows) + rows.map((row) => `
+        searchBox.innerHTML = lowConfidenceBanner(rows, true) + rows.map((row) => `
           <article class="card">
             <div class="card-top">
               <span class="card-title mono">${escapeHtml(row.code)}</span>

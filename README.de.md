@@ -1161,6 +1161,181 @@ was ein Compliance-Werkzeug nicht tun darf. Türkischsprachige Nutzer bekommen d
 englischen Datenbestand, die Oberfläche auf Türkisch und den Niedrigkonfidenz-Hinweis,
 wenn eine türkische Anfrage gegen englischen Text schlecht abschneidet.
 
+### 🌳 Hierarchischer Kontext: die Fragment-Blätter, die die Quelldaten nie erklären
+
+**Was falsch war.** Die EU veröffentlicht die Kombinierte Nomenklatur als **Baum**, und
+eine Unterzeile wiederholt den Text ihrer Vorfahren nie. Also beschreibt sich die Hälfte
+der gebündelten Blätter nur relativ zu einem Elternteil, das sie nie benennt: **7.095 von
+13.733 Blattcodes (51,7 %)** tragen Text wie `Other`, `For feeding purpose` oder `Of
+cotton`. `0106900090` — der Restposten für andere lebende Tiere — war die
+vierzeichige Zeichenkette `Other`. Diese gegen eine Anfrage abzugleichen heißt, ein
+Fragment abzugleichen, und die Ergebnisse waren genau so schlecht, wie das nahelegt:
+
+```
+classify("live leeches for medical purposes")   VORHER
+  0.4701  03063210    Live
+  0.4530  2707100090  For other purposes    ┐
+  0.4530  2707200090  For other purposes    │ Ränge 2-5: vier Erdölrückstände,
+  0.4530  2707300090  For other purposes    │ getroffen allein über das Wort "purposes"
+  0.4530  2707500089  For other purposes    ┘
+```
+
+In `For other purposes` sagt nichts "Erdöl", also konnte nichts es aufhalten. Die
+Hierarchie, die es **sehr wohl** sagt, stand die ganze Zeit in den Quelldateien — der
+Bundle-Builder las `Hier. Pos.` und warf `Indent` weg.
+
+**Den Baum rekonstruieren.** Das maßgebliche Signal ist `Indent`, nicht `Hier. Pos.`: die
+beiden widersprechen sich regelmäßig, und eine einzige achtstellige `Hier. Pos.` erstreckt
+sich über mehrere Einrückungsebenen (`0102292100` erscheint auf Einrückung 4 als nicht
+anmeldefähige Gruppenüberschrift und auf Einrückung 5 als die anmeldefähige Zeile
+darunter). Die Ebene aus `Hier. Pos.` zu lesen würde eine Zeile zu ihrem eigenen
+Geschwister machen. Die Tiefe ist daher `1 + indent.count("-")`, wobei Kapitel und
+Positionen — die überhaupt keine Einrückung tragen — stattdessen über `Hier. Pos.` auf 0
+und 1 gesetzt werden. Ein nach Tiefe indizierter Stack läuft dann in Dateireihenfolge
+durch das Blatt: jede Zeile schließt jeden Eintrag auf oder unter ihrer eigenen Tiefe, was
+übrig bleibt ist ihre Ahnenkette, und sie wird der Eintrag für ihre eigene Tiefe. Die
+Reihenfolge der Datei **ist** der Baum; sie zu sortieren würde die Hierarchie zerstören.
+
+Vor dem Vertrauen gegen den echten Export geprüft: **eine Tiefenunterbrechung in 25.846
+Zeilen**, in Kapitel 99 (national/besondere Verwendung), dessen einzige Position eine
+Aufzählungsliste statt eines Teilbaums enthält. Die dort erzeugte Kette ist weiterhin
+korrekt, nur kürzer — der Durchlauf toleriert einen Sprung also, statt dagegen zu
+assertieren, und es wurde kein Sonderfall geschrieben.
+
+**Nur die Blätter, die es brauchen — und das ist es, was jeden fixierten Wert schützt.**
+Eine vollständige Breadcrumb für jede Zeile wurde gemessen und verworfen: der Median des
+indizierten Textes steigt von 25 auf **321 Zeichen** (max. 1.634), und sie **zerstört**
+exakte Treffer — `hazelnuts` fällt von glatten **1.0000** auf `Hazelnuts` auf **0.2398**
+auf `Hazelnut paste`. Kontext wird daher nur einem Blatt hinzugefügt, dessen eigener Text
+nicht allein stehen kann: ein Restposten (`Other`) oder etwas grammatisch von einem
+Bezugswort Abhängiges, das es nie nennt (`For…`, `Of…`, `Containing…`). Die anderen 6.638
+Blätter — `Hazelnuts`, `Optical glass`, `T-shirts` — bleiben Byte für Byte identisch, und
+genau deshalb sind ihre 1.0000er Werte weiterhin 1.0000. Die Regel trifft ganze Wörter,
+`Offal` ist also nicht `Of`.
+
+Zwei Vorfahren werden behalten, das Kapitel ausgeschlossen und Restposten-Vorfahren
+übersprungen:
+
+| | |
+|---|---|
+| behalten | die nächsten **2 nicht-residualen** Vorfahren |
+| Kapitel entfällt | `ELECTRICAL MACHINERY AND EQUIPMENT AND PARTS THEREOF; SOUND RECORDERS…` ist geschrien und nahezu inhaltsleer und ist über `category` der Zeile schon repräsentiert |
+| Restposten übersprungen | `Other` vor `Other` zu stellen erklärt nichts |
+
+Das Überspringen der Restposten ist auch das, was den **verschachtelt-generischen** Fall
+löst, ohne einen Sonderfall dafür: 1.412 Blätter (10,3 %) haben einen residualen direkten
+Elternteil, 941 (6,9 %) zwei oder mehr, und der Elternteil von `0106900090` ist selbst
+`Other` — es zu überspringen erreicht `Other live animals`. Zwei Vorfahren statt einem,
+weil einer nicht genügt: mit zwei erreicht `leather jacket` Kapitel 42 (Lederwaren) und
+`knitted cotton shirt` die Position 6109, was ein Vorfahre nicht schafft.
+
+**Eine Regel für drei Sprachen, positionell entschieden.** Ob ein Blatt allein steht, wird
+**einmal, aus dem englischen Blatt** entschieden, und die **Positionen** der gewählten
+Vorfahren werden dann auf die deutsche und französische Kette angewandt — für alle 13.733
+Blätter als positionell identisch verifiziert. Stattdessen den eigenen Text jeder Sprache
+zu filtern würde bedeuten, der Restposten-Regel beizubringen, dass das Residuum im
+Deutschen `andere` ist, im Französischen `autres`, und so weiter für jede künftige
+Sprache. Positionen brauchen davon nichts:
+
+```
+0106900090   en  Other live animals    de  Andere Tiere, lebend    fr  Autres animaux vivants
+```
+
+**Neben dem Korpus gespeichert, nicht darin.** `hs_code_contexts(code, language, context)`
+ist eine eigene Tabelle statt einer Spalte auf `hs_codes`, damit eine bereits
+ausgerollte Datenbank kein `ALTER TABLE` braucht — `CREATE TABLE IF NOT EXISTS` deckt eine
+frische und eine bestehende Installation identisch ab. Englisch ist hier eine echte Zeile,
+anders als in `hs_code_translations`, wo Englisch die Basisspalte
+`hs_codes.description` **selbst** ist: der Kontext eines Blattes fehlt im Englischen genau
+so wie im Deutschen. Einem in der Tabelle fehlenden Code fehlt **nutzbarer Kontext**, nicht
+eine Übersetzung, und etwa die Hälfte des Korpus fehlt planmäßig.
+
+**`search()` wurde bewusst nicht daran angeschlossen, und der Grund ist die Messung.**
+`difflib.SequenceMatcher.ratio()` ist `2·M/T` über die **kombinierte** Länge beider
+Zeichenketten. Eine 33-Zeichen-Anfrage erreicht gegen die 21 Zeichen von `For military
+purposes` 0.5926 — größtenteils **weil beide Zeichenketten kurz sind**; hängt man
+Vorfahren an, wächst `T`, und das Verhältnis sinkt, selbst wenn der Text relevanter ist.
+Fünf Breadcrumb-Varianten wurden mit `max(Blatt, angereichert)` gemessen: drei ließen die
+Top 3 **Byte für Byte identisch**, und die zwei, die etwas bewegten, bewegten es in die
+falsche Richtung — `For feeding purpose` bei 0.6471, also selbstbewussterer Unsinn als
+vorher — und verschoben dabei die Kalibrierungsschwelle für geringe Konfidenz
+(`leather jacket` 0.5600 → 0.5556) und kosteten ~1,6× (602 ms → 957 ms bei 33 Zeichen).
+Reicherer Text kann ein Zeichenüberlappungsverhältnis nicht reparieren; das ist eine
+Eigenschaft der **Metrik**, nicht der Daten. `search()` bewertet daher weiterhin
+`hs_codes.description`, das diese Phase Byte für Byte identisch gelassen hat, und jeder
+seiner fixierten Werte ist unverändert und in
+`tests/test_hierarchical_context.py::TestSearchIsDeliberatelyUntouched` erneut fixiert.
+
+Was `search()` stattdessen bekam, ist eine Zeile Ehrlichkeit: fällt sein Top-Ergebnis
+unter die 0,50-Schwelle für geringe Konfidenz, verweist das Warnbanner nun in allen drei
+UI-Sprachen zusätzlich auf das Klassifizierungs-Panel — weil Klassifizieren bei dieser
+Anfrageklasse tatsächlich besser ist und Suchen nicht besser gemacht werden kann.
+
+**Nachher:**
+
+```
+classify("live leeches for medical purposes")   NACHHER
+  0.3884  03063210    Live                                          Terme: live
+  0.3229  48189010    Articles of a kind used for surgical,          Terme: medical, purpos, for
+                      medical or hygienic purposes
+  0.3006  0301998590  Other        (Other live fish)                Terme: live
+  0.2735  0106900090  Other        (Other live animals)   <-- der Blutegel-Restposten
+  0.2688  2712903990  Other        (Crude > For other purposes)     Terme: purpos, for
+```
+
+Aus vier Erdölrückständen wird einer, auf Rang 5. `0106900090` geht von **gänzlich in den
+Ergebnissen abwesend** — sein nacktes `Other` teilte kein Token mit der Anfrage, erhielt
+also null Punkte und fiel unter classifys Regel "kein gemeinsamer Term ist kein Vorschlag"
+heraus — auf **Rang 4 mit 0.2735**.
+
+**Die ehrliche Grenze, und zwar die der Quelldaten, nicht des Algorithmus.** Das Wort
+"leech" erscheint **nirgends** in der Kombinierten Nomenklatur der EU — über alle 25.846
+Quellzeilen verifiziert und per Test fixiert, damit diese Aussage nicht leise veraltet.
+Blutegel werden tatsächlich im Restposten `0106 90 00`, "Andere lebende Tiere — andere",
+eingereiht. Ein Term-Treffer auf "leeches" ist auf diesem Weg also nicht erreichbar und
+wird es nie sein: die Zeile oben wird über `live` erreicht, von ihrem Vorfahren geerbt, und
+`matched_terms` sagt genau das — `['live']`, nicht `['leech']`. Das ist eine Obergrenze des
+Vokabulars der Nomenklatur, nichts, was die Breadcrumb-Anreicherung liegen gelassen hätte.
+Die Korrektur hier ist, dass der richtige Code **erreichbar und erklärbar** wurde; ein
+selbstbewusster exakter Treffer ist er nicht und kann er nicht sein.
+
+**Kosten.** Der Indexaufbau von `classify()` geht von 125 ms auf 244 ms, bezahlt **einmal
+pro Korpus** und nicht pro Anfrage — die bestehende Frischeprüfung in `_index_for` cached
+ihn bereits, und die Bewertung pro Anfrage bleibt bei 3–9 ms, weil die Kosinus-Schleife
+sparse und unempfindlich gegen die Dokumentlänge ist. `search()` ist unverändert, weil
+`search()` unverändert ist. Die Eingabegrenze `max_length=100` aus der Sicherheitsphase
+bleibt unangetastet: sie begrenzt die **Anfrage**, und hier wird die Anfrageseite nicht
+berührt.
+
+**Verschobene Werte, berichtet statt absorbiert.** Kein `search()`-Wert hat sich bewegt.
+`classify()`-Werte haben sich auch bei Zeilen bewegt, deren eigener Text sich **nicht**
+geändert hat, denn TF-IDF ist ein globales Modell: irgendein Dokument anzureichern
+verschiebt die Dokumentfrequenzen und damit jedes IDF-Gewicht. Jeder veränderte
+Realkorpus-Wert, namentlich:
+
+| Anfrage | vorher | nachher | |
+|---|---|---|---|
+| `live leeches for medical purposes` | 0.4701 `03063210` | 0.3884 `03063210` | die Korrektur; Ränge 2–5 ersetzt |
+| `leather jacket` | 0.4737 `64059010` | 0.5423 `42050090` | jetzt Kapitel 42, Lederwaren |
+| `cotton t-shirt` | 0.8835 `6109100000` | 0.8919 `6109100000` | gleicher Code, IDF-Drift |
+| `knitted cotton shirt` | 0.8818 `6109100000` | 0.8423 `6109100000` | gleicher Code, IDF-Drift |
+| `lithium battery` | 0.8017 `8507600000` | 0.7973 `8507600000` | gleicher Code, IDF-Drift |
+| `mobile phone` | 0.7554 `8517120000` | 0.7738 `8517120000` | gleicher Code, IDF-Drift |
+| `Haselnüsse` (de) | 1.0000 `2008191930` | **1.0000** `2008191930` | unverändert |
+| `hazelnuts` / `optical glass` | 1.0000 | **1.0000** | unverändert |
+
+Und die Prämisse eines Tests hörte auf zu stimmen, was das Feature bei der Arbeit zeigt:
+classifys Test "unzusammenhängende Eingabe liefert eine leere Liste" verwendete
+`"zephyr quokka bagpipes"`. Der eigene Text der Position 9205 ist *"Wind musical
+instruments (for example, keyboard pipe organs, accordions, clarinets, trumpets,
+bagpipes)"*, und er sitzt nun hinter dem residualen `Other`-Blatt dieser Position — also
+ist `bagpipes` echtes Korpusvokabular, und es zu treffen ist korrekt. Die Anfrage wurde
+`"quokka zephyr wombat"`; die Assertion blieb unverändert.
+
+**Ergebniskarten sind unverändert.** Die Anzeigeform hat sich nicht geändert, weil der
+Kontext in seiner eigenen Tabelle lebt und nur `classify()` ihn liest — `models.HSCode`,
+`fetch_all`, die API-Schemata und das Markup der Ergebniskarte sind alle unangetastet.
+
 ### 🚫 Namensabgleich ist kein Produktabgleich
 
 Die Sanktionsprüfung nutzt aus Konsistenzgründen denselben `difflib`-Kern ohne zusätzliche
@@ -1772,13 +1947,13 @@ pytest --cov --cov-report=term-missing --cov-fail-under=80    # Tests + Abdeckun
 |---|---|
 | `api.py` · `config.py` · `database.py` · `embargo_screener.py` · `matching.py` | 🟢 100 % |
 | `cn_classifier.py` · `exceptions.py` · `models.py` · `search.py` · `tariff_calculator.py` · `review.py` · `dashboard.py` · `risk.py` | 🟢 100 % |
-| `scripts/import_cn_codes.py` | 🟢 91 % |
+| `scripts/import_cn_codes.py` | 🟡 75 % |
 | `logging_config.py` | 🟢 100 % |
 | `main.py` | 🟢 98 % |
 | `pg_adapter.py` | 🟢 96 % |
 | `auth.py` | 🟢 100 % |
 | `document_extraction.py` | 🟢 99 % |
-| **Gesamt** | **🟢 96,28 %** (420 Tests in ~5,7 s, Schwelle bei 80 %) — **kein Modul ist ausgenommen**. Der openpyxl-abhängige Excel-Lesepfad von `scripts/import_cn_codes.py` ist der Grund, warum die Gesamtzahl nicht höher liegt: openpyxl ist optional und in der CI nicht installiert, daher bleibt dieser Pfad dort ungetestet — dieselbe Behandlung, die das bereits vorhandene `_read_excel_rows` schon hatte. Die Suffix-Zusammenführungs- und Blattauswahl-*Logik*, die dieser Pfad aufruft, ist in reine Funktionen ausgelagert und vollständig getestet. |
+| **Gesamt** | **🟢 96,58 %** (637 Tests in ~49 s, Schwelle bei 80 %) — **kein Modul ist ausgenommen**. Der openpyxl-abhängige Excel-Lesepfad von `scripts/import_cn_codes.py` ist der Grund, warum die Gesamtzahl nicht höher liegt: openpyxl ist optional und in der CI nicht installiert, daher bleibt dieser Pfad dort ungetestet — dieselbe Behandlung, die das bereits vorhandene `_read_excel_rows` schon hatte. Die Suffix-Zusammenführungs-, Blattauswahl-, Hierarchiedurchlauf- und Breadcrumb-*Logik*, die dieser Pfad aufruft, ist in reine Funktionen ausgelagert und vollständig getestet — weshalb der Prozentwert mit der Hierarchie-Rekonstruktion sank: der neue Code ist genauso aufgeteilt, aber der Leser, der ihn füttert, ist gewachsen. |
 
 Die 13 PostgreSQL-Paritätstests zählen dort *nicht* mit: Sie werden übersprungen, solange
 `CUSTOMSIQ_TEST_POSTGRES_URL` nicht auf einen echten Server zeigt (die CI setzt die Variable; ein

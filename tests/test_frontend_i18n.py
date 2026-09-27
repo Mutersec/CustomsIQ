@@ -159,6 +159,28 @@ def test_low_confidence_warning_suggests_english(dictionaries: dict, language: s
     assert _SUGGESTS_ENGLISH[language] in text, f"{language} common.lowConfidence: {text!r}"
 
 
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_every_language_offers_classify_as_the_next_thing_to_try(
+    dictionaries: dict, language: str
+) -> None:
+    """The Search panel's weak-result advice now has a second half.
+
+    Search cannot be improved by the hierarchical context — its difflib ratio
+    normalises by combined length, so richer text lowers the score — but
+    Classify demonstrably can. The banner is where that is passed on to the
+    user, so every language has to carry it, not just English.
+    """
+    text = _leaf_value(dictionaries[language], "common.tryClassify")
+    assert text.strip(), f"{language} common.tryClassify is empty"
+    assert text.startswith(" "), "must append to lowConfidence, so it needs a leading space"
+
+
+def test_only_the_search_panel_suggests_classify(source: str) -> None:
+    """Suggesting Classify from inside Classify would be nonsense."""
+    assert "const lowConfidenceBanner = (rows, suggestClassify = false)" in source
+    assert 'suggestClassify ? t("common.tryClassify") : ""' in source
+
+
 def test_low_confidence_threshold_exists_and_gates_both_panels(source: str) -> None:
     """A lightweight check that the served JS actually has the logic, not just copy.
 
@@ -172,7 +194,7 @@ def test_low_confidence_threshold_exists_and_gates_both_panels(source: str) -> N
     threshold = float(match.group(1))
     assert 0.2 < threshold < 0.6, f"threshold {threshold} is outside a plausible range"
 
-    assert "searchBox.innerHTML = lowConfidenceBanner(rows) + rows.map" in source
+    assert "searchBox.innerHTML = lowConfidenceBanner(rows, true) + rows.map" in source
     assert "classifyBox.innerHTML = lowConfidenceBanner(rows) + rows.map" in source
 
 

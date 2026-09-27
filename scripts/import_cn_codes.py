@@ -19,9 +19,10 @@ import csv
 import logging
 import re
 import sys
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 # Running this file directly puts scripts/ on sys.path, not the repo root, so
 # the src.* imports below need the root prepended first.
@@ -330,6 +331,143 @@ _PREFERRED_SUFFIX = "80"
 
 _CN8_HIER = 8
 _TARIC10_HIER = 10
+_CHAPTER_HIER = 2
+_HEADING_HIER = 4
+
+#: How many ancestors a dependent leaf's context keeps. Two, measured against
+#: the real 13,733-row corpus: one is not enough when a residual's own parent is
+#: also a residual (10.3% of leaves) and three only adds length — with two,
+#: "leather jacket" reaches chapter 42 (leather articles) and "knitted cotton
+#: shirt" reaches heading 6109, which one ancestor does not manage.
+CONTEXT_ANCESTORS = 2
+
+#: Descriptions that are pure residuals, carrying no product meaning at all.
+_GENERIC_DESCRIPTIONS = frozenset({"other", "others"})
+
+#: A description opening with one of these words is grammatically dependent on
+#: an antecedent that the row does not repeat — "For feeding purpose", "Of
+#: cotton", "Containing hazelnuts" — so it cannot stand alone as a product name.
+_DEPENDENT_OPENER = re.compile(
+    r"^(?:other|others|of|for|with|without|in|from|containing|not|whether"
+    r"|weighing|having|used|obtained|put|fit|to)\b",
+    re.IGNORECASE,
+)
+
+#: Joins a context to its leaf. Cosmetic only: the classifier's tokenizer splits
+#: on non-word characters, so ">" is discarded before anything is scored.
+CONTEXT_SEPARATOR = " > "
+
+
+class SheetRow(NamedTuple):
+    """One row of a CIRCABC nomenclature export, as the hierarchy walk needs it."""
+
+    code: str
+    suffix: str
+    hier_position: Optional[int]
+    indent: Optional[str]
+    description: str
+
+
+def is_generic(description: str) -> bool:
+    """Return whether a description is a bare residual ("Other", "Others.")."""
+    return description.strip().lower().rstrip(".:").strip() in _GENERIC_DESCRIPTIONS
+
+
+def needs_context(description: str) -> bool:
+    """Return whether a leaf description is meaningless without its ancestors.
+
+    True for a residual ("Other") and for anything grammatically dependent
+    ("For feeding purpose", "Of cotton"). 7,095 of the 13,733 real leaves
+    (51.7%) are one of these; the other 6,638 — "Hazelnuts", "Optical glass",
+    "T-shirts" — are left exactly as they are, which is what keeps every
+    already-pinned exact-match score byte-identical.
+    """
+    return bool(_DEPENDENT_OPENER.match(description.strip()))
+
+
+def hierarchy_depth(hier_position: Optional[int], indent: Optional[str]) -> int:
+    """Return a row's nesting depth in the nomenclature tree.
+
+    `Indent` is the authoritative signal, not `Hier. Pos.`: the two disagree
+    routinely in the real export, where a single 8-digit `Hier. Pos.` spans
+    several indent levels (`0102292100` sits at indent 4 as a grouping header
+    and at indent 5 as the declarable row). Chapters and headings carry no
+    indent at all, so they are placed by `Hier. Pos.` instead.
+
+    Args:
+        hier_position: The sheet's "Hier. Pos." — 2, 4, 6, 8 or 10.
+        indent: The sheet's "Indent" — a run of "- ", or None.
+
+    Returns:
+        The depth, 0 for a chapter.
+    """
+    if hier_position == _CHAPTER_HIER:
+        return 0
+    if hier_position == _HEADING_HIER:
+        return 1
+    return 1 + (indent or "").count("-")
+
+
+def walk_ancestors(rows: Iterable[SheetRow]) -> Iterator[tuple[SheetRow, list[str]]]:
+    """Pair each row with its ancestor chain, reading the sheet in order.
+
+    A depth-indexed stack is all this needs: a row closes every entry at or
+    below its own depth, whatever remains is its ancestry, and it then becomes
+    the entry for its own depth. Rows must arrive in sheet order — the file's
+    order *is* the tree, and sorting it would destroy the hierarchy.
+
+    Robust to a depth discontinuity rather than asserting against one: the real
+    export has exactly one in 25,846 rows (in chapter 99, national/special use,
+    whose single heading holds a bulleted list instead of a subtree). The chain
+    produced there is still correct, just shorter, so it needs no special case.
+
+    Args:
+        rows: The sheet's rows, in file order.
+
+    Yields:
+        Each row with its ancestors, outermost first.
+    """
+    stack: dict[int, str] = {}
+    for row in rows:
+        depth = hierarchy_depth(row.hier_position, row.indent)
+        for level in [level for level in stack if level >= depth]:
+            del stack[level]
+        yield row, [stack[level] for level in sorted(stack)]
+        stack[depth] = row.description
+
+
+def context_positions(ancestors: list[str], keep: int = CONTEXT_ANCESTORS) -> list[int]:
+    """Choose which ancestors give a dependent leaf its meaning, as indices.
+
+    Indices rather than text so the choice can be made once against the English
+    chain and then applied to the German and French ones, which are positionally
+    identical (verified: all 13,733 leaves have equal-length chains in all three
+    exports). That is what keeps this free of per-language word lists — asking
+    `is_generic` about German would mean knowing that "andere" is the residual
+    there, and about French that "autres" is, for every future language.
+
+    Drops the chapter (index 0) and every residual ancestor. The chapter goes
+    because it is a shouted, near-content-free string ("ELECTRICAL MACHINERY AND
+    EQUIPMENT AND PARTS THEREOF; SOUND RECORDERS AND...") already represented by
+    the row's `category`; residuals go because prepending "Other" to "Other"
+    explains nothing. Skipping them is also what handles the nested-generic case
+    — `0106900090`'s immediate parent is itself "Other", and skipping it reaches
+    "Other live animals".
+
+    Args:
+        ancestors: The English chain from `walk_ancestors`, outermost first.
+        keep: How many ancestors to keep.
+
+    Returns:
+        The indices to keep, outermost first; empty when none is usable.
+    """
+    usable = [index for index, text in enumerate(ancestors) if index > 0 and not is_generic(text)]
+    return usable[-keep:]
+
+
+def ancestor_context(ancestors: list[str], positions: list[int]) -> str:
+    """Join one language's ancestors at the positions `context_positions` chose."""
+    return CONTEXT_SEPARATOR.join(ancestors[index] for index in positions)
 
 
 def collapse_suffix_variants(by_code: dict) -> dict:
@@ -374,16 +512,23 @@ def select_leaf_codes(candidates: dict) -> dict:
 
 
 def _leaf_descriptions_by_language(path: Path) -> dict:
-    """Read one CIRCABC nomenclature export into {leaf_code: description}.
+    """Read one CIRCABC nomenclature export into {leaf_code: (description, ancestors)}.
 
-    File I/O and column handling only — see `collapse_suffix_variants` and
-    `select_leaf_codes` for the actual selection logic, and their own tests.
+    File I/O and column handling only — see `collapse_suffix_variants`,
+    `select_leaf_codes`, `walk_ancestors` and `ancestor_context` for the actual
+    logic, and their own tests.
+
+    Every row is walked, not just the declarable ones: the 2/4/6 hierarchy rows
+    and the non-declarable "10"-suffix grouping headers are what the ancestor
+    chain is *made of*, so they are read for their text and then dropped, rather
+    than skipped on the way in as they used to be.
 
     Args:
         path: One language's CIRCABC "Nomenclature" .xlsx export.
 
     Returns:
-        Every leaf code mapped to its description in this file's language.
+        Every leaf code mapped to its own description and its ancestor chain,
+        in this file's language.
 
     Raises:
         CNImportError: If openpyxl is missing, or the expected columns aren't there.
@@ -403,21 +548,31 @@ def _leaf_descriptions_by_language(path: Path) -> dict:
         try:
             code_col = headers.index("Goods code")
             hier_col = headers.index("Hier. Pos.")
+            indent_col = headers.index("Indent")
             desc_col = headers.index("Description")
         except ValueError as exc:
             raise CNImportError(
-                f"{path.name}: expected 'Goods code' / 'Hier. Pos.' / 'Description' "
-                f"columns, found {headers}"
+                f"{path.name}: expected 'Goods code' / 'Hier. Pos.' / 'Indent' / "
+                f"'Description' columns, found {headers}"
             ) from exc
 
-        by_code: dict = {}
+        sheet_rows = []
         for row in rows:
-            level = row[hier_col]
-            if level not in (_CN8_HIER, _TARIC10_HIER):
-                continue
             raw_code, suffix = row[code_col].split()
-            code = raw_code[:_CN8_HIER] if level == _CN8_HIER else raw_code
-            by_code.setdefault(code, {})[suffix] = row[desc_col]
+            sheet_rows.append(
+                SheetRow(raw_code, suffix, row[hier_col], row[indent_col], row[desc_col] or "")
+            )
+
+        by_code: dict = {}
+        for sheet_row, ancestors in walk_ancestors(sheet_rows):
+            if sheet_row.hier_position not in (_CN8_HIER, _TARIC10_HIER):
+                continue
+            code = (
+                sheet_row.code[:_CN8_HIER]
+                if sheet_row.hier_position == _CN8_HIER
+                else sheet_row.code
+            )
+            by_code.setdefault(code, {})[sheet_row.suffix] = (sheet_row.description, ancestors)
     finally:
         workbook.close()
 
@@ -458,10 +613,38 @@ def build_trilingual_bundle(en_path: Path, de_path: Path, fr_path: Path, output_
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["cn_code", "category", "description_en", "description_de", "description_fr"]
+            [
+                "cn_code",
+                "category",
+                "description_en",
+                "description_de",
+                "description_fr",
+                "context_en",
+                "context_de",
+                "context_fr",
+            ]
         )
         for code in sorted(en):
-            writer.writerow([code, category_for_code(code), en[code], de[code], fr[code]])
+            # Whether a leaf stands alone is decided once, from the English
+            # sheet, and applied to all three languages. The three exports are
+            # the same tree in the same order (asserted above), so the decision
+            # transfers — and this way there is one rule to justify instead of
+            # three language-specific ones. Each language still builds its own
+            # context text out of its own ancestors.
+            context = ["", "", ""]
+            if needs_context(en[code][0]):
+                positions = context_positions(en[code][1])
+                context = [ancestor_context(source[code][1], positions) for source in (en, de, fr)]
+            writer.writerow(
+                [
+                    code,
+                    category_for_code(code),
+                    en[code][0],
+                    de[code][0],
+                    fr[code][0],
+                    *context,
+                ]
+            )
 
     logger.info("wrote %d leaf codes to %s", len(en), output_path)
     return len(en)

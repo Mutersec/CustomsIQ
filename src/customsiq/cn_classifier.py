@@ -13,7 +13,12 @@ import sqlite3
 from collections import Counter
 from typing import NamedTuple, Optional
 
-from src.customsiq.database import fetch_all, fetch_all_translations, get_by_code
+from src.customsiq.database import (
+    fetch_all,
+    fetch_all_contexts,
+    fetch_all_translations,
+    get_by_code,
+)
 from src.customsiq.exceptions import HSCodeNotFoundError
 from src.customsiq.matching import as_code, validate_query
 from src.customsiq.models import HSCode
@@ -21,6 +26,12 @@ from src.customsiq.models import HSCode
 logger = logging.getLogger(__name__)
 
 TOP_TERMS = 3
+
+# Joins a leaf's hierarchical context to its own description. Purely cosmetic:
+# `_WORD` below splits on non-word characters, so the ">" never reaches the
+# index. Kept as a visible separator anyway because this is the string that
+# shows up when an indexed document is printed while debugging a ranking.
+_CONTEXT_SEPARATOR = " > "
 
 # Unicode-aware rather than [a-z0-9]+: the ASCII form split every accented
 # word into fragments, which mattered even for the English corpus — "Gruyère"
@@ -98,6 +109,36 @@ def _singular(word: str) -> str:
 def _tokenize(text: str) -> list[str]:
     """Lowercase, split on non-alphanumerics, and singularise."""
     return [_singular(word) for word in _WORD.findall(text.lower())]
+
+
+def _with_context(description: str, context: Optional[str]) -> str:
+    """Prepend a leaf's ancestor context to its own description.
+
+    Half of the real nomenclature's leaves describe themselves only relative to
+    a parent they never name — "Other", "For feeding purpose" — because the
+    source sheets are hierarchical and a child row does not repeat its
+    ancestors. Scoring those against a query means scoring a fragment, which is
+    how "live leeches for medical purposes" used to reach four petroleum
+    residues called "For other purposes". This is the whole of the fix on the
+    reading side: the classifier receives richer text, and weighs it with
+    exactly the same TF-IDF it always did.
+
+    A leaf that stands on its own has no stored context and is returned
+    untouched, which is what keeps "Hazelnuts" and "Optical glass" scoring a
+    flat 1.0 against their own names.
+
+    Args:
+        description: The code's own description, in some language.
+        context: Its ancestor text in the same language, or None.
+
+    Returns:
+        The text to index. `description` unchanged when there is no context, or
+        when `description` is itself empty — a code with no text in this
+        language must not be resurrected by its ancestors alone.
+    """
+    if not context or not description:
+        return description
+    return f"{context}{_CONTEXT_SEPARATOR}{description}"
 
 
 def _normalise(weights: dict[str, float]) -> dict[str, float]:
@@ -225,11 +266,25 @@ def classify(
 
     records = fetch_all(conn)
     counts = Counter(tokens)
-    scored = _score_against(conn, [record.description for record in records], None, counts)
+
+    english_contexts = fetch_all_contexts(conn, "en")
+    scored = _score_against(
+        conn,
+        [
+            _with_context(record.description, english_contexts.get(record.code))
+            for record in records
+        ],
+        None,
+        counts,
+    )
 
     translations = fetch_all_translations(conn, language)
     if translations:
-        texts = [translations.get(record.code, "") for record in records]
+        contexts = fetch_all_contexts(conn, language)
+        texts = [
+            _with_context(translations.get(record.code, ""), contexts.get(record.code))
+            for record in records
+        ]
         for position, hit in _score_against(conn, texts, language, counts).items():
             best = scored.get(position)
             if best is None or hit[0] > best[0]:
