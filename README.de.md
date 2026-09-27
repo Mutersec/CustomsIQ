@@ -808,7 +808,9 @@ Gesamtblick darauf, wer was geprüft hat, und die Kontenverwaltung.
 | `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` · `/codes/{code}/translations` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — Kennzahlen | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — `recent_reviews` (Namen + Notizen) | ❌ | ✅ | ✅ | ✅ | ✅ |
-| `GET /review/history?subject_reference=…` (Spur eines Ergebnisses) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` (Spur eines Ergebnisses — nur Entscheidung) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` — `reviewer_name` + `comment` | ❌ zurückgehalten | ✅ | ✅ | ✅ | ✅ |
+| `GET /sap-gts/legal-control/{subject_reference}` | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `GET /review/history` (vollständiges Prüfprotokoll) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
 | `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
@@ -824,22 +826,96 @@ deshalb sind die beiden nie austauschbar. Anonyme Aufrufe erhalten `/dashboard/s
 unbekannte Rolle oder Aktion verweigert immer — ein Tippfehler kann nichts gewähren.
 `dashboard.py` ist daran unbeteiligt: die Schwärzung passiert im Endpunkt.
 
-### 👤 Selbstregistrierung vergibt `analyst` — eine Demo-Entscheidung, kein Abbild echter Rollenvergabe
+### 👤 Selbstregistrierung vergibt `viewer` — der Befund, den dieser Abschnitt selbst vorhergesagt hat
 
-Wer sich registriert, erhält sofort die Rolle `analyst`, damit Besucherinnen eine
-Einreihung freigeben *und* an einer Sanktionsfreigabe scheitern können, ohne dass jemand
-ein Konto einrichtet. **So läuft RBAC-Onboarding in einem echten Zollcompliance-System
-nicht ab, und das soll es hier auch nicht.** Dort werden Rollen *vergeben*, nicht gewählt:
-eine Administratorin oder ein IdP-/HR-Gruppen-Mapping weist sie zu, nachdem die Person
-verifiziert wurde; Selbstregistrierung gibt es entweder gar nicht, oder sie endet in einem
-wartenden Zustand ohne Rechte. Einem Registrierungsformular die Macht zu geben,
-Zolleinreihungen freizugeben, wäre in jedem echten Audit ein Befund.
+Hier stand früher, dass eine Registrierung sofort `analyst` vergibt, nannte das „eine
+Demo-Entscheidung, kein Abbild echter Rollenvergabe" und merkte an, die produktionsnahe
+Variante sei eine Zeile entfernt. Ein Sicherheitsaudit wies dann auf das Offensichtliche
+hin: Die Anwendung ist öffentlich deployt, also war jene „Demo-Entscheidung" eine
+scharfe Rechtegrenze. `analyst` trägt `review:classification` und `review:duty` — also
+die Fähigkeit, **dauerhafte, nur anfügbare Zeilen ins Compliance-Prüfprotokoll zu
+schreiben**, mit einem vom Angreifer gewählten Benutzernamen und einem Freitextkommentar,
+den andere zu sehen bekommen. Eine Löschroute gibt es nicht. Ein einziges anonymes
+`POST /auth/register` kaufte das.
 
-Die produktionsnahe Variante ist eine Zeile: `auth.SELF_REGISTRATION_ROLE` auf `VIEWER`
-setzen — neue Konten dürfen dann nur das Prüfprotokoll lesen, bis eine Administratorin sie
-über `POST /auth/users/{username}/role` hochstuft, was es bereits gibt und bereits
-admin-only ist. Dieselbe Begründung gilt dafür, dass die Demo-Konten überhaupt existieren:
-für eine Portfolio-Demo auf fiktiven Daten angemessen, anderswo nicht vertretbar.
+Jetzt entscheidet `CUSTOMSIQ_SELF_REGISTRATION_ROLE` (Standard `viewer`): Ein neues Konto
+darf das Prüfprotokoll lesen und sonst nichts, bis eine Administratorin es über
+`POST /auth/users/{username}/role` hochstuft. Der Wert bleibt konfigurierbar statt fest
+verdrahtet — ein Deployment darf sich bewusst anders entscheiden —, aber der Standard ist
+nun der produktionsnahe Ablauf statt des Demo-Ablaufs.
+
+### 🔒 Behebungen aus dem Sicherheitsaudit — was falsch war und was die Behebung kostete
+
+Ein vollständiges Audit der deployten Anwendung aus Angreifersicht ergab sieben
+kritische/hohe Befunde. Alle sind geschlossen; jeder wurde vorher und nachher an der
+laufenden Anwendung geprüft, nicht nur in Tests.
+
+**Unbegrenzte CPU aus einem einzigen anonymen GET (kritisch).** `GET /search?q=<500
+Zeichen>` kostete **5,1 s** Server-CPU — mit `&language=de` 10,4 s —, weil `difflib` in
+beiden Stringlängen O(n·m) ist und über alle 13.753 Zeilen läuft, bevor `limit`
+überhaupt etwas abschneidet. Gemessen, nicht geschätzt. Zwei Schranken, von denen keine
+den Scoring-Algorithmus berührt: Freitext-Query-Parameter sind begrenzt (`q`/`description`
+auf 100 Zeichen, Namen auf 60 — das Vierfache der medianen Korpusbeschreibung und fast das
+Doppelte des längsten echten Namens einer sanktionierten Organisation), und die teuren
+anonymen Routen sind ratenbegrenzt. **Eine Längenbegrenzung allein genügte nicht, und das
+sagen die Messungen**: Schon eine 16-Zeichen-Anfrage kostet 356 ms, denn die Kosten sind
+der Korpus-Scan, nicht die Anfrage. Eine 500-Zeichen-Anfrage ist jetzt ein 422 in **11 ms**.
+
+Die eigentliche Performance-Behebung — ein ergebniserhaltender `difflib`-Obergrenzen-Vorfilter
+— bleibt hier bewusst **aus**: Sie würde auch die Grundkosten senken, baut aber die
+Scoring-Schleife um, und das unter einem dringenden Sicherheits-Patch zu tun, riskiert ein
+stilles Umsortieren der Ergebnisse. Als Folgearbeit benannt statt still übergangen.
+
+**Ein Passwort-Rateskript wurde durch nichts gebremst (kritisch).** Auf `/auth/login` und
+`/auth/register` gab es weder Ratenbegrenzung noch Sperre noch Verzögerung und kein
+Logging fehlgeschlagener Logins — Brute Force war also ungehindert *und* unsichtbar. Der
+vorhandene Limiter war auf den authentifizierten Benutzernamen verschlüsselt, was auf
+einer Route, deren ganzer Zweck ist, dass noch niemand authentifiziert ist, strukturell
+unbrauchbar ist. Jetzt gibt es einen Limiter pro IP in derselben Bauform (10/min auf Auth,
+30/min auf den Such-Routen). **Seine Grenze ist im Code dokumentiert statt beschönigt**:
+Der linke `X-Forwarded-For`-Eintrag ist clientseitig setzbar, wer diesen Header rotiert,
+umgeht die Bremse also. Sie bleibt trotzdem, denn die Bedrohung, die sie beantwortet — ein
+Skript von einem Host — rotiert keine Header. Die eigentliche Kontrolle ist
+Ratenbegrenzung am Edge, und das ist eine Sache des Cloudflare-/Render-Dashboards, nicht
+dieses Codes.
+
+**Ein Timing-Orakel innerhalb der Abwehr gegen Timing-Orakel (hoch).** Der Login hasht
+bewusst auch bei unbekanntem Benutzernamen, damit eine schnelle Ablehnung keine Konten
+aufzählt — tat das aber als `verify_password(pw, hash_password(DUMMY))` und erzeugte den
+Dummy-Hash *pro Anfrage*. Das sind zwei PBKDF2-Durchläufe für einen unbekannten
+Benutzernamen gegen einen für einen bekannten: gemessen **328,2 ms gegen 164,4 ms, exakt
+das 2,00-Fache**, über das Internet **~2,9 s gegen ~1,5 s**, über Wiederholungen
+konsistent. Die Gegenmaßnahme war in genau das Leck umgeschlagen, dessen Verhinderung sie
+dokumentierte. Der Dummy-Hash wird jetzt einmal je Arbeitsfaktor erzeugt und
+wiederverwendet, sodass beide Pfade exakt eine Verifikation ausführen. Geprüft durch
+Zählen der `pbkdf2_hmac`-Aufrufe statt per Uhr, weil eine Timing-Zusicherung in CI
+instabil wäre.
+
+**Prüferidentitäten waren anonym lesbar (hoch)** — und das war ein echter Policy-Konflikt,
+kein Bug. Phase 7 hatte die Prüfspur eines einzelnen Ergebnisses bewusst öffentlich
+gemacht: „die Vier-Augen-Geschichte, die eine Besucherin auf der gerade erzeugten Karte
+sehen soll." Aber `/dashboard/stats` hält `reviewer_name` und `comment` bei denselben
+Daten anonymen Aufrufern bereits vor, und `subject_reference` ist kein Geheimnis —
+`/search`, `/classify`, `/screen` und `/calculate-duty` geben es mit jedem Ergebnis
+heraus. Zwei Routen können zu einem Feld nicht gegensätzliche Policies vertreten. **Die
+Absicht von Phase 7 bleibt, ihre Umsetzung wird korrigiert**: Anonyme Aufrufer bekommen
+weiterhin die Entscheidung, den Zeitstempel und das `authenticated`-Flag — die komplette
+Vier-Augen-Geschichte — und nicht mehr den Namen der prüfenden Person oder deren Freitext.
+`/sap-gts/legal-control/{ref}` ist stattdessen ganz gesperrt, denn dort werden Namen,
+Zeitstempel und Kommentare *in* die `MESSAGE`-Felder gerendert; Redaktion ließe nur eine
+leere Hülle übrig.
+
+**Benutzernamen-Aufzählung über die Registrierung (hoch) — gedrosselt, nicht beseitigt.**
+`POST /auth/register` antwortet weiterhin „username 'x' is already taken", und weiterhin
+vor jedem Hashing; das Orakel besteht also fort. Das IP-Limit macht seine Abfrage langsam
+und auffällig statt kostenlos. Vollständige Undurchsichtigkeit hieße, einer legitimen
+Nutzerin nicht zu sagen, warum ihr Wunschname abgelehnt wurde; dieser Tausch wurde
+erwogen und verworfen. **Die verbleibende Lücke zu benennen ist die ehrliche Berichtsform**
+— nicht die Behauptung, der Befund sei vollständig geschlossen.
+
+Es ist keine neue Render-Umgebungsvariable nötig und keine Aktion im Dashboard — alle neuen
+Einstellungen kommen mit sicheren Standardwerten, das gehärtete Verhalten greift also beim
+Deploy von selbst.
 
 ### 🕰️ Historische Freitext-Prüfer bleiben unangetastet
 

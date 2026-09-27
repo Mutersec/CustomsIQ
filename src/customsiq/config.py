@@ -33,10 +33,25 @@ class Settings(BaseSettings):
     session_ttl_hours: int = 12
     seed_demo_users: bool = True
 
+    # Role granted by self-service registration. `viewer` — read the audit
+    # trail, nothing else — because anyone on the internet can call
+    # POST /auth/register: the role it hands out is the privilege boundary
+    # between "stranger" and "can write to the compliance audit trail", and
+    # review rows are append-only with no delete route. A deployment that
+    # wants the old demo behaviour can still set CUSTOMSIQ_SELF_REGISTRATION_ROLE.
+    self_registration_role: str = "viewer"
+
     # Invoice upload limits. The size cap is enforced while streaming the body,
     # not from Content-Length, and the rate limit is per account, per process.
     upload_max_bytes: int = 2_097_152
     upload_rate_limit_per_minute: int = 10
+
+    # Per-IP rate limits, per process. Auth routes have no authenticated
+    # principal to key on, so these are the pre-auth brake; the search routes
+    # are capped because each one is a linear scan over the whole nomenclature
+    # and is reachable anonymously.
+    auth_rate_limit_per_minute: int = 10
+    search_rate_limit_per_minute: int = 30
 
     @field_validator("database_url")
     @classmethod

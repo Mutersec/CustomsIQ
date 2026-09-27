@@ -223,7 +223,9 @@ class ReviewResponse(BaseModel):
     subject_type: str
     subject_reference: str
     decision: str
-    reviewer_name: str
+    # Nullable because a caller without `audit:read` gets the decision but not
+    # who made it — null here means "withheld", not "anonymous reviewer".
+    reviewer_name: Optional[str]
     comment: Optional[str]
     reviewed_at: str
     authenticated: bool

@@ -113,6 +113,17 @@ async def add_security_headers(request: Request, call_next: Callable) -> Respons
 
 SESSION_COOKIE = "customsiq_session"
 
+# Length caps on the free-text query parameters. Every one of these routes
+# scores its input against all ~13.7k nomenclature rows with difflib, which is
+# O(n·m) in the two string lengths — so an uncapped query is a CPU amplifier a
+# single anonymous GET can fire. Measured on the real corpus: a 500-character
+# query cost 5.1 s (10.4 s with a translation language), where 100 characters
+# costs ~1.4 s. 100 is four times the median corpus description and comfortably
+# fits a typed or invoice-prefilled product description; 60 is nearly twice the
+# longest real sanctioned entity name (34 characters).
+MAX_TEXT_QUERY = 100
+MAX_NAME_QUERY = 60
+
 
 def current_user(request: Request) -> Optional[User]:
     """Resolve the signed-in user from the session cookie, or None.
@@ -171,6 +182,70 @@ def _user_payload(user: User) -> dict:
     return {"username": user.username, "role": user.role, "created_at": user.created_at}
 
 
+_RATE_WINDOW_SECONDS = 60.0
+
+
+#: Request timestamps per client IP, for the two limits below. Same in-memory,
+#: per-process shape as _UPLOAD_HITS — and the same ceiling applies.
+_IP_HITS: dict = {}
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client address for rate limiting.
+
+    Behind Render's proxy `request.client.host` is the proxy, which would put
+    every visitor in one bucket, so the forwarded chain wins when present.
+
+    # ponytail: the leftmost X-Forwarded-For entry is client-settable, so an
+    # attacker who rotates that header defeats this. It is kept anyway because
+    # the threat it answers — a scripted password spray from one host — does
+    # not rotate headers, and throttling that is worth more than the bypass
+    # costs. Rate limiting at the edge (Cloudflare/Render) is the real control
+    # and is a dashboard action, not something this code can do.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    return request.client.host if request.client else "unknown"
+
+
+def _check_ip_rate_limit(request: Request, bucket: str, limit: int, what: str) -> None:
+    """Allow `limit` requests per minute per client IP for `bucket`, or raise 429.
+
+    Keyed on IP rather than account because the routes that need it most are
+    pre-auth by definition: a login attempt has no authenticated principal to
+    key on, which is exactly why the existing per-account limiter could not be
+    reused for them.
+    """
+    key = (bucket, _client_ip(request))
+    now = time.monotonic()
+    recent = [hit for hit in _IP_HITS.get(key, []) if now - hit < _RATE_WINDOW_SECONDS]
+    if len(recent) >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many {what}. The limit is {limit} per minute.",
+        )
+    recent.append(now)
+    _IP_HITS[key] = recent
+
+
+def _check_auth_rate_limit(request: Request) -> None:
+    """Throttle the unauthenticated auth routes (findings #2, #6, #7)."""
+    _check_ip_rate_limit(
+        request, "auth", settings.auth_rate_limit_per_minute, "authentication attempts"
+    )
+
+
+def _check_search_rate_limit(request: Request) -> None:
+    """Throttle the anonymous endpoints that scan the whole nomenclature.
+
+    Each of these is a linear pass over 13.7k records; the length caps on their
+    query parameters bound the cost of one request, and this bounds how many of
+    them a single client can ask for.
+    """
+    _check_ip_rate_limit(request, "search", settings.search_rate_limit_per_minute, "requests")
+
+
 @app.get("/", response_class=FileResponse, include_in_schema=False)
 def index() -> FileResponse:
     """Serve the single-page web frontend.
@@ -193,9 +268,11 @@ def health() -> dict:
     return {"service": "CustomsIQ API", "docs": "/docs", "status": "running"}
 
 
-@app.get("/search", response_model=list[SearchResult])
+@app.get(
+    "/search", response_model=list[SearchResult], dependencies=[Depends(_check_search_rate_limit)]
+)
 def search_hs_codes(
-    q: str = Query(..., description="Free-text product description"),
+    q: str = Query(..., max_length=MAX_TEXT_QUERY, description="Free-text product description"),
     limit: int = Query(5, ge=1, le=50),
     language: Optional[str] = Query(
         None, description="Also match against this language's bundled descriptions, e.g. 'de'"
@@ -221,9 +298,15 @@ def search_hs_codes(
     ]
 
 
-@app.get("/classify", response_model=list[ClassificationResultResponse])
+@app.get(
+    "/classify",
+    response_model=list[ClassificationResultResponse],
+    dependencies=[Depends(_check_search_rate_limit)],
+)
 def classify_description(
-    description: str = Query(..., description="Free-text description of the goods"),
+    description: str = Query(
+        ..., max_length=MAX_TEXT_QUERY, description="Free-text description of the goods"
+    ),
     top_n: int = Query(5, ge=1, le=50),
     language: Optional[str] = Query(
         None, description="Also match against this language's bundled descriptions, e.g. 'de'"
@@ -252,9 +335,15 @@ def classify_description(
     ]
 
 
-@app.get("/screen", response_model=list[ScreeningResultResponse])
+@app.get(
+    "/screen",
+    response_model=list[ScreeningResultResponse],
+    dependencies=[Depends(_check_search_rate_limit)],
+)
 def screen_name(
-    name: str = Query(..., description="Person or organisation name to screen"),
+    name: str = Query(
+        ..., max_length=MAX_NAME_QUERY, description="Person or organisation name to screen"
+    ),
 ) -> list[dict]:
     """Return every sanctioned entity that `name` may refer to.
 
@@ -311,12 +400,20 @@ def calculate_duty_for_consignment(
     }
 
 
-@app.get("/assess-risk", response_model=RiskAssessmentResponse)
+@app.get(
+    "/assess-risk",
+    response_model=RiskAssessmentResponse,
+    dependencies=[Depends(_check_search_rate_limit)],
+)
 def assess_risk(
     country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
-    party_name: str = Query(..., description="Person or organisation to screen"),
+    party_name: str = Query(
+        ..., max_length=MAX_NAME_QUERY, description="Person or organisation to screen"
+    ),
     customs_value: float = Query(..., description="Declared customs value"),
-    description: Optional[str] = Query(None, description="Free-text description of the goods"),
+    description: Optional[str] = Query(
+        None, max_length=MAX_TEXT_QUERY, description="Free-text description of the goods"
+    ),
     hs_code: Optional[str] = Query(None, description="CN-8 or TARIC-10 code, if already known"),
 ) -> dict:
     """Return a composite risk assessment combining classification, screening and duty.
@@ -355,8 +452,6 @@ def assess_risk(
 #: SQLite and PostgreSQL backends and a backend switch can neither bypass nor
 #: duplicate it.
 _UPLOAD_HITS: dict = {}
-
-_RATE_WINDOW_SECONDS = 60.0
 
 
 def _check_rate_limit(username: str) -> None:
@@ -451,12 +546,20 @@ async def extract_invoice_upload(
     }
 
 
-@app.get("/sap-gts/compliance-check", response_model=GtsDocumentResponse)
+@app.get(
+    "/sap-gts/compliance-check",
+    response_model=GtsDocumentResponse,
+    dependencies=[Depends(_check_search_rate_limit)],
+)
 def sap_gts_compliance_check(
     country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
-    party_name: str = Query(..., description="Person or organisation to screen"),
+    party_name: str = Query(
+        ..., max_length=MAX_NAME_QUERY, description="Person or organisation to screen"
+    ),
     customs_value: float = Query(..., description="Declared customs value"),
-    description: Optional[str] = Query(None, description="Free-text description of the goods"),
+    description: Optional[str] = Query(
+        None, max_length=MAX_TEXT_QUERY, description="Free-text description of the goods"
+    ),
     hs_code: Optional[str] = Query(None, description="CN-8 or TARIC-10 code, if already known"),
 ) -> dict:
     """Render a risk assessment in SAP GTS terminology. **Simulation, not an integration.**
@@ -487,13 +590,26 @@ def sap_gts_compliance_check(
 
 
 @app.get("/sap-gts/legal-control/{subject_reference}", response_model=GtsDocumentResponse)
-def sap_gts_legal_control(subject_reference: str) -> dict:
+def sap_gts_legal_control(
+    subject_reference: str,
+    _user: User = Depends(require_permission("audit:read")),
+) -> dict:
     """Render a subject's recorded review decisions as a block/release check log.
 
-    **Simulation, not an integration** — see `/sap-gts/compliance-check`. Public for
-    the same reason a single subject's `/review/history` is: it is that same data,
-    reshaped. A reference with no decisions returns a valid document reporting
-    exactly that, not a 404 — nothing was blocked, so there is nothing to release.
+    **Simulation, not an integration** — see `/sap-gts/compliance-check`.
+
+    Requires `audit:read`. This was public, on the reasoning that it is the
+    same data as a single subject's `/review/history`, reshaped — but the
+    reshaping is the problem: reviewer names, timestamps and free-text comments
+    are rendered *into* the `MESSAGE` and `MESSAGE_V1..V4` fields, so the
+    redaction that protects the identity fields on `/review/history` has nothing
+    to act on here. Unlike that route there is no public four-eyes story to
+    preserve either — this is a simulation of an internal enterprise control
+    log, and its whole payload is the audit narrative. Gating it is the honest
+    treatment; redacting it would leave an empty shell.
+
+    A reference with no decisions returns a valid document reporting exactly
+    that, not a 404 — nothing was blocked, so there is nothing to release.
     """
     decisions = review.get_review_history(_conn, subject_reference=subject_reference)
     return sap_gts_bridge.legal_control_log(decisions, subject_reference).as_payload()
@@ -560,7 +676,9 @@ class RoleChange(BaseModel):
     role: str
 
 
-@app.post("/auth/register", response_model=UserResponse)
+@app.post(
+    "/auth/register", response_model=UserResponse, dependencies=[Depends(_check_auth_rate_limit)]
+)
 def register(body: Credentials, request: Request, response: Response) -> dict:
     """Create an account and sign it in.
 
@@ -576,7 +694,9 @@ def register(body: Credentials, request: Request, response: Response) -> dict:
     return _user_payload(user)
 
 
-@app.post("/auth/login", response_model=UserResponse)
+@app.post(
+    "/auth/login", response_model=UserResponse, dependencies=[Depends(_check_auth_rate_limit)]
+)
 def login(body: Credentials, request: Request, response: Response) -> dict:
     """Verify credentials and start a session."""
     try:
@@ -684,16 +804,23 @@ def submit_review(body: ReviewSubmission, user: Optional[User] = Depends(current
     }
 
 
-def _review_payload(decisions: list, authored: set) -> list[dict]:
-    """Serialize review rows, flagging which have an authenticated author."""
+def _review_payload(decisions: list, authored: set, redact_identity: bool = False) -> list[dict]:
+    """Serialize review rows, flagging which have an authenticated author.
+
+    With `redact_identity`, the reviewer's name and free-text comment are
+    withheld while the decision itself is kept. That is the split a caller
+    without `audit:read` gets: the four-eyes outcome is the useful, public part
+    of a result's trail; who signed it off and what they wrote about it is not.
+    `/dashboard/stats` already draws the line in the same place.
+    """
     return [
         {
             "id": r.id,
             "subject_type": r.subject_type,
             "subject_reference": r.subject_reference,
             "decision": r.decision,
-            "reviewer_name": r.reviewer_name,
-            "comment": r.comment,
+            "reviewer_name": None if redact_identity else r.reviewer_name,
+            "comment": None if redact_identity else r.comment,
             "reviewed_at": r.reviewed_at,
             "authenticated": r.id in authored,
         }
@@ -714,11 +841,26 @@ def review_history(
     the four-eyes story a visitor should see on the card they just generated.
     Browsing every reviewer's activity at once is the audit log, and needs a
     signed-in account.
+
+    What a visitor sees of that trail is the decision, not the reviewer. The
+    route used to return `reviewer_name` and the free-text `comment` to anyone
+    who passed a `subject_reference`, which a security audit called in: the
+    reference is not a secret — `/search`, `/classify`, `/screen` and
+    `/calculate-duty` hand it out with every result — and `/dashboard/stats`
+    already withholds exactly those two fields from anonymous callers. Two
+    routes cannot hold opposite policies on one field, so identity is now
+    redacted here too, while the public four-eyes story the route exists for
+    survives intact.
     """
     if subject_reference is None:
         require_permission("audit:read")(user)
+    may_read_identity = user is not None and auth.can(user.role, "audit:read")
     results = review.get_review_history(_conn, subject_type, subject_reference, limit)
-    return _review_payload(results, review.authored_review_ids(_conn, results))
+    return _review_payload(
+        results,
+        review.authored_review_ids(_conn, results),
+        redact_identity=not may_read_identity,
+    )
 
 
 @app.get("/dashboard/stats", response_model=DashboardStatsResponse)

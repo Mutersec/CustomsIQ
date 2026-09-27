@@ -22,6 +22,7 @@ import logging
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from functools import cache
 from typing import Optional
 
 from src.customsiq import database
@@ -57,11 +58,16 @@ PERMISSIONS = {
     "users:manage": ADMIN,
 }
 
-#: Role handed out by self-registration. Demo-friendliness, not realism: a real
-#: trade-compliance system grants roles administratively after verifying the
-#: person, rather than letting a signup form pick one. Set this to VIEWER to
-#: get the production-shaped flow (register, then wait for an admin promotion).
-SELF_REGISTRATION_ROLE = ANALYST
+#: Role handed out by self-registration, from `CUSTOMSIQ_SELF_REGISTRATION_ROLE`
+#: (default `viewer`). A real trade-compliance system grants roles
+#: administratively after verifying the person, rather than letting a signup
+#: form pick one — so the default is the production-shaped flow: register, then
+#: wait for an admin promotion. It used to default to ANALYST, which meant one
+#: anonymous POST bought the ability to write permanent, append-only rows into
+#: the compliance audit trail; a security audit called that in, and this is the
+#: fix. The value stays a module constant so callers and tests refer to it by
+#: name rather than hardcoding a role string.
+SELF_REGISTRATION_ROLE = settings.self_registration_role
 
 #: Published demo accounts, seeded only into an empty `users` table so a
 #: visitor can experience every role. Mock data, public passwords — the README
@@ -81,6 +87,21 @@ _MAX_USERNAME_LENGTH = 32
 # A real-shaped hash to verify against when the username is unknown, so a login
 # attempt costs the same either way and timing can't enumerate accounts.
 _DUMMY_PASSWORD = "customsiq-dummy-password"
+
+
+@cache
+def _dummy_hash(rounds: int) -> str:
+    """A throwaway hash to verify against when the username doesn't exist.
+
+    Generated once per work factor and reused. That matters for the property
+    it exists to provide: this used to be recomputed per request, so an unknown
+    username cost *two* PBKDF2 runs (one to build the hash, one to check it)
+    against a known username's one — a 2x timing difference that enumerated
+    accounts just as effectively as the fast rejection the dummy was meant to
+    prevent. Cached by `rounds` rather than computed at import so the test
+    suite's lowered work factor doesn't pay the production cost.
+    """
+    return hash_password(_DUMMY_PASSWORD, iterations=rounds)
 
 
 def _b64(raw: bytes) -> str:
@@ -212,8 +233,9 @@ def authenticate(conn: sqlite3.Connection, username: str, password: str) -> User
     stored = database.get_password_hash(conn, normalized)
     if stored is None:
         # Spend the same time as a real verification: without this, a fast
-        # rejection would tell an attacker the username doesn't exist.
-        verify_password(password, hash_password(_DUMMY_PASSWORD))
+        # rejection would tell an attacker the username doesn't exist. Exactly
+        # one verification, against a cached dummy — see `_dummy_hash`.
+        verify_password(password, _dummy_hash(settings.password_iterations))
         raise AuthenticationError("invalid username or password")
     if not verify_password(password, stored):
         raise AuthenticationError("invalid username or password")

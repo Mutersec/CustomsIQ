@@ -311,7 +311,11 @@ class TestReviewerNameComesFromTheSession:
         reference = _ref()
         review.submit_review(_conn, "duty", reference, "approved", legacy_name, "typed by hand")
 
-        rows = client.get("/review/history", params={"subject_reference": reference}).json()
+        # Read as a signed-in viewer: reviewer identity is only returned to a
+        # caller with `audit:read` now. This test is about whether a legacy row
+        # gets *claimed* by a later registration, not about who may see it.
+        with signed_in_client(auth.VIEWER) as reader:
+            rows = reader.get("/review/history", params={"subject_reference": reference}).json()
         assert [r["reviewer_name"] for r in rows] == [legacy_name]
         assert rows[0]["authenticated"] is False
 

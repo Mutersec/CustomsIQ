@@ -13,6 +13,26 @@ This runs at import time, before any test module (or `src.customsiq.api`, which
 seeds demo accounts on import) is loaded.
 """
 
+import pytest
+
 from src.customsiq.config import settings
 
 settings.password_iterations = 1_000
+
+
+@pytest.fixture(autouse=True)
+def _reset_ip_rate_limits():
+    """Clear the per-IP rate-limit state between tests.
+
+    Every TestClient request arrives from the same host, so without this the
+    suite is one client hammering the auth and search limiters: tests start
+    failing with 429s purely because of how many ran before them, and which
+    ones fail depends on ordering. Clearing the buckets keeps each test
+    independent while leaving the real production limits in place — the
+    limiter's own tests drive it deliberately rather than relying on leftovers.
+    """
+    from src.customsiq.api import _IP_HITS
+
+    _IP_HITS.clear()
+    yield
+    _IP_HITS.clear()

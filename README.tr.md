@@ -785,7 +785,9 @@ toplu okumayı ve hesap yönetimini korur.
 | `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` · `/codes/{code}/translations` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — sayımlar | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — `recent_reviews` (adlar + notlar) | ❌ | ✅ | ✅ | ✅ | ✅ |
-| `GET /review/history?subject_reference=…` (tek sonucun izi) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` (tek sonucun izi — yalnızca karar) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` — `reviewer_name` + `comment` | ❌ gizlenir | ✅ | ✅ | ✅ | ✅ |
+| `GET /sap-gts/legal-control/{subject_reference}` | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `GET /review/history` (tüm denetim kaydı) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
 | `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
@@ -801,21 +803,91 @@ açık kalır. İzinler `auth.py` içindeki tek bir sözlükte durur ve bilinmey
 da eylem her zaman reddeder — yazım hatası yetki veremez. `dashboard.py` bunların
 hiçbirine karışmaz: gizleme uç noktada yapılır.
 
-### 👤 Kayıt olan `analyst` olur — demo tercihi, gerçek işleyişin modeli değil
+### 👤 Kayıt olan `viewer` olur — kendi uyarısını kendisi yazmış olan denetim bulgusu
 
-Kayıt olduğunuzda anında `analyst` rolü verilir; böylece bir ziyaretçi, kimse hesap
-tanımlamadan hem bir sınıflandırmayı onaylayabilir hem de bir yaptırım onayında
-reddedilebilir. **Gerçek bir gümrük uyum sisteminde RBAC işe alım süreci böyle işlemez
-ve böyle işlemesi de amaçlanmıyor.** Orada roller seçilmez, *verilir*: kişi doğrulandıktan
-sonra bir yönetici ya da bir IdP/İK grup eşlemesi rolü atar; kendi kendine kayıt ya hiç
-yoktur ya da biri onaylayana kadar yetkisiz/bekleyen bir durumda kalır. Bir kayıt formuna
-gümrük sınıflandırmalarını onaylama yetkisi vermek, gerçek bir denetimde bulgu olurdu.
+Bu bölüm eskiden kayıt olanın anında `analyst` olduğunu söylüyor, bunu "demo tercihi,
+gerçek işleyişin modeli değil" diye niteliyor ve üretime uygun sürümün tek satır uzakta
+olduğunu not ediyordu. Bir güvenlik denetimi bariz olanı işaret etti: uygulama herkese
+açık yayımda, dolayısıyla o "demo tercihi" canlı bir yetki sınırıydı. `analyst`,
+`review:classification` ve `review:duty` yetkilerini taşır — yani uyum denetim izine
+**kalıcı, yalnızca eklenebilir satırlar yazma** yeteneğini; üstelik saldırganın seçtiği
+bir kullanıcı adı ve diğer kullanıcıların gördüğü serbest metin yorumuyla. Silme uç
+noktası yok. Tek bir anonim `POST /auth/register` bunu satın alıyordu.
 
-Üretime uygun sürümü tek satır: `auth.SELF_REGISTRATION_ROLE` değerini `VIEWER` yapın;
-yeni hesaplar bir yönetici `POST /auth/users/{username}/role` ile yükseltene kadar
-denetim izini okumaktan başka bir şey yapamaz — o uç nokta zaten var ve zaten yalnızca
-admin'e açık. Demo hesaplarının var olması da aynı gerekçeye dayanır: kurgusal veriyle
-çalışan bir portföy demosu için uygun, başka her yerde savunulamaz.
+Artık kararı `CUSTOMSIQ_SELF_REGISTRATION_ROLE` (varsayılan `viewer`) veriyor; yeni bir
+hesap, bir yönetici `POST /auth/users/{username}/role` ile yükseltene kadar denetim izini
+okumaktan başka bir şey yapamaz. Değer sabit kodlanmak yerine yapılandırılabilir kalıyor
+— bir dağıtım hâlâ bilinçli olarak başka bir şey seçebilir — ama varsayılan artık demo
+biçimi değil, üretim biçimi.
+
+### 🔒 Güvenlik denetimi düzeltmeleri — sorun neydi, düzeltmenin bedeli ne oldu
+
+Yayımdaki uygulamanın saldırgan gözüyle tam denetimi yedi Kritik/Yüksek bulgu üretti.
+Hepsi kapatıldı; her biri yalnızca testlerde değil, canlı uygulamada önce ve sonra
+doğrulandı.
+
+**Tek bir anonim GET'ten sınırsız CPU (Kritik).** `GET /search?q=<500 karakter>` sunucuda
+**5,1 sn** CPU harcıyordu — `&language=de` ile 10,4 sn — çünkü `difflib` iki metin
+uzunluğunda O(n·m)'dir ve `limit` herhangi bir şeyi kesmeden önce 13.753 satırın
+tamamında çalışır. Tahmin değil, ölçüm. Puanlama algoritmasına dokunmayan iki sınır:
+serbest metin sorgu parametreleri sınırlandı (`q`/`description` 100 karakter, isimler 60
+— korpus açıklamalarının medyanının dört katı ve en uzun gerçek yaptırımlı kuruluş
+adının neredeyse iki katı) ve pahalı anonim uç noktalara hız sınırı kondu. **Yalnızca
+uzunluk sınırı yeterli değildi ve bunu ölçümler söylüyor**: 16 karakterlik bir sorgu bile
+356 ms tutuyor, çünkü maliyet sorgu değil korpus taraması. 500 karakterlik bir sorgu
+artık **11 ms**'de 422 dönüyor.
+
+Asıl performans düzeltmesi — sonucu koruyan bir `difflib` üst-sınır ön filtresi — burada
+bilinçli olarak **yapılmadı**: taban maliyeti de düşürürdü ama puanlama döngüsünü yeniden
+kurgular, bunu acil bir güvenlik yamasında yapmak sonuçları sessizce yeniden sıralama
+riski taşır. Sessizce atlanmak yerine sonraki iş olarak adlandırıldı.
+
+**Parola deneme betiğini hiçbir şey durdurmuyordu (Kritik).** `/auth/login` veya
+`/auth/register` üzerinde hız sınırı, kilitleme veya gecikme yoktu; başarısız giriş
+kaydı da yoktu — yani kaba kuvvet hem engelsiz hem görünmezdi. Mevcut sınırlayıcı kimliği
+doğrulanmış kullanıcı adına göre anahtarlanıyordu; bu da tüm amacı "henüz kimse kimlik
+doğrulamadı" olan bir uç noktada yapısal olarak kullanılamaz. Artık aynı biçimde kurulmuş
+IP başına bir sınırlayıcı var (kimlik doğrulamada 10/dk, arama uç noktalarında 30/dk).
+**Tavanı üstü kapatılmak yerine kodda belgelendi**: en soldaki `X-Forwarded-For` değeri
+istemci tarafından ayarlanabilir, dolayısıyla bu başlığı döndüren bir saldırgan sınırı
+aşar. Yine de tutuluyor, çünkü yanıt verdiği tehdit — tek bir makineden betikle yapılan
+deneme — başlık döndürmez. Asıl kontrol kenarda hız sınırlamasıdır ve o bir
+Cloudflare/Render panosu işidir, bu kodun yapabileceği bir şey değil.
+
+**Zamanlama sızıntısı savunmasının içindeki zamanlama sızıntısı (Yüksek).** Giriş, hızlı
+bir ret hesap saymasın diye bilinmeyen kullanıcı adı için de bilerek hash hesaplıyordu —
+ama bunu `verify_password(pw, hash_password(DUMMY))` ile yapıyor, yani sahte hash'i *her
+istekte* üretiyordu. Bu, bilinmeyen kullanıcı için iki PBKDF2 çalışması demek; bilinen
+kullanıcı içinse bir: ölçüm **328,2 ms'ye karşı 164,4 ms, tam 2,00 kat**, internet
+üzerinden **~2,9 sn'ye karşı ~1,5 sn**, tekrarlarda tutarlı. Önlem, önlemeyi belgelediği
+sızıntıya dönüşmüştü. Sahte hash artık iş faktörü başına bir kez üretilip yeniden
+kullanılıyor; iki yol da tam olarak bir doğrulama çalıştırıyor. Doğrulama, duvar saati
+yerine `pbkdf2_hmac` çağrıları sayılarak yapıldı — zamanlama iddiası CI'da kararsız olurdu.
+
+**İnceleyici kimlikleri anonim okunabiliyordu (Yüksek)** — ve bu bir hata değil, gerçek
+bir politika çatışmasıydı. Faz 7 tek bir sonucun inceleme izini bilerek herkese açık
+yapmıştı: "ziyaretçinin az önce ürettiği kartta görmesi gereken dört-göz hikâyesi." Ama
+`/dashboard/stats` aynı veri için `reviewer_name` ve `comment` alanlarını anonim
+çağıranlardan zaten gizliyor ve `subject_reference` bir sır değil — `/search`,
+`/classify`, `/screen` ve `/calculate-duty` onu her sonuçla birlikte veriyor. İki uç
+nokta tek bir alan üzerinde zıt politikalar taşıyamaz. **Faz 7'nin niyeti korundu,
+uygulaması düzeltildi**: anonim çağıranlar hâlâ kararı, zaman damgasını ve `authenticated`
+bayrağını — dört-göz hikâyesinin tamamını — alıyor, inceleyicinin adını ve serbest metnini
+artık almıyor. `/sap-gts/legal-control/{ref}` ise tamamen kapatıldı; çünkü adları, zaman
+damgalarını ve yorumları `MESSAGE` alanlarının *içine* işliyor, dolayısıyla gizleme geriye
+boş bir kabuk bırakırdı.
+
+**Kayıt üzerinden kullanıcı adı sayımı (Yüksek) — elenmedi, yavaşlatıldı.**
+`POST /auth/register` hâlâ "username 'x' is already taken" yanıtını veriyor ve bunu hâlâ
+herhangi bir hash'lemeden önce yapıyor; yani sızıntı duruyor. IP başına sınır, onu
+sorgulamayı bedavadan çıkarıp yavaş ve gürültülü hâle getiriyor. Tam opaklık, meşru bir
+kullanıcıya seçtiği adın neden reddedildiğini söylememek demekti; bu takas değerlendirildi
+ve seçilmedi. **Kalan boşluğu belirtmek dürüst raporlamadır**; bulgunun tamamen kapandığı
+iddiası değil.
+
+Yeni bir Render ortam değişkeni gerekmiyor ve panoda bir işlem yapılması gerekmiyor — yeni
+ayarların hepsi güvenli varsayılanlarla geliyor, dolayısıyla sertleştirilmiş davranış
+dağıtımda kendiliğinden geçerli oluyor.
 
 ### 🕰️ Geçmişteki serbest metin inceleyiciler olduğu gibi bırakıldı
 

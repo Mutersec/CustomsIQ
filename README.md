@@ -774,7 +774,9 @@ and account administration.
 | `GET /search` · `/classify` · `/screen` · `/calculate-duty` · `/assess-risk` · `/codes/{code}/history` · `/codes/{code}/translations` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — counts | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `GET /dashboard/stats` — `recent_reviews` (names + comments) | ❌ | ✅ | ✅ | ✅ | ✅ |
-| `GET /review/history?subject_reference=…` (one result's trail) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` (one result's trail — decision only) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /review/history?subject_reference=…` — `reviewer_name` + `comment` | ❌ redacted | ✅ | ✅ | ✅ | ✅ |
+| `GET /sap-gts/legal-control/{subject_reference}` | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `GET /review/history` (full audit log) | ❌ 401 | ✅ | ✅ | ✅ | ✅ |
 | `POST /review` — `classification`, `duty` | ❌ 401 | ❌ 403 | ✅ | ✅ | ✅ |
 | `POST /review` — `screening` | ❌ 401 | ❌ 403 | ❌ 403 | ✅ | ✅ |
@@ -790,22 +792,91 @@ the counts stay public. Permissions live in one dict in `auth.py`, and an unknow
 role or action always denies — a typo can't grant. `dashboard.py` is not involved in
 any of this: the redaction happens in the route.
 
-### 👤 Self-registration grants `analyst` — a demo choice, not a model of real onboarding
+### 👤 Self-registration grants `viewer` — the audit finding that called its own shot
 
-Signing up gives you the `analyst` role immediately, so a visitor can approve a
-classification *and* be refused a sanctions sign-off without anyone provisioning an
-account for them. **This is not how RBAC onboarding works in a real trade-compliance
-system, and it isn't meant to be.** There, roles are *granted*, never chosen: an
-administrator or an IdP/HR group mapping assigns one after the person is verified,
-and self-registration either doesn't exist or lands in a pending, no-privileges state
-until someone approves it. Handing a signup form the power to sign off on customs
-classifications would be a finding in any real audit.
+This section used to say signing up gave you `analyst` immediately, called that "a
+demo choice, not a model of real onboarding", and noted the production-shaped version
+was one line away. A security audit then pointed out the obvious: the app is publicly
+deployed, so "demo choice" was a live privilege boundary. `analyst` carries
+`review:classification` and `review:duty` — the ability to write **permanent,
+append-only rows into the compliance audit trail**, with an attacker-chosen username
+and free-text comment that other users then see. There is no delete route. One
+anonymous `POST /auth/register` bought that.
 
-The production-shaped version is one line — set `auth.SELF_REGISTRATION_ROLE` to
-`VIEWER`, and new accounts can read the audit trail and nothing else until an admin
-promotes them through `POST /auth/users/{username}/role`, which already exists and is
-already admin-only. The same reasoning covers the demo accounts existing at all:
-appropriate for a mock-data portfolio demo, indefensible anywhere else.
+Now `CUSTOMSIQ_SELF_REGISTRATION_ROLE` (default `viewer`) decides, so a new account can
+read the audit trail and nothing else until an admin promotes it through
+`POST /auth/users/{username}/role`. It stays configurable rather than hardcoded — a
+deployment may still deliberately choose otherwise — but the default is now the
+production-shaped flow rather than the demo-shaped one.
+
+### 🔒 Security audit fixes — what was wrong, and what the fix actually cost
+
+A full attacker's-eye audit of the deployed app produced seven Critical/High findings.
+All are closed; each was verified against the live app before and after, not just in
+tests.
+
+**Unbounded CPU from a single anonymous GET (Critical).** `GET /search?q=<500 chars>`
+cost **5.1 s** of server CPU — 10.4 s with `&language=de` — because `difflib` is
+O(n·m) in the two string lengths and runs against all 13,753 rows before `limit`
+slices anything. Measured, not estimated. Two bounds, neither of which touches the
+scoring algorithm: free-text query parameters are capped (`q`/`description` at 100
+characters, names at 60 — four times the median corpus description, and nearly twice
+the longest real sanctioned entity name), and the expensive anonymous routes are
+rate limited. **Length capping alone was not enough and the measurements say so**: even
+a 16-character query costs 356 ms, because the cost is the corpus scan, not the query.
+A 500-char query is now a 422 in **11 ms**.
+
+The real performance fix — a result-preserving `difflib` upper-bound prefilter
+(`real_quick_ratio` against a running top-N cutoff) — is deliberately **not** done here.
+It would cut the floor cost too, but it restructures the scoring loop, and doing that
+under an urgent security patch risks silently reordering results. Named as follow-up
+rather than skipped quietly.
+
+**Nothing stopped a password-guessing script (Critical).** There was no rate limit,
+lockout, or delay on `/auth/login` or `/auth/register`, and no failed-login logging —
+so brute force was both unimpeded and invisible. The pre-existing limiter keyed on the
+authenticated username, which is structurally unusable on a route whose whole purpose
+is that nobody is authenticated yet. There is now a per-IP limiter (10/min on auth,
+30/min on the search routes) built in the same shape. **Its ceiling is documented in
+the code rather than glossed**: the leftmost `X-Forwarded-For` entry is client-settable,
+so an attacker who rotates that header defeats it. It is kept because the threat it
+answers — a scripted spray from one host — does not rotate headers. Edge rate limiting
+is the real control, and that is a Cloudflare/Render dashboard action, not something
+this code can do.
+
+**A timing oracle inside the defence against timing oracles (High).** Login deliberately
+hashes even for an unknown username so a fast rejection can't enumerate accounts — but
+it called `verify_password(pw, hash_password(DUMMY))`, generating the dummy hash *per
+request*. That is two PBKDF2 runs for an unknown user against one for a known user:
+measured at **328.2 ms vs 164.4 ms, exactly 2.00×**, over the internet **~2.9 s vs
+~1.5 s**, consistent across runs. The mitigation had inverted into the leak it
+documented preventing. The dummy hash is now generated once per work factor and reused,
+so both paths run exactly one verification. Verified by counting `pbkdf2_hmac`
+invocations rather than by wall clock, because a timing assertion would be flaky in CI.
+
+**Reviewer identities readable anonymously (High)** — and this one was a real policy
+conflict, not a bug. Phase 7 deliberately made one result's review trail public: "the
+four-eyes story a visitor should see on the card they just generated." But
+`/dashboard/stats` already withholds `reviewer_name` and `comment` from anonymous
+callers *for the same data*, and `subject_reference` is not a secret — `/search`,
+`/classify`, `/screen` and `/calculate-duty` return it with every result. Two routes
+cannot hold opposite policies on one field. **Phase 7's intent is preserved and its
+implementation corrected**: anonymous callers still get the decision, the timestamp and
+the `authenticated` flag — the entire four-eyes story — and no longer get the reviewer's
+name or their free text. `/sap-gts/legal-control/{ref}` is gated outright instead,
+because it renders names, timestamps and comments *into* its `MESSAGE` fields, so
+redaction would leave an empty shell.
+
+**Username enumeration via registration (High) — throttled, not eliminated.**
+`POST /auth/register` still answers "username 'x' is already taken", and still does so
+before any hashing, so the oracle exists. The per-IP limit makes querying it slow and
+noisy rather than free. Full opacity would mean not telling a legitimate user why their
+chosen name failed; that trade was considered and declined. **Stating the residual gap
+is the honest reporting, not a claim that the finding is fully closed.**
+
+No new Render environment variable is required and no dashboard action is needed — every
+new setting ships with a safe default, so the hardened behaviour applies automatically
+on deploy.
 
 ### 🕰️ Historical free-text reviewers are left alone
 

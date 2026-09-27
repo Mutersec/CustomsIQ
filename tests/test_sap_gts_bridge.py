@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from src.customsiq import sap_gts_bridge
+from src.customsiq import auth, sap_gts_bridge
 from src.customsiq.api import app
 from src.customsiq.database import get_connection, seed
 from src.customsiq.models import ReviewDecision
@@ -29,6 +29,7 @@ from src.customsiq.sap_gts_bridge import (
     compliance_check,
     legal_control_log,
 )
+from tests.helpers import signed_in_client
 
 client = TestClient(app)
 
@@ -329,8 +330,19 @@ class TestEndpoints:
         )
         assert response.status_code == 400
 
-    def test_legal_control_is_public_and_empty_is_not_a_404(self) -> None:
-        response = client.get("/sap-gts/legal-control/no-such-reference-at-all")
+    def test_legal_control_requires_audit_read(self) -> None:
+        """It used to be public; a security audit closed that.
+
+        The log renders reviewer names, timestamps and free-text comments
+        directly into MESSAGE/MESSAGE_V1..V4, so unlike /review/history there is
+        nothing left to show once identity is withheld — gating is the honest
+        treatment rather than redaction.
+        """
+        assert client.get("/sap-gts/legal-control/no-such-reference-at-all").status_code == 401
+
+    def test_empty_is_still_not_a_404_for_a_permitted_caller(self) -> None:
+        with signed_in_client(auth.VIEWER) as reader:
+            response = reader.get("/sap-gts/legal-control/no-such-reference-at-all")
         assert response.status_code == 200
         assert response.json()["HEADER"]["DOCUMENT_STATUS"] == "NOT_BLOCKED"
         assert response.json()["RETURN"][0]["NUMBER"] == "043"
