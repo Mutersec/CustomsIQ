@@ -46,10 +46,15 @@ def test_search_endpoint_rejects_empty_query() -> None:
 
 
 def test_search_endpoint_no_match_returns_empty_list() -> None:
-    """An unrelated query returns low-score results, not an error."""
+    """An unrelated query returns an empty list, not an error.
+
+    Before /search and /classify shared one engine, this returned one
+    low-score difflib row (it always filled `limit`). TF-IDF drops every code
+    that shares no term with the query, so "xyz" now honestly matches nothing.
+    """
     response = client.get("/search", params={"q": "xyz", "limit": 1})
     assert response.status_code == 200
-    assert len(response.json()) == 1
+    assert response.json() == []
 
 
 def test_classify_endpoint_ranks_with_reasoning() -> None:

@@ -1,22 +1,28 @@
-"""Fuzzy search over HS code descriptions using the standard library."""
+"""HS/CN code search: a thin adapter over the one scoring engine in cn_classifier.
 
-import logging
+Search used to be a second algorithm (difflib character overlap), kept
+deliberately separate from classification. That design was reversed: on the
+real nomenclature character overlap put "Brie" under "bicycle" and "Not painted"
+under "solar panel". Search now reuses `classify()` wholesale, including its
+cached TF-IDF index, hierarchical context and curated aliases. It only drops
+the per-term reasoning, which the Search panel does not show. See the README's
+"/search and /classify — one engine" section.
+"""
+
 import sqlite3
 from typing import NamedTuple, Optional
 
-from src.customsiq.database import fetch_all, fetch_all_translations, get_by_code
-from src.customsiq.exceptions import HSCodeNotFoundError
-from src.customsiq.matching import as_code, similarity, validate_query
+from src.customsiq.cn_classifier import classify
 from src.customsiq.models import HSCode
-
-logger = logging.getLogger(__name__)
 
 
 class SearchResult(NamedTuple):
-    """A single search match paired with its similarity score."""
+    """A single search match, its score, and where it sits in the tariff."""
 
     hs_code: HSCode
     score: float
+    hierarchy_path: str
+    alias: Optional[str] = None
 
 
 def search(
@@ -27,19 +33,14 @@ def search(
 ) -> list[SearchResult]:
     """Find the HS codes whose description best matches a free-text product query.
 
-    A query that is itself a CN-8/TARIC-10 code (regardless of formatting,
-    e.g. "9505.90.00" or "9505 90 00") is not scored as text: an all-digit
-    query would otherwise be compared against every description by raw
-    character overlap and come back with an arbitrary, unrelated top result,
-    since digits share almost nothing with letters. Instead it's routed to
-    an exact lookup.
+    Exactly `classify(conn, query, top_n=limit, language=language)`, so a
+    code-shaped query is still an exact lookup, `language` still adds that
+    language's text, and scores and ranking are identical between the two
+    routes by construction.
 
-    With `language`, each code is scored against its English description
-    *and* its description in that language, keeping whichever fits better.
-    English is never dropped: someone reading the German UI may still type an
-    English product name, and taking the better of the two costs nothing when
-    they do. A code with no text in that language, or a language with no
-    stored text at all, simply scores on English as before.
+    A query sharing no word with any code returns an empty list. The old
+    character-overlap search always filled `limit` rows, even when none of
+    them had anything to do with the query.
 
     Args:
         conn: An open database connection.
@@ -49,34 +50,13 @@ def search(
             e.g. "de". Defaults to English-only.
 
     Returns:
-        A single exact match at score 1.0 if `query` is a known code; an
-        empty list if `query` is code-shaped but no such code exists;
-        otherwise matching HS codes ordered by descending similarity score.
+        Matching HS codes, most likely first.
 
     Raises:
         InvalidQueryError: If the query is empty/whitespace-only, or longer
             than MAX_QUERY_LENGTH characters.
     """
-    validate_query(query)
-
-    code = as_code(query)
-    if code is not None:
-        try:
-            return [SearchResult(get_by_code(conn, code), 1.0)]
-        except HSCodeNotFoundError:
-            return []
-
-    logger.debug("searching for query=%r limit=%d language=%r", query, limit, language)
-    records = fetch_all(conn)
-    translations = fetch_all_translations(conn, language)
-
-    scored = []
-    for record in records:
-        score = similarity(query, record.description)
-        translated = translations.get(record.code)
-        if translated:
-            score = max(score, similarity(query, translated))
-        scored.append(SearchResult(record, score))
-
-    scored.sort(key=lambda result: result.score, reverse=True)
-    return scored[:limit]
+    return [
+        SearchResult(r.hs_code, r.score, r.hierarchy_path, r.alias)
+        for r in classify(conn, query, top_n=limit, language=language)
+    ]
