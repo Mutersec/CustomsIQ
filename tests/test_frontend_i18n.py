@@ -175,6 +175,23 @@ def test_every_language_offers_classify_as_the_next_thing_to_try(
     assert text.startswith(" "), "must append to lowConfidence, so it needs a leading space"
 
 
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_the_advice_names_the_panel_the_way_the_ui_labels_it(
+    dictionaries: dict, language: str
+) -> None:
+    """Pointing at a panel the user cannot find by that name is not advice.
+
+    The banner said "the Classify panel" while the German heading read
+    "Code-Einreihung", so the one language most likely to see the banner was
+    sent looking for a panel that does not exist under that name. Pinned
+    against `classify.title` rather than against a literal, so renaming the
+    panel fails here instead of silently desynchronising the two.
+    """
+    advice = _leaf_value(dictionaries[language], "common.tryClassify")
+    panel = _leaf_value(dictionaries[language], "classify.title")
+    assert panel in advice, f"{language}: {advice!r} does not name {panel!r}"
+
+
 def test_only_the_search_panel_suggests_classify(source: str) -> None:
     """Suggesting Classify from inside Classify would be nonsense."""
     assert "const lowConfidenceBanner = (rows, suggestClassify = false)" in source
