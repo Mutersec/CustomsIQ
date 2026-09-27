@@ -71,10 +71,16 @@ class TestGermanQueriesScoreBetter:
     """The point of the change, with the before/after numbers pinned."""
 
     def test_search_finds_the_german_term(self, bundle: sqlite3.Connection) -> None:
-        english_only = search(bundle, "Haselnüsse", limit=1)[0]
+        """English-only finds nothing; German text is an exact match.
+
+        Under the old difflib search the English-only call returned a weak
+        character-overlap row that `translated` merely outscored. Search now
+        shares classify()'s engine, so it behaves exactly like the classify
+        case below: no shared token, no result.
+        """
+        assert search(bundle, "Haselnüsse", limit=1) == []
         translated = search(bundle, "Haselnüsse", limit=1, language="de")[0]
 
-        assert translated.score > english_only.score
         assert translated.score == pytest.approx(1.0)
         assert translated.hs_code.code == HAZELNUT_CODE
 

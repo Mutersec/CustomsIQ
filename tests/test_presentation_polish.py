@@ -153,7 +153,18 @@ class TestResponseBodyUnchanged:
     def test_search_response_has_exactly_the_expected_fields(self) -> None:
         body = client.get("/search", params={"q": "cotton t-shirt"}).json()
         assert body
-        assert set(body[0]) == {"code", "description", "category", "score"}
+        # hierarchy_path and alias were added deliberately when /search moved
+        # onto classify()'s engine: the ancestor breadcrumb and the curated-alias
+        # marker. The original four fields are unchanged. See the README's
+        # "/search and /classify — one engine" section.
+        assert set(body[0]) == {
+            "code",
+            "description",
+            "hierarchy_path",
+            "category",
+            "score",
+            "alias",
+        }
 
     def test_assess_risk_response_has_exactly_the_expected_fields(self) -> None:
         body = client.get(

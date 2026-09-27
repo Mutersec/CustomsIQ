@@ -35,8 +35,14 @@ class SearchResult(BaseModel):
 
     code: str
     description: str
+    # The description with its ancestor context in front, e.g.
+    # "Live horses, asses, mules and hinnies > Horses > For slaughter". Equal to
+    # `description` for a code whose own text stands alone.
+    hierarchy_path: str
     category: str
     score: float
+    # The curated alias key that produced this row, or null for a scored match.
+    alias: Optional[str]
 
 
 class ClassificationResultResponse(BaseModel):
@@ -44,9 +50,11 @@ class ClassificationResultResponse(BaseModel):
 
     code: str
     description: str
+    hierarchy_path: str
     category: str
     score: float
     matched_terms: list[str]
+    alias: Optional[str]
     subject_reference: str
 
 

@@ -957,27 +957,31 @@ andere Entscheidung):
 
 (Die vollständigen Hashes und dieselben Prüfungen stehen in `tests/test_review.py::TestDeterminism`.)
 
-### 🧠 `/search` vs. `/classify` — ein Datenbestand, zwei Algorithmen
+### 🧠 `/search` und `/classify` — eine Engine (eine revidierte Designentscheidung)
 
-Beide ranken dieselbe `hs_codes`-Tabelle, beantworten aber verschiedene Fragen und scheitern
-verschieden. `/search` ist ein **Nachschlagen**: schneller Zeichenabgleich, gut wenn man die
-Formulierung ungefähr kennt. `/classify` ist eine **Vorschlagsmaschine**: sie gewichtet, wie
-*selten* jedes Wort im Datenbestand ist, sodass ein kennzeichnender Begriff mehr zählt als ein
-häufiger — und sie nennt, welche Ihrer Begriffe den Treffer bewirkt haben.
+**Früher** rankten beide Routen dieselbe Tabelle bewusst mit zwei Algorithmen: `/search` per
+difflib-Zeichenabgleich, `/classify` per TF-IDF mit Hierarchie-Kontext. Ein Test hielt sogar fest,
+dass beide bei `knitted cotton shirt` absichtlich verschieden antworten.
 
-Am Beispieldatenbestand gemessen:
+**Warum revidiert.** Sechs Alltagsanfragen gegen das live `/search` auf customsiq.org lieferten
+selbstsicher falsche Treffer, etwa `bicycle` → Brie, `solar panel` → "Not painted" ×5 oder
+`leather shoes` → Skier. `search()` ist jetzt ein dünner Adapter über `classify()`: gleiche Codes,
+gleiche Scores, gleiche Reihenfolge. Die Routen und Antwortformate bleiben getrennt. Fünf der sechs
+Anfragen treffen jetzt die richtige Position in den Top 5. **`solar panel` scheitert weiterhin**,
+weil der gebündelte Datenbestand keine Position 8541 enthält. Das ist eine Lücke im Bestand, nicht
+im Matching.
 
-| Abfrage | `/search` (difflib) | `/classify` (TF-IDF) | |
-|---|---|---|---|
-| `knitted cotton shirt` | `6203420000` Herren**hosen** aus Baumwolle | `6109100000` **T-Shirts aus Baumwolle, gewirkt** | ✅ classify richtig |
-| `lithium battery` | `8507600000` Lithium-Ionen-Akkus | dasselbe | unentschieden |
-| `laptop` | `3926909700` Haushaltsartikel aus Kunststoff | `8471300000` Notebooks | ✅ classify richtig |
+Neu dazu kamen: `hierarchy_path` (die Beschreibung mit ihrem Vorfahren-Kontext, in beiden
+Ergebniskarten als „Zolltarif-Hierarchie“ angezeigt), höchstens 3 Treffer je vierstelliger
+Position, damit z. B. 8712 nicht von fünf 8714-Teilezeilen verdrängt wird, und eine **bewusst
+winzige, kuratierte Alias-Tabelle** mit zehn Einträgen (`leech → 0106900090` u. a.). Diese ist
+ausdrücklich eine Demo des Konzepts und kein Synonymwörterbuch; echte Abdeckung bräuchte eine
+gepflegte Terminologiedatenbank. Latenz warm: 220–440 ms → **29–36 ms** (Englisch). Die
+Warnschwelle wurde für TF-IDF neu kalibriert (0,50 → 0,30), und der Hinweis „Code-Einreihung
+versuchen“ entfiel, weil beide Panels nun dieselbe Rangfolge liefern.
 
-Zeile 1 ist der Fall, der dieses Modul rechtfertigt: `knitted` kommt in nur einer Beschreibung vor,
-also lässt die Begriffsgewichtung es dominieren, während der Zeichenabgleich von der Masse der mit
-"cotton trousers" geteilten Buchstaben in die Irre geführt wird. Zeile 3 zeigt den umgekehrten
-Fehler: difflib liefert immer *irgendetwas*, `/classify` dagegen nichts, wenn kein Begriff geteilt
-wird — statt Rauschen als Vorschlag auszugeben.
+Vollständige Vorher/Nachher-Tabellen, Messwerte und jede geänderte Testfixierung stehen im
+[englischen README](README.md#-search-and-classify--one-engine-a-reversed-design-decision).
 
 **Warum handgeschriebenes TF-IDF und nicht scikit-learn.** Implementiert ist sklearns eigene Formel
 (geglättetes IDF `log((N+1)/(df+1))+1`, L2-normalisierte Vektoren, Kosinus über das Skalarprodukt)
