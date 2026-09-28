@@ -59,9 +59,6 @@ body::before {
 header, main, footer { position: relative; z-index: 1; }
 
 /* ---------- header ---------- */
-header {
-  border-top: 4px solid var(--gold);
-}
 .header-inner {
   max-width: 1180px;
   margin: 0 auto;
@@ -80,7 +77,6 @@ header {
   text-decoration: none;
   min-width: 0;
 }
-.brand svg { flex: none; }
 .brand-name {
   font-size: 20px;
   font-weight: 700;
@@ -339,12 +335,6 @@ footer p { max-width: 640px; margin: 0 auto; }
 <header>
   <div class="header-inner">
     <a class="brand" href="/login" aria-label="CustomsIQ">
-      <svg width="40" height="44" viewBox="0 0 40 44" aria-hidden="true">
-        <path d="M20 2 L37 8 V22 C37 32 29.5 39.5 20 42 C10.5 39.5 3 32 3 22 V8 Z" fill="#0b2545" stroke="#c9a227" stroke-width="2.5"/>
-        <rect x="10" y="17" width="20" height="12" rx="1.5" fill="#c9a227"/>
-        <path d="M14 19 V27 M18 19 V27 M22 19 V27 M26 19 V27" stroke="#0b2545" stroke-width="1.6"/>
-        <path d="M11 13 H29" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
-      </svg>
       <span>
         <span class="brand-name">Customs<span class="accent">IQ</span></span>
         <span class="brand-sub" data-i18n="brandSub"></span>
