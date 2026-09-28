@@ -68,9 +68,20 @@ class TestFaviconAndOpenGraph:
         assert match
         assert match.group(1).startswith("https://")
 
+    def test_the_head_offers_every_icon_size(self, html: str) -> None:
+        assert '<link rel="icon" href="/favicon.ico" sizes="48x48">' in html
+        assert '<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">' in html
+        assert 'sizes="192x192" href="/static/favicon-192.png"' in html
+
     @pytest.mark.parametrize(
         "path",
-        ["/static/favicon.png", "/static/apple-touch-icon.png", "/static/og-image.png"],
+        [
+            "/static/favicon.png",
+            "/static/favicon-96.png",
+            "/static/favicon-192.png",
+            "/static/apple-touch-icon.png",
+            "/static/og-image.png",
+        ],
     )
     def test_asset_is_served_as_a_real_png(self, path: str) -> None:
         response = client.get(path)
@@ -327,3 +338,48 @@ def test_a_signed_in_role_still_works_end_to_end_after_the_schema_change() -> No
         "authenticated",
     }
     assert body["authenticated"] is True
+
+
+class TestSearchEngineFavicon:
+    """Google Search showed a globe: the icon was 32 px and /favicon.ico was a 404.
+
+    Google needs a square icon of at least 48 px (a multiple of 48), and fetches
+    /favicon.ico without a session — the site is otherwise behind sign-in.
+    """
+
+    def test_favicon_ico_is_public_and_real(self) -> None:
+        response = TestClient(app).get("/favicon.ico")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/x-icon"
+        assert response.content[:4] == b"\x00\x00\x01\x00"  # ICO magic bytes
+
+    def test_the_sign_in_page_links_the_icons(self) -> None:
+        html = TestClient(app).get("/login").text
+        assert '<link rel="icon" href="/favicon.ico" sizes="48x48">' in html
+        assert 'href="/static/favicon-192.png"' in html
+
+    @pytest.mark.parametrize(
+        ("name", "size"),
+        [("favicon.png", 48), ("favicon-96.png", 96), ("favicon-192.png", 192)],
+    )
+    def test_png_icons_are_square_multiples_of_48(self, name: str, size: int) -> None:
+        pytest.importorskip(
+            "PIL", reason="Pillow is a one-off asset-generation tool, not a project dependency"
+        )
+        from PIL import Image
+
+        with Image.open(STATIC_DIR / name) as img:
+            assert img.size == (size, size)
+            assert size % 48 == 0
+
+    def test_the_ico_holds_16_32_and_48(self) -> None:
+        pytest.importorskip("PIL", reason="Pillow is a one-off asset-generation tool")
+        from PIL import Image
+
+        with Image.open(STATIC_DIR / "favicon.ico") as img:
+            assert {(16, 16), (32, 32), (48, 48)} <= set(img.info["sizes"])
+
+    def test_the_svg_icon_is_served(self) -> None:
+        response = TestClient(app).get("/static/favicon.svg")
+        assert response.status_code == 200
+        assert "<svg" in response.text

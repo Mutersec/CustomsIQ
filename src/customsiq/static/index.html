@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CustomsIQ — Trade Compliance Toolkit</title>
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="icon" type="image/png" href="/static/favicon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/favicon-192.png">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <meta name="description" content="An EU trade-compliance toolkit — HS/CN classification, denied-party screening, duty calculation and composite risk scoring, now running the real 13,733-code EU Combined Nomenclature.">
 <meta property="og:type" content="website">
@@ -56,15 +59,12 @@
   /* ---------- header ---------- */
   header {
     background: var(--navy-deep);
-    border-top: 4px solid var(--gold);
     padding: 14px 24px;
     position: sticky;
     top: 0;
     z-index: 20;
     box-shadow: 0 2px 12px rgba(3, 12, 28, 0.35);
   }
-
-  .brand-mark { flex: none; align-self: center; display: block; }
 
   .header-inner {
     max-width: 1180px;
@@ -857,12 +857,6 @@
 
 <header>
   <div class="header-inner">
-    <svg class="brand-mark" width="34" height="38" viewBox="0 0 40 44" aria-hidden="true">
-      <path d="M20 2 L37 8 V22 C37 32 29.5 39.5 20 42 C10.5 39.5 3 32 3 22 V8 Z" fill="#13315c" stroke="#c9a227" stroke-width="2.5"/>
-      <rect x="10" y="17" width="20" height="12" rx="1.5" fill="#c9a227"/>
-      <path d="M14 19 V27 M18 19 V27 M22 19 V27 M26 19 V27" stroke="#13315c" stroke-width="1.6"/>
-      <path d="M11 13 H29" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
-    </svg>
     <h1><a href="/">Customs<span class="accent">IQ</span></a></h1>
     <span class="tagline" data-i18n="tagline"></span>
     <span class="header-links">
