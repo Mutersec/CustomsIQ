@@ -48,6 +48,11 @@ ignore_missing_imports = true
 module = ["psycopg.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# Pillow is a one-off asset tool (scripts/make_favicons.py), not a project dependency.
+module = ["PIL.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

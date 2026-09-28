@@ -317,6 +317,17 @@ def index() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
 
 
+@app.get("/favicon.ico", response_class=FileResponse, include_in_schema=False)
+def favicon() -> FileResponse:
+    """The site icon at the conventional root path.
+
+    Search engines and some browsers request /favicon.ico directly instead of
+    reading the page's <link rel="icon">; without this route Google Search
+    showed a generic globe next to the site. Public, like /static/*.
+    """
+    return FileResponse(_STATIC_DIR / "favicon.ico", media_type="image/x-icon")
+
+
 @app.get("/login", response_class=FileResponse, include_in_schema=False)
 def login_page() -> FileResponse:
     """Serve the dedicated sign-in page, separate from the main app."""
