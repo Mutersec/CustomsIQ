@@ -780,9 +780,10 @@ nur Prüffreigaben brauchten ein Konto. Jetzt ist die Seite ein privater Arbeits
   - Der Code ist 10 Minuten gültig und verfällt nach 5 Fehlversuchen.
   - Ein neuer Code ist frühestens nach 60 s möglich; alle Routen unterliegen dem IP-Limit.
   - Gespeichert wird nur ein SHA-256 des Codes.
-- **„Mit Google fortfahren", doppelt geprüft.** Der Server prüft die Signatur des Google-ID-Tokens
-  mit `google-auth`, die Client-ID und die von Google bestätigte E-Mail. Ein **neuer**
-  Google-Nutzer erhält zusätzlich denselben E-Mail-Code. Bestehende Konten melden sich direkt an.
+- **„Mit Google fortfahren", mit einem Klick.** Der Server prüft die Signatur des
+  Google-ID-Tokens mit `google-auth`, die Client-ID und die von Google bestätigte E-Mail.
+  Dieses Token ist der Nachweis der Adresse; das Konto wird sofort angelegt oder gefunden,
+  **ohne E-Mail-Code**. Die Registrierung mit Passwort verlangt den Code weiterhin.
 - Anmeldung mit **Benutzername oder bestätigter E-Mail**.
 
 **Warum Brevo.** Brevo ist die günstigste Option: der kostenlose Tarif erlaubt 300 Mails/Tag
@@ -792,8 +793,8 @@ sicher fehl (`503`).
 
 Benötigte Einstellungen:
 - `CUSTOMSIQ_BREVO_API_KEY`
-- `CUSTOMSIQ_MAIL_FROM`, z. B. `noreply@customsiq.org`; die Domain muss in Brevo
-  authentifiziert sein.
+- `CUSTOMSIQ_MAIL_FROM`, standardmäßig `support@customsiq.org`; muss in Brevo als Absender
+  bestätigt sein.
 - `CUSTOMSIQ_GOOGLE_CLIENT_ID`: OAuth-Client (Web) mit den Origins der Seite.
 
 Die Schritt-für-Schritt-Anleitung steht in der [türkischen README](README.tr.md).

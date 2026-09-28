@@ -759,10 +759,10 @@ inceleme onayı hesap istiyordu. Artık site özel bir çalışma alanı:
   - Kod 10 dakika geçerlidir ve 5 yanlış denemede iptal olur.
   - Yeni kod 60 saniyede bir istenebilir; tüm uçlar IP başına istek sınırının arkasındadır.
   - Veritabanında kodun yalnızca özeti (SHA-256) tutulur.
-- **"Google ile devam et", iki kez doğrulanır.** Sunucu Google'ın kimlik belgesinin imzasını
+- **"Google ile devam et", tek tıkla.** Sunucu Google'ın kimlik belgesinin imzasını
   `google-auth` ile doğrular, bu uygulama için verildiğini ve e-postanın Google tarafından
-  doğrulandığını kontrol eder. **Yeni** bir Google kullanıcısına ayrıca aynı e-posta kodu
-  gider. Mevcut hesaplar Google ile doğrudan girer.
+  doğrulandığını kontrol eder. Bu belge adresin kanıtıdır. Hesap anında açılır ya da bulunur,
+  **e-posta kodu gerekmez**. Parolayla kayıtta kod zorunlu kalır.
 - Parolayla girişte **kullanıcı adı veya doğrulanmış e-posta** kullanılabilir.
 
 **Neden Brevo?** Ücretsiz planı (günde 300 e-posta, kredi kartı istemez) en düşük maliyetli
@@ -772,39 +772,52 @@ tarafta kalır ve `503` döner; doğrulanmamış hesap açılmaz.
 
 #### Kurulum: adım adım
 
-Bu adımlar yapılmadan da site çalışır: mevcut hesaplar giriş yapabilir. Ancak Google düğmesi
-görünmez ve yeni kayıt `503` döner.
+Bu adımlar yapılmadan da site çalışır ve mevcut hesaplar giriş yapabilir.
+- Google Client ID girilmezse Google düğmesi görünmez.
+- Brevo anahtarı girilmezse e-posta/parola ile kayıt `503` döner. Google ile giriş Brevo'ya
+  ihtiyaç duymaz.
 
-**1. Brevo (e-posta gönderimi, ücretsiz)**
+**1. Brevo (kodlar support@customsiq.org adresinden gider, ücretsiz)**
+
+Posta kutusu Zoho'da kalır. Brevo yalnızca kod e-postalarını bu adres adına gönderir;
+kullanıcı yanıtlarsa yanıt Zoho kutunuza düşer.
 1. [brevo.com](https://www.brevo.com/) adresinde ücretsiz hesap açın.
-2. **Senders, Domains & Dedicated IPs → Domains → Add a domain** ile `customsiq.org` ekleyin.
-3. Brevo size birkaç DNS kaydı verir (TXT: `brevo-code`, DKIM; SPF ve DMARC önerisi).
+2. **Senders, Domains & Dedicated IPs → Senders → Add a sender** ile `support@customsiq.org`
+   ekleyin. Brevo bu adrese onay e-postası yollar; Zoho kutunuzdan onaylayın.
+3. **Domains → Add a domain** ile `customsiq.org` ekleyin. Brevo size birkaç DNS kaydı verir
+   (`brevo-code` TXT, DKIM, SPF ve DMARC önerisi).
 4. **Hostinger → Domains → customsiq.org → DNS / Nameservers → DNS records** bölümüne bu
-   kayıtları aynen ekleyin:
-   - SPF için kök (`@`) altında tek bir TXT kaydı olmalı. Zaten varsa Brevo'nun
-     `include:spf.brevo.com` parçasını mevcut kaydın içine ekleyin; ikinci bir SPF kaydı
-     açmayın.
+   kayıtları ekleyin. **Zoho'nun kayıtlarını silmeyin**:
+   - **MX kayıtları** Zoho'nundur; aynen kalsın, yoksa `support@` e-posta alamaz.
+   - **SPF:** Zoho kurulumunda kök (`@`) altında zaten bir SPF kaydı oluştu, ör.
+     `v=spf1 include:zoho.eu ~all`. Yeni kayıt açmayın; Brevo'yu **aynı kaydın içine**
+     ekleyin: `v=spf1 include:zoho.eu include:spf.brevo.com ~all`. İki ayrı SPF kaydı olursa
+     ikisi de geçersiz sayılır.
+   - **DKIM:** Brevo'nun kaydı Zoho'nun DKIM kaydından farklı bir adla gelir; ikisi yan yana
+     durur.
+   - **DMARC** (`_dmarc`) tek kayıt olmalı; zaten varsa dokunmayın.
 5. Brevo'da **Verify / Authenticate** deyin. DNS yayılması birkaç dakika ile birkaç saat
    sürebilir.
 6. **SMTP & API → API Keys → Generate a new API key** ile bir anahtar oluşturun
    (`xkeysib-…` ile başlar). Anahtarı kimseyle paylaşmayın ve repoya koymayın.
 
-**2. Google ile giriş**
-1. [console.cloud.google.com](https://console.cloud.google.com/) → yeni proje oluşturun.
-2. **APIs & Services → OAuth consent screen**:
-   - kullanıcı türü **External**;
-   - uygulama adı "CustomsIQ", destek e-postanız;
+**2. Google ile giriş** (Google Cloud → **Google Auth Platform**)
+1. [console.cloud.google.com](https://console.cloud.google.com/) → projeniz (ör. `customsiq`).
+2. **Branding:**
+   - uygulama adı "CustomsIQ";
+   - destek e-postası `support@customsiq.org`;
+   - ana sayfa `https://customsiq.org`;
    - yetkili alan adı `customsiq.org`.
-   Yayınlama durumunu **In production** yapın; aksi hâlde yalnızca test kullanıcıları
-   girebilir.
-3. **APIs & Services → Credentials → Create credentials → OAuth client ID**, tür
-   **Web application**.
-4. **Authorized JavaScript origins** alanına şunları ekleyin (yönlendirme adresi gerekmez):
+3. **Audience:** kullanıcı türü **External**. **Publish app** ile durumu **In production**
+   yapın; aksi hâlde yalnızca test kullanıcıları girebilir.
+4. **Clients → Create client**, tür **Web application**, ad "CustomsIQ web".
+5. **Authorized JavaScript origins** alanına şunları ekleyin (sonlarında `/` olmadan;
+   yönlendirme adresi gerekmez):
    - `https://customsiq.org`
    - `https://www.customsiq.org` (kullanıyorsanız)
    - `https://customsiq-gs0u.onrender.com`
-5. Oluşan **Client ID**'yi kopyalayın (`….apps.googleusercontent.com`). Client secret
-   gerekmez.
+6. Oluşan **Client ID**'yi kopyalayın (`….apps.googleusercontent.com`). Client secret
+   gerekmez; kimseyle paylaşmayın.
 
 **3. Render ortam değişkenleri**
 
@@ -813,7 +826,7 @@ Render panelinde servisinizi açın → **Environment** → şunları ekleyin:
 | Anahtar | Değer |
 |---|---|
 | `CUSTOMSIQ_BREVO_API_KEY` | Brevo'dan aldığınız `xkeysib-…` anahtarı |
-| `CUSTOMSIQ_MAIL_FROM` | `noreply@customsiq.org` |
+| `CUSTOMSIQ_MAIL_FROM` | `support@customsiq.org` (varsayılan zaten bu, eklemeseniz de olur) |
 | `CUSTOMSIQ_GOOGLE_CLIENT_ID` | Google'dan aldığınız Client ID |
 
 Kaydedince Render servisi yeniden başlatır.

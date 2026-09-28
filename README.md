@@ -761,13 +761,14 @@ needed an account. That was reversed. The site is now a private workspace:
   stored. That keeps it out of the database in clear, but a million candidates are cheap
   offline, so the real protection is the expiry, attempt and rate limits, and the code says
   so.
-- **"Continue with Google", verified twice.** The browser's Google button returns an ID
-  token. The server verifies its signature against Google's keys with `google-auth`, checks
-  that it was issued for this app's client ID by Google, and that Google has verified the
-  e-mail. A **new** Google user then gets the same e-mailed code before an account exists.
-  That is two independent proofs of the address, the stricter of the options and the one
-  asked for. An existing account signs in with Google directly, matched by Google account
-  id, or by the same verified e-mail, which is then linked.
+- **"Continue with Google", one click.** The browser's Google button returns an ID token.
+  The server verifies its signature against Google's keys with `google-auth`, and checks that
+  Google issued it for this app's client ID and has verified the e-mail. That token is the
+  proof of the address, so the account is created or found on the spot, with **no e-mailed
+  code**. An existing account is matched by Google account id, or by the same verified
+  e-mail, which is then linked. The first version also required the e-mailed code for new
+  Google users. It was dropped because it proved the same thing twice and made Google sign-up
+  depend on the mail provider. The password route still requires the code.
 - **Username or e-mail** both work for password sign-in once an address is verified.
 
 **Why Brevo, and why not SMTP.** Codes are sent through Brevo's HTTP API: its free tier
@@ -777,13 +778,14 @@ it with `urllib`, with no new dependency. With no API key configured, registrati
 closed** (`503`) rather than creating unverified accounts. `CUSTOMSIQ_MAIL_DEV_LOG_CODES=true`
 writes codes to the server log instead, for local development only.
 
-**What the deployment needs** (none of it is in the repo; without it, Google stays hidden
-and sign-up returns `503`, while existing accounts keep working):
+**What the deployment needs** (none of it is in the repo). Without the Google client ID the
+Google button stays hidden. Without the Brevo key, e-mail/password sign-up returns `503`;
+Google sign-in does not need it. Existing accounts keep working either way:
 
 | Setting | Where it comes from |
 |---|---|
 | `CUSTOMSIQ_BREVO_API_KEY` | brevo.com → SMTP & API → API keys |
-| `CUSTOMSIQ_MAIL_FROM` | an address on a domain authenticated in Brevo (SPF/DKIM records added at the DNS host), e.g. `noreply@customsiq.org` |
+| `CUSTOMSIQ_MAIL_FROM` | defaults to `support@customsiq.org`; must be a sender verified in Brevo, ideally on a domain authenticated there (SPF/DKIM at the DNS host) |
 | `CUSTOMSIQ_GOOGLE_CLIENT_ID` | Google Cloud Console → Credentials → OAuth client ID (Web), with the site's origins under "Authorized JavaScript origins" |
 
 The Turkish README has the full click-by-click setup.
@@ -1744,7 +1746,7 @@ why and how.
 
 A new account is created in two steps. `POST /auth/register` e-mails a six-digit code, and
 `POST /auth/verify` with that code creates the account and signs it in. "Continue with
-Google" works the same way: the first time, the same code goes to the Google address.
+Google" needs no code: the first click creates the account.
 Sign in with your username **or** your verified e-mail.
 
 Four demo accounts are seeded on first start — one per role, so the permission model
@@ -1967,7 +1969,7 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/auth/register` | Start a sign-up; e-mails a six-digit code (`202`) |
 | `POST` | `/auth/verify` | Confirm the code, create the account, sign in |
 | `POST` | `/auth/resend` | New code for a pending sign-up (once a minute) |
-| `POST` | `/auth/google` | Sign in with a Google ID token, or start a Google sign-up |
+| `POST` | `/auth/google` | Sign in with a Google ID token; creates the account on first use |
 | `GET` | `/auth/config` | Whether Google sign-in is enabled (its public client ID) |
 | `POST` | `/auth/login` · `/auth/logout` · `GET /auth/me` | Session handling |
 | `GET` | `/search` | Ranked CN code matches for a product description |

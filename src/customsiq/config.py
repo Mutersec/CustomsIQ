@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # `mail_dev_log_codes` is set, which writes codes to the server log for
     # local development. Never enable that on a public deployment.
     brevo_api_key: Optional[str] = None
-    mail_from: str = "noreply@customsiq.org"
+    mail_from: str = "support@customsiq.org"
     mail_from_name: str = "CustomsIQ"
     mail_dev_log_codes: bool = False
     verification_code_ttl_minutes: int = 10

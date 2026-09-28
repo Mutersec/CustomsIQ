@@ -214,8 +214,9 @@ class SignupPendingResponse(BaseModel):
 class GoogleSignInResponse(BaseModel):
     """POST /auth/google.
 
-    `status` is "signed_in" (an existing account; `user` is set and the session
-    cookie issued) or "pending" (a new sign-up; a code went to `email`).
+    `status` is always "signed_in": the account (existing or just created) is
+    in `user` and the session cookie is issued. The field is kept so clients
+    written against the earlier "pending" variant keep working.
     """
 
     status: str

@@ -773,6 +773,8 @@ class GoogleRequest(BaseModel):
     """Body of POST /auth/google: the ID token Google's button returned."""
 
     credential: str
+    # Accepted for compatibility with older sign-in pages; Google sign-in no
+    # longer sends mail, so nothing is localized server-side.
     language: str = "en"
 
 
@@ -862,22 +864,19 @@ def auth_config() -> dict:
     dependencies=[Depends(_check_auth_rate_limit)],
 )
 def google_sign_in(body: GoogleRequest, request: Request, response: Response) -> dict:
-    """Sign in with Google, or start a Google sign-up.
+    """Sign in with Google, creating the account on first use.
 
-    An existing account (by Google id, or by the same verified e-mail) is
-    signed in directly. A new one gets the same e-mailed code as any sign-up:
-    Google's own verification of the address is checked and then required a
-    second time, by the code, before the account exists.
+    An existing account (by Google id, or by the same verified e-mail) is signed
+    in; a new one is created on the spot. No e-mailed code: the verified token
+    already proves Google checked the address.
     """
     if not settings.google_client_id:
         raise HTTPException(status_code=404, detail="Google sign-in is not enabled.")
     try:
         identity = google_identity.verify_credential(body.credential, settings.google_client_id)
-        user = auth.google_sign_in(_conn, identity, body.language)
+        user = auth.google_sign_in(_conn, identity)
     except _SIGNUP_FAILURES as exc:
         raise _signup_errors(exc) from exc
-    if user is None:
-        return {"status": "pending", "user": None, "email": identity.email}
     _set_session_cookie(request, response, auth.create_session(_conn, user))
     return {"status": "signed_in", "user": _user_payload(user), "email": identity.email}
 
