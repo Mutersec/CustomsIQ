@@ -1238,6 +1238,11 @@ eşiğinin altına düştüğünde uyarı banner'ı artık üç arayüz dilinin 
 paneline de işaret ediyor — çünkü bu sorgu sınıfında Sınıflandırma gerçekten daha iyi ve
 Arama daha iyi hâle getirilemiyor.
 
+> **Geçersiz kılındı.** Sonraki bir faz ters yöne gitti: bağlamı difflib'e bağlamak yerine
+> `search()` difflib'i tamamen bıraktı ve `classify()` üzerine ince bir adaptör oldu; yani bu
+> bağlamı bedavaya okuyor. Banner'daki Sınıflandırma yönlendirmesi de onunla birlikte kaldırıldı.
+> Bkz. [tek motor](#-search-ve-classify--tek-motor-geri-alınan-bir-tasarım-kararı).
+
 **Sonra:**
 
 ```

@@ -1280,6 +1280,12 @@ unter die 0,50-Schwelle für geringe Konfidenz, verweist das Warnbanner nun in a
 UI-Sprachen zusätzlich auf das Klassifizierungs-Panel — weil Klassifizieren bei dieser
 Anfrageklasse tatsächlich besser ist und Suchen nicht besser gemacht werden kann.
 
+> **Überholt.** Eine spätere Phase ging den anderen Weg: statt den Kontext in difflib zu
+> verdrahten, hat `search()` difflib ganz aufgegeben und ist ein dünner Adapter über
+> `classify()` geworden, liest diesen Kontext also gratis. Der Hinweis auf das
+> Klassifizierungs-Panel im Banner wurde damit entfernt. Siehe
+> [eine Engine](#-search-und-classify--eine-engine-eine-revidierte-designentscheidung).
+
 **Nachher:**
 
 ```
