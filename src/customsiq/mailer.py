@@ -12,11 +12,15 @@ The one exception is `mail_dev_log_codes`, a local-development switch that
 writes the code to the server log instead.
 """
 
+import html
 import json
 import logging
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from functools import cache
+from pathlib import Path
+from string import Template
 from typing import Optional
 
 from src.customsiq.config import settings
@@ -35,40 +39,79 @@ class MailDeliveryError(RuntimeError):
     """The provider rejected the message or could not be reached."""
 
 
-#: Subject and body per language. `{code}` and `{minutes}` are filled in.
+#: Every string of the verification e-mail, per language. `{code}` and
+#: `{minutes}` are filled in; everything goes through `html.escape` before it
+#: reaches the HTML template.
 _TEMPLATES = {
-    "en": (
-        "Your CustomsIQ verification code: {code}",
-        "Your CustomsIQ verification code is {code}. It expires in {minutes} minutes. "
+    "en": {
+        "subject": "Your CustomsIQ verification code: {code}",
+        "text": "Your CustomsIQ verification code is {code}. It expires in {minutes} minutes. "
         "If you did not try to create an account, you can ignore this e-mail.",
-    ),
-    "tr": (
-        "CustomsIQ doğrulama kodunuz: {code}",
-        "CustomsIQ doğrulama kodunuz {code}. Kod {minutes} dakika geçerlidir. "
+        "preheader": "Your code: {code} · valid for {minutes} minutes",
+        "heading": "Verify your e-mail address",
+        "intro": "Enter this code on the CustomsIQ sign-up page to finish creating your account.",
+        "code_label": "Your verification code",
+        "expiry": "This code is valid for {minutes} minutes.",
+        "ignore": "If you did not try to create an account, you can ignore this e-mail.",
+        "never_share": "Never share this code. CustomsIQ will never ask you for it.",
+        "footer": "CustomsIQ · EU customs &amp; trade compliance · support@customsiq.org",
+    },
+    "tr": {
+        "subject": "CustomsIQ doğrulama kodunuz: {code}",
+        "text": "CustomsIQ doğrulama kodunuz {code}. Kod {minutes} dakika geçerlidir. "
         "Hesap oluşturmaya çalışmadıysanız bu e-postayı yok sayabilirsiniz.",
-    ),
-    "de": (
-        "Ihr CustomsIQ-Bestätigungscode: {code}",
-        "Ihr CustomsIQ-Bestätigungscode lautet {code}. Er ist {minutes} Minuten gültig. "
+        "preheader": "Kodunuz: {code} · {minutes} dakika geçerli",
+        "heading": "E-posta adresinizi doğrulayın",
+        "intro": "Hesabınızı oluşturmayı tamamlamak için bu kodu CustomsIQ kayıt sayfasına girin.",
+        "code_label": "Doğrulama kodunuz",
+        "expiry": "Bu kod {minutes} dakika geçerlidir.",
+        "ignore": "Hesap oluşturmaya çalışmadıysanız bu e-postayı yok sayabilirsiniz.",
+        "never_share": "Bu kodu kimseyle paylaşmayın. CustomsIQ sizden kodu asla istemez.",
+        "footer": "CustomsIQ · AB gümrük ve ticaret uyumu · support@customsiq.org",
+    },
+    "de": {
+        "subject": "Ihr CustomsIQ-Bestätigungscode: {code}",
+        "text": "Ihr CustomsIQ-Bestätigungscode lautet {code}. Er ist {minutes} Minuten gültig. "
         "Wenn Sie kein Konto anlegen wollten, können Sie diese E-Mail ignorieren.",
-    ),
+        "preheader": "Ihr Code: {code} · {minutes} Minuten gültig",
+        "heading": "Bestätigen Sie Ihre E-Mail-Adresse",
+        "intro": "Geben Sie diesen Code auf der Registrierungsseite von CustomsIQ ein, "
+        "um Ihr Konto fertig anzulegen.",
+        "code_label": "Ihr Bestätigungscode",
+        "expiry": "Dieser Code ist {minutes} Minuten gültig.",
+        "ignore": "Wenn Sie kein Konto anlegen wollten, können Sie diese E-Mail ignorieren.",
+        "never_share": "Geben Sie diesen Code niemals weiter. "
+        "CustomsIQ wird Sie nie danach fragen.",
+        "footer": "CustomsIQ · EU-Zoll &amp; Außenhandels-Compliance · support@customsiq.org",
+    },
 }
 
 LANGUAGES = tuple(_TEMPLATES)
 
+#: Strings that already contain markup (an entity) and must not be escaped again.
+_PRE_ESCAPED = frozenset({"footer"})
+
+_TEMPLATE_PATH = Path(__file__).parent / "email_templates" / "verification_code.html"
+
+
+@cache
+def _html_template() -> Template:
+    """The card-style HTML e-mail, read once. `string.Template` rather than
+    `str.format` so the CSS braces in the file need no escaping."""
+    return Template(_TEMPLATE_PATH.read_text(encoding="utf-8"))
+
 
 def _render(code: str, language: str) -> tuple[str, str, str]:
     """Return (subject, text body, HTML body) for one code in one language."""
-    subject, body = _TEMPLATES.get(language, _TEMPLATES["en"])
+    strings = _TEMPLATES.get(language, _TEMPLATES["en"])
+    lang = language if language in _TEMPLATES else "en"
     minutes = settings.verification_code_ttl_minutes
-    text = body.format(code=code, minutes=minutes)
-    html = (
-        '<div style="font-family:Segoe UI,Arial,sans-serif;color:#0b2545;max-width:480px">'
-        '<p style="font-size:18px;font-weight:600;margin:0 0 12px">CustomsIQ</p>'
-        f'<p style="font-size:32px;letter-spacing:6px;font-weight:700;margin:0 0 16px">{code}</p>'
-        f'<p style="font-size:14px;line-height:1.5;margin:0">{text}</p></div>'
-    )
-    return subject.format(code=code), text, html
+    filled = {key: value.format(code=code, minutes=minutes) for key, value in strings.items()}
+    fields = {
+        key: value if key in _PRE_ESCAPED else html.escape(value) for key, value in filled.items()
+    }
+    body = _html_template().substitute(fields, code=html.escape(code), lang=lang)
+    return filled["subject"], filled["text"], body
 
 
 def _post(url: str, headers: dict, payload: bytes) -> None:

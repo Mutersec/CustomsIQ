@@ -152,6 +152,69 @@ class TestMailer:
     def test_the_sender_defaults_to_the_support_address(self) -> None:
         assert settings.mail_from == "support@customsiq.org"
 
+    def test_the_sender_is_customsiq_at_the_support_address(self, outbox: list) -> None:
+        mailer.send_verification_code("ada@example.com", "123456", "en")
+        assert outbox[-1]["sender"] == {"email": "support@customsiq.org", "name": "CustomsIQ"}
+
+
+class TestVerificationEmailTemplate:
+    """The card-style HTML body sent as Brevo's `htmlContent`."""
+
+    @pytest.mark.parametrize(
+        ("language", "heading", "expiry"),
+        [
+            ("en", "Verify your e-mail address", "This code is valid for 10 minutes."),
+            ("tr", "E-posta adresinizi doğrulayın", "Bu kod 10 dakika geçerlidir."),
+            ("de", "Bestätigen Sie Ihre E-Mail-Adresse", "Dieser Code ist 10 Minuten gültig."),
+        ],
+    )
+    def test_each_language_gets_the_card_with_the_code_and_expiry(
+        self, outbox: list, language: str, heading: str, expiry: str
+    ) -> None:
+        mailer.send_verification_code("ada@example.com", "407183", language)
+        body = outbox[-1]["htmlContent"]
+        assert f'<html lang="{language}">' in body
+        assert heading in body
+        assert expiry in body
+        assert ">407183</span>" in body
+        assert "border:2px dashed" in body  # the dashed code box
+        assert "background-color:#f3f5f8" in body  # light grey page
+        assert "background-color:#ffffff" in body  # white card
+
+    def test_it_is_responsive(self) -> None:
+        _, _, body = mailer._render("407183", "en")
+        assert "max-width:480px" in body
+        assert 'width="100%"' in body
+        assert "@media only screen and (max-width: 520px)" in body
+        assert '<meta name="viewport"' in body
+
+    def test_the_expiry_follows_the_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "verification_code_ttl_minutes", 15)
+        _, text, body = mailer._render("407183", "tr")
+        assert "Bu kod 15 dakika geçerlidir." in body
+        assert "15 dakika" in text
+
+    @pytest.mark.parametrize("language", ["en", "tr", "de", "unknown"])
+    def test_no_placeholder_is_left_unfilled(self, language: str) -> None:
+        _, _, body = mailer._render("407183", language)
+        assert "$" not in body
+
+    def test_an_unknown_language_falls_back_to_english(self) -> None:
+        _, _, body = mailer._render("407183", "xx")
+        assert '<html lang="en">' in body
+        assert "Verify your e-mail address" in body
+
+    def test_inserted_values_are_escaped(self) -> None:
+        _, _, body = mailer._render("<b>1</b>", "en")
+        assert "<b>1</b>" not in body
+        assert "&lt;b&gt;1&lt;/b&gt;" in body
+
+    def test_the_plain_text_alternative_is_still_sent(self, outbox: list) -> None:
+        mailer.send_verification_code("ada@example.com", "407183", "en")
+        text = outbox[-1]["textContent"]
+        assert "407183" in text
+        assert "<" not in text
+
     @pytest.mark.parametrize(
         ("language", "word"), [("en", "verification"), ("tr", "doğrulama"), ("de", "Bestätigung")]
     )
