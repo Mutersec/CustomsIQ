@@ -41,6 +41,7 @@ from src.customsiq.database import (
     get_by_code,
     get_connection,
     load_bundled_cn_nomenclature,
+    load_bundled_sanctions,
     seed,
     update_user_role,
 )
@@ -79,6 +80,11 @@ seed(_conn)
 # access and survives every cold start; upsert_hs_codes is idempotent, so
 # re-running this on every restart is safe and cheap (~90 ms).
 load_bundled_cn_nomenclature(_conn)
+# Same arrangement for the sanctions list: the real OFAC SDN subset goes on top
+# of the 18 invented fixture rows seed() just wrote, not instead of them. Those
+# 18 are what the READMEs' worked examples and the pinned tests are built on;
+# these ~5,100 are what an actual screen now hits.
+load_bundled_sanctions(_conn)
 if settings.seed_demo_users:
     auth.seed_demo_users(_conn)
 

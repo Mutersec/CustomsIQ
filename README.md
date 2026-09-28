@@ -31,9 +31,13 @@ lists, and calculate the duty owed.**
 > [🌍 The real EU Combined Nomenclature 2026](#-the-real-eu-combined-nomenclature-2026) below for
 > exactly what that means and how it's kept working on Render's ephemeral free tier (it's
 > committed to the repo, not fetched — survives every restart with zero network access).
-> **The sanctioned-party list and duty/tariff rates are still fictional mock data** — only the
-> product-code catalog is real; production use of any part of this tool still requires the
-> official sources linked throughout this README.
+> **The sanctions list is real too, as of the OFAC phase** — about 5,100 entities from the US
+> OFAC Specially Designated Nationals List's export-control programmes, snapshot 2026-09-22, a US
+> Government work in the public domain (17 U.S.C. § 105). See
+> [🚨 Real sanctions data: OFAC SDN replaces the invented list](#-real-sanctions-data-ofac-sdn-replaces-the-invented-list).
+> **The duty/tariff rates remain fictional mock data**, as do 18 invented entities kept beside the
+> real ones as the fixture behind this README's worked examples. Production use of any part of this
+> tool still requires the official sources linked throughout this README.
 
 ---
 
@@ -1294,6 +1298,135 @@ correct. The query became `"quokka zephyr wombat"`; the assertion did not change
 lives in its own table and only `classify()` reads it — so `models.HSCode`, `fetch_all`,
 the API schemas and the result-card markup are all untouched.
 
+### 🚨 Real sanctions data: OFAC SDN replaces the invented list
+
+**This reverses an earlier decision in this README.** The real-nomenclature phase deliberately
+made only the product codes real and said so: *"The sanctioned-party list and duty/tariff rates
+are still fictional mock data."* The nomenclature half of that has aged badly — a compliance tool
+whose screening list is invented can demonstrate the mechanism but never the thing itself. So the
+list is now real: **5,103 entities from the US OFAC Specially Designated Nationals List**,
+committed as `data/sanctions_ofac_2026.csv` and loaded at every startup.
+
+**The licence was checked against the primary source, and the obvious choice failed it.** The
+starting point was OpenSanctions' consolidated export, on a third-party claim of CC-BY 4.0. That
+claim is wrong: OpenSanctions publishes under **CC-BY-NC 4.0**, and its own commercial-use page is
+unambiguous about what that excludes —
+
+> "Compliance screening is a commercial use even though it generates no revenue: it's a cost of
+> doing business."
+> "Any use inside a for-profit business requires a data license."
+
+Its exemption covers journalists, affiliated academics, anti-corruption NGOs and "a student
+project, a hobby analysis, personal research". A publicly deployed screening tool sits between
+those two readings, and resolving it optimistically is not something to do quietly in a commit.
+
+**So the source became the primary list instead of an aggregator's reading of it.** OFAC's SDN
+List is a work of the United States Government and is therefore in the public domain under
+**17 U.S.C. § 105** — no non-commercial clause, no paid tier, no question to resolve. It is also
+the better engineering answer: it is one of the lists a real trade-compliance tool actually
+screens against, so the demo now screens against a primary source rather than a third party's
+compilation of one. Attribution is simply naming it, which the footer and this section do.
+
+**The file that prompted this was also not what it claimed to be.** The intended source was
+described as ~60,274 sanctioned entities. Measured: **1,226,553 rows, of which 1,017,433 are
+`Person`**, and the dominant datasets are not sanctions lists at all —
+
+| dataset | rows |
+|---|---|
+| PEP position annotations by OpenSanctions | 465,817 |
+| Wikidata | 376,355 |
+| Wikidata Politically Exposed Persons | 262,994 |
+| Brazil Politically Exposed Persons | 106,478 |
+| Spain Mayors and Councillors | 75,266 |
+| French Mayors | 34,826 |
+
+Only 312,510 rows carry a `sanctions` field at all. The overwhelming majority are councillors and
+legislators who are **not sanctioned by anyone**. Bundling a sample of that behind a UI captioned
+"denied party" would have labelled real, named, unsanctioned people as sanctions hits — a
+different and worse problem than the licence one, and the reason the file went unused even as a
+convenience once the source had changed.
+
+**Reconstructing the mapping, because OFAC's schema is not this project's schema.** The legacy CSV
+export ships three headerless files — OFAC's own tutorial confirms *"the column names are not
+stored in the actual sanctions list data files"* — and the layouts come from its published
+specification:
+
+```
+SDN.CSV  ent_num, SDN_Name, SDN_Type, Program, Title, Call_Sign,
+         Vess_type, Tonnage, GRT, Vess_flag, Vess_owner, Remarks
+ADD.CSV  Ent_num, Add_num, Address, City/State/Province/Postal Code,
+         Country, Add_remarks        -- joined on ent_num
+```
+
+| column | from | decision |
+|---|---|---|
+| `name` | `SDN_Name` | Verbatim. It is a PRIMARY KEY, so 5 duplicate names were collapsed, first occurrence winning. |
+| `country` | first `ADD.CSV` address by `add_num`, else the vessel's flag | Mapped to ISO 3166-1 alpha-2, which is what the column is documented to hold. `ZZ` for the 517 entities with neither. |
+| `list_source` | `"US OFAC SDN — " + Program` | `Program` packs several codes as `A] [B`; they are split and rejoined with `/`. |
+| `date_added` | the list's publication date | **Identical for every row, and that is not laziness.** OFAC's CSV export has *no date field of any kind* — not a listing date, not a last-changed date. The honest value is the snapshot this bundle was built from, `2026-09-22`; inventing a plausible per-entity date would be exactly the dishonesty this phase exists to remove. |
+
+**The country mapping is hand-written, and the build fails rather than guesses.** OFAC uses 217
+distinct country spellings across addresses and vessel flags, and they are not tidy: `PANAMA`
+beside `Panama`, four spellings of St Kitts, `Botswana False`, `None Identified`, and `Region:`
+prefixes. A dict of ~200 entries handles them, for the reason the authentication section already
+gives for rejecting passlib — this project keeps its runtime on the standard library. A spelling
+OFAC adds later raises `BundleError` and stops the build, rather than silently becoming `ZZ`.
+Regions resolve only where ISO 3166 itself puts the territory inside one country (Crimea is in
+ISO 3166-2:UA; Gaza and the West Bank are ISO 3166-1 PS); where ISO splits it, the answer is `ZZ`,
+because picking a side would be a political claim rather than a lookup.
+
+**The subset exists for latency, not repo size — the size argument is wrong.** All 19,391 SDN
+entries would be about 2 MB, *smaller* than the 3.1 MB nomenclature bundle already committed. What
+actually constrains it is that `screen_entity` takes no `limit` by design — silently truncating a
+hit list would be a compliance failure — so every entity is scored on every screen, measured at
+**~70 µs each and strictly linear**:
+
+| entities | per screen |
+|---|---|
+| 18 (before) | 1.4 ms |
+| 5,000 | 346 ms |
+| 12,000 | 845 ms |
+| 19,391 (all) | ~1,360 ms |
+
+`/screen`, `/assess-risk` and `/sap-gts/compliance-check` all pay it. The budget chosen is
+`search()`'s own envelope — ~350 ms, the cost of scanning the 13.7k-row nomenclature — which lands
+at about 5,100 entities. Measured after the fact: **150–330 ms per screen**, as intended.
+
+**Selection is principled and reproducible, not the first N rows.** Ten export-control programme
+families are kept — Russia, Ukraine, Iran, DPRK, Belarus, Syria, NPWMD, IFSR, IRGC, CAATSA —
+matched by *prefix*, so a new executive order (`RUSSIA-EO14065` and the like) is picked up without
+editing the list. Within them, entities are taken in `ent_num` order, which is OFAC's own
+designation order: oldest first, so the long-standing designations a reader is likeliest to
+recognise survive the cap. The cap is **600 per programme**, and an entity is kept when *any* of
+its programmes still has room — which is why `RUSSIA-EO14024`'s tally reads 1,042 rather than 600,
+and why a small programme like `DPRK-NKSPEA` (2 entities) is not starved by a large overlapping
+one. A plain "first 5,000 rows" would have kept the Russia block and dropped every other programme
+entirely. Resulting coverage: 26 programmes, all four entity types (companies, individuals,
+vessels, aircraft).
+
+**Why the 18 invented entities stay.** Exactly the arrangement the nomenclature bundle already
+uses: `seed()` writes the fixture, `load_bundled_sanctions()` adds the real data on top, and the
+two are separate calls. Tests build a `:memory:` connection and call `seed()` alone, so they see
+18 rows and no real data — which is what keeps every pinned score reproducible and independent of
+whatever OFAC published this month. It is also a hard requirement rather than a convenience:
+`matching.name_similarity`'s own docstring uses `"Northwind Maritime" vs "Northwind Maritime
+Holdings Ltd" -> 1.00` as its worked example for the token-overlap signal, and that file's matching
+logic is off-limits. Verified: no real OFAC name collides with any of the 18, so a real row can
+never overwrite a pinned example.
+
+**What did not change.** `matching.py` and `embargo_screener.py` are both untouched —
+`name_similarity`, the plain/token-sorted/token-overlap trio, the 2-token rule and
+`screening_threshold` are all exactly as they were. `embargo_screener` needed no edit at all
+because it already reads `fetch_all_entities(conn)`, so the richer data arrives through a seam
+that was already there. The only new code is a bundle builder, an idempotent `upsert_entities`,
+a loader, and one call at startup.
+
+**One behaviour worth naming, now that the data is real.** `screen_entity(conn, "Sberbank")`
+returns nothing, and that is correct rather than a gap: `name_similarity` distrusts token overlap
+for a single-token name, because a lone common word would otherwise match every record containing
+it. Real Sberbank entities *are* in the bundle — `"Sberbank Insurance"` finds them. The rule was
+always there; real data just makes it visible.
+
 ### 🚫 Name matching is not product matching
 
 Sanctions screening reuses the same `difflib` core for consistency and zero dependencies, but
@@ -2109,20 +2242,30 @@ EU Combined Nomenclature style — the original mock set, described above:
 
 ### Sanctions list
 
-The `sanctioned_entities` table is seeded with **18 entries** styled after EU Consolidated
-Financial Sanctions List rows — invented trading, shipping and engineering companies plus a few
-synthetic person names, stored surname-first the way real lists publish them.
+`sanctioned_entities` holds **5,121 rows**, from two sources that are deliberately not mixed up
+with each other:
 
-| Field | Example |
-|---|---|
-| `name` | `Northwind Maritime Holdings Ltd` · `Voronin-Teske, Aleksandr` |
-| `country` | `CY`, `AE`, `DE`, `RS`, `MT`, `NL`, … |
-| `list_source` | `EU Consolidated Financial Sanctions List` · `EU Dual-Use Export Control Watchlist` |
-| `date_added` | `2023-04-12` |
+| | rows | what it is |
+|---|---|---|
+| **Real** | 5,103 | `data/sanctions_ofac_2026.csv` — a subset of the US OFAC Specially Designated Nationals List, loaded at every startup. `list_source` names the list and the programme. |
+| **Invented** | 18 | `database.SANCTIONED_ENTITIES` — the fixture behind this README's worked examples. `list_source` is `EU Consolidated Financial Sanctions List` or `EU Dual-Use Export Control Watchlist`, neither of which is a real row from either list. |
 
-> 🚨 **Every name in this list is fictional.** None correspond to any real sanctioned person or
-> organisation, and the list must never be used for actual screening. Production screening
-> requires the official EU Consolidated Financial Sanctions List.
+| Field | Real example | Invented example |
+|---|---|---|
+| `name` | `GAZPROM INVEST, OOO` | `Northwind Maritime Holdings Ltd` |
+| `country` | `RU` | `CY` |
+| `list_source` | `US OFAC SDN — UKRAINE-EO13662/RUSSIA-EO14024` | `EU Consolidated Financial Sanctions List` |
+| `date_added` | `2026-09-22` | `2023-04-12` |
+
+The two are told apart by `list_source`: anything beginning `US OFAC SDN` is real, everything else
+is the fixture. `country` is `ZZ` for 517 real rows — ISO 3166-1's "unknown", because OFAC
+genuinely lists people with an empty address and no nationality.
+
+> 🚨 **Still not usable for real screening, and the reasons are specific.** The data is real but
+> it is a *snapshot* (2026-09-22 — designations change weekly), a *subset* (10 of OFAC's 72
+> programmes, capped per programme), *one list of many* (no EU, UK, UN or national lists), and the
+> name matching is deliberately fuzzy, so it both misses listed parties and flags unlisted ones.
+> Real screening requires the official, current lists.
 
 ### Tariff rates
 
@@ -2192,8 +2335,10 @@ dependency, since only this tool would ever use it. Exporting the sheet to CSV a
 > `data/cn_nomenclature_2026.csv` **is** such an extract: 13,733 leaf codes and their English,
 > German and French descriptions, derived from the official Eurostat/DG TAXUD CIRCABC export and
 > committed to this repo under that policy — a change from earlier phases, which only referenced
-> the official sources rather than bundling data from them. The sanctioned-party list and duty
-> rates elsewhere on this page remain entirely fictional and are unaffected by this.
+> the official sources rather than bundling data from them. The duty rates elsewhere on this page
+> remain entirely fictional and are unaffected by this. The sanctions list was fictional when this
+> was written and no longer is — it now ships under its own licence, the US public domain; see
+> [🚨 Real sanctions data](#-real-sanctions-data-ofac-sdn-replaces-the-invented-list).
 
 ---
 

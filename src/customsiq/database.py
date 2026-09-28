@@ -163,10 +163,19 @@ _EU_CFSL = "EU Consolidated Financial Sanctions List"
 _EU_DUAL_USE = "EU Dual-Use Export Control Watchlist"
 
 # ---------------------------------------------------------------------------
-# FICTIONAL DEMO DATA — every name below is invented for development and
-# testing. None of these entities are real, and none correspond to any real
-# sanctioned person or organisation. Never use this list for actual screening:
-# production data must come from the EU Consolidated Financial Sanctions List.
+# FIXTURE DATA, NOT THE LIVE LIST — every name below is invented. None of them
+# are real and none correspond to any real sanctioned person or organisation.
+#
+# These 18 stopped being the live sanctions list when the real OFAC SDN bundle
+# landed: `load_bundled_sanctions` adds ~5,100 genuinely listed entities on top
+# of these at startup, and that is what the running app screens against. What
+# these are *for* now is the pinned worked examples — "Northwind Maritime" is
+# the name behind the 0.6609 composite documented in all three READMEs, and it
+# is the example in `matching.name_similarity`'s own docstring. Tests build a
+# `:memory:` connection and call `seed()` alone, so they see exactly these 18
+# and no real data, which is what keeps every pinned score reproducible and
+# independent of whatever OFAC published this month.
+#
 # Persons are stored surname-first, the way real sanctions lists publish them.
 # ---------------------------------------------------------------------------
 SANCTIONED_ENTITIES: list[SanctionedEntity] = [
@@ -561,6 +570,77 @@ def fetch_all_contexts(conn: sqlite3.Connection, language: Optional[str]) -> dic
         (language or "en",),
     ).fetchall()
     return {code: context for code, context in rows}
+
+
+def upsert_entities(conn: sqlite3.Connection, entities: Iterable[SanctionedEntity]) -> int:
+    """Insert sanctioned-entity records, updating any whose name is already stored.
+
+    The counterpart to `upsert_hs_codes`, and needed for the same reason: the
+    only other way into this table is `_seed_if_empty`, which writes solely into
+    an empty table and so can never add the real bundle on top of the fixture
+    rows `seed()` has already written.
+
+    Keyed on `name`, which is the table's primary key. A screening list has no
+    better natural key — OFAC's own `ent_num` is not carried in this schema, and
+    two records with the same name screen identically anyway.
+
+    Args:
+        conn: An open database connection.
+        entities: Records to write.
+
+    Returns:
+        The number of rows written.
+    """
+    rows = [(e.name, e.country, e.list_source, e.date_added) for e in entities]
+    conn.executemany(
+        "INSERT INTO sanctioned_entities (name, country, list_source, date_added) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(name) DO UPDATE SET "
+        "country = excluded.country, list_source = excluded.list_source, "
+        "date_added = excluded.date_added",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def load_bundled_sanctions(conn: sqlite3.Connection, path: Optional[Path] = None) -> int:
+    """Load the committed OFAC SDN bundle into sanctioned_entities.
+
+    The sanctions counterpart to `load_bundled_cn_nomenclature`, and deliberately
+    identical in shape: the bundle (`data/sanctions_ofac_2026.csv`) is built once,
+    offline, by `scripts/build_sanctions_bundle.py` from OFAC's published SDN
+    List, then committed — so this needs no network access and survives a
+    filesystem reset.
+
+    Safe to call on every startup: `upsert_entities` is an idempotent
+    ON CONFLICT DO UPDATE, not the empty-table-only `_seed_if_empty` gate that
+    `seed()` uses. That gate would never fire here, because `seed()` has already
+    written `SANCTIONED_ENTITIES` moments earlier. The bundle *adds* to those 18
+    fixture rows rather than replacing them, which is what lets the pinned
+    worked examples keep working while live screening runs against real data.
+
+    Args:
+        conn: An open database connection.
+        path: Override for the bundle's location. Defaults to the file shipped
+            alongside this module, resolved from the module rather than the
+            working directory.
+
+    Returns:
+        The number of entities loaded.
+    """
+    if path is None:
+        path = Path(__file__).resolve().parent.parent.parent / "data" / "sanctions_ofac_2026.csv"
+
+    with path.open(newline="", encoding="utf-8") as handle:
+        entities = [
+            SanctionedEntity(row["name"], row["country"], row["list_source"], row["date_added"])
+            for row in csv.DictReader(handle)
+        ]
+
+    count = upsert_entities(conn, entities)
+    logger.info("loaded %d bundled sanctioned entities from %s", count, path)
+    return count
 
 
 def load_bundled_cn_nomenclature(conn: sqlite3.Connection, path: Optional[Path] = None) -> int:

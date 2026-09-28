@@ -31,9 +31,14 @@ prüfen und den fälligen Zoll berechnen.**
 > genau bedeutet und wie das auf Renders vergänglicher kostenloser Stufe funktioniert (im Repo
 > committet, nicht live geladen — übersteht jeden Neustart ohne Netzwerkzugriff), steht unten
 > unter [🌍 Die echte EU-Kombinierte Nomenklatur 2026](#-die-echte-eu-kombinierte-nomenklatur-2026).
-> **Die Sanktionsliste und die Zoll-/Abgabensätze bleiben fiktive Mock-Daten** — nur der
-> Produktcode-Katalog ist echt; der produktive Einsatz jedes anderen Teils dieses Tools erfordert
-> weiterhin die offiziellen, in dieser README verlinkten Quellen.
+> **Die Sanktionsliste ist seit der OFAC-Phase ebenfalls echt** — rund 5.100 Einträge aus den
+> Exportkontrollprogrammen der US-Liste der Specially Designated Nationals (SDN), Snapshot
+> 2026-09-22, ein Werk der US-Regierung und gemeinfrei (17 U.S.C. § 105). Siehe
+> [🚨 Echte Sanktionsdaten: OFAC SDN ersetzt die erfundene Liste](#-echte-sanktionsdaten-ofac-sdn-ersetzt-die-erfundene-liste).
+> **Die Zoll-/Abgabensätze bleiben fiktive Mock-Daten**, ebenso 18 erfundene Einträge, die neben den
+> echten als Fixture hinter den Beispielen dieses README erhalten bleiben. Der Produktivbetrieb
+> irgendeines Teils dieses Werkzeugs erfordert weiterhin die offiziellen Quellen, die in diesem README
+> verlinkt sind.
 
 ---
 
@@ -1336,6 +1341,142 @@ ist `bagpipes` echtes Korpusvokabular, und es zu treffen ist korrekt. Die Anfrag
 Kontext in seiner eigenen Tabelle lebt und nur `classify()` ihn liest — `models.HSCode`,
 `fetch_all`, die API-Schemata und das Markup der Ergebniskarte sind alle unangetastet.
 
+### 🚨 Echte Sanktionsdaten: OFAC SDN ersetzt die erfundene Liste
+
+**Das kehrt eine frühere Entscheidung in diesem README um.** Die Phase der echten Nomenklatur machte
+bewusst nur die Warennummern echt und schrieb es hin: *"Die Sanktionsliste und die Zoll-/Abgabensätze
+bleiben fiktive Mock-Daten."* Die Sanktionshälfte davon ist schlecht gealtert — ein Compliance-Werkzeug
+mit erfundener Prüfliste kann den Mechanismus zeigen, aber nie die Sache selbst. Die Liste ist jetzt
+echt: **5.103 Einträge aus der US-Liste der Specially Designated Nationals (SDN)**, als
+`data/sanctions_ofac_2026.csv` eingecheckt und bei jedem Start geladen.
+
+**Die Lizenz wurde an der Primärquelle geprüft, und die naheliegende Wahl fiel durch.** Ausgangspunkt
+war der konsolidierte Export von OpenSanctions, auf die Angabe eines Dritten hin als CC-BY 4.0. Diese
+Angabe ist falsch: OpenSanctions veröffentlicht unter **CC-BY-NC 4.0**, und die eigene Seite zur
+kommerziellen Nutzung ist eindeutig, was das ausschließt —
+
+> "Compliance screening is a commercial use even though it generates no revenue: it's a cost of
+> doing business."
+> "Any use inside a for-profit business requires a data license."
+
+Die Ausnahme gilt für Journalisten, institutionell angebundene Forschende, Antikorruptions-NGOs und
+"a student project, a hobby analysis, personal research". Ein öffentlich betriebenes Prüfwerkzeug
+liegt zwischen diesen beiden Lesarten, und das optimistisch aufzulösen ist nichts, was man
+stillschweigend in einem Commit tut.
+
+**Also wurde die Quelle die Primärliste statt der Lesart eines Aggregators.** Die SDN-Liste der OFAC
+ist ein Werk der Regierung der Vereinigten Staaten und damit nach **17 U.S.C. § 105** gemeinfrei —
+keine NonCommercial-Klausel, keine Bezahlstufe, keine offene Frage. Sie ist auch die bessere
+technische Antwort: sie ist eine der Listen, gegen die ein echtes Außenhandels-Compliance-Werkzeug
+tatsächlich prüft, also prüft die Demo nun gegen eine Primärquelle und nicht gegen die Zusammenstellung
+eines Dritten. Die Attribution besteht darin, sie ehrlich zu benennen; Footer und dieser Abschnitt tun
+das.
+
+**Die Datei, die den Anlass gab, war ebenfalls nicht das, was sie zu sein behauptete.** Die geplante
+Quelle war als ~60.274 sanktionierte Einträge beschrieben. Gemessen: **1.226.553 Zeilen, davon
+1.017.433 `Person`**, und die dominierenden Datensätze sind überhaupt keine Sanktionslisten —
+
+| Datensatz | Zeilen |
+|---|---|
+| PEP position annotations by OpenSanctions | 465.817 |
+| Wikidata | 376.355 |
+| Wikidata Politically Exposed Persons | 262.994 |
+| Brazil Politically Exposed Persons | 106.478 |
+| Spain Mayors and Councillors | 75.266 |
+| French Mayors | 34.826 |
+
+Nur 312.510 Zeilen tragen überhaupt ein `sanctions`-Feld. Die überwiegende Mehrheit sind Gemeinderäte
+und Abgeordnete, die **von niemandem sanktioniert sind**. Eine Stichprobe daraus hinter eine
+Oberfläche mit der Aufschrift "denied party" zu bündeln hätte echte, namentlich genannte, nicht
+sanktionierte Menschen als Sanktionstreffer ausgewiesen — ein anderes und schlimmeres Problem als das
+Lizenzthema, und der Grund, warum die Datei auch nicht der Bequemlichkeit halber verwendet wurde,
+nachdem die Quelle gewechselt war.
+
+**Das Mapping musste neu gebaut werden, denn das Schema der OFAC ist nicht das Schema dieses
+Projekts.** Der Legacy-CSV-Export liefert drei Dateien ohne Kopfzeile — das eigene Tutorial der OFAC
+bestätigt *"the column names are not stored in the actual sanctions list data files"* — und die
+Layouts stammen aus ihrer veröffentlichten Spezifikation:
+
+```
+SDN.CSV  ent_num, SDN_Name, SDN_Type, Program, Title, Call_Sign,
+         Vess_type, Tonnage, GRT, Vess_flag, Vess_owner, Remarks
+ADD.CSV  Ent_num, Add_num, Address, City/State/Province/Postal Code,
+         Country, Add_remarks        -- über ent_num verknüpft
+```
+
+| Spalte | Quelle | Entscheidung |
+|---|---|---|
+| `name` | `SDN_Name` | Wortwörtlich. Es ist ein PRIMARY KEY, daher wurden 5 doppelte Namen zusammengeführt, das erste Vorkommen gewinnt. |
+| `country` | erste `ADD.CSV`-Adresse nach `add_num`, sonst die Flagge des Schiffs | Auf ISO 3166-1 alpha-2 abgebildet, denn das ist der dokumentierte Inhalt der Spalte. `ZZ` für die 517 Einträge ohne beides. |
+| `list_source` | `"US OFAC SDN — " + Program` | `Program` packt mehrere Codes als `A] [B`; sie werden getrennt und mit `/` wieder verbunden. |
+| `date_added` | Veröffentlichungsdatum der Liste | **Für jede Zeile identisch, und das ist keine Faulheit.** Der CSV-Export der OFAC hat *überhaupt kein Datumsfeld* — kein Listungsdatum, kein Änderungsdatum. Der ehrliche Wert ist der Snapshot, aus dem dieses Bundle gebaut wurde: `2026-09-22`. Ein plausibel aussehendes Datum pro Eintrag zu erfinden wäre genau die Unehrlichkeit, deren Beseitigung der Zweck dieser Phase ist. |
+
+**Die Ländertabelle ist handgeschrieben, und der Build scheitert, statt zu raten.** Die OFAC verwendet
+über Adressen und Schiffsflaggen hinweg 217 verschiedene Länderschreibweisen, und die sind nicht
+ordentlich: `PANAMA` neben `Panama`, vier Schreibweisen von St. Kitts, `Botswana False`,
+`None Identified` und `Region:`-Präfixe. Ein Dictionary mit ~200 Einträgen deckt sie ab, aus dem
+Grund, den der Authentifizierungsabschnitt bereits für die Ablehnung von passlib nennt: dieses Projekt
+hält seine Laufzeit auf der Standardbibliothek. Eine Schreibweise, die die OFAC später hinzufügt, löst
+`BundleError` aus und stoppt den Build, statt still zu `ZZ` zu werden. Regionen werden nur dort
+aufgelöst, wo ISO 3166 selbst das Gebiet einem Land zuordnet (die Krim liegt in ISO 3166-2:UA; Gaza
+und das Westjordanland sind ISO 3166-1 PS); wo ISO das Gebiet aufteilt, lautet die Antwort `ZZ`, denn
+eine Seite zu wählen wäre eine politische Behauptung und kein Nachschlagen.
+
+**Die Teilmenge existiert wegen der Latenz, nicht wegen der Repo-Größe — das Größenargument ist
+falsch.** Alle 19.391 SDN-Einträge wären etwa 2 MB, also *kleiner* als das bereits eingecheckte
+3,1-MB-Nomenklatur-Bundle. Die eigentliche Schranke ist, dass `screen_entity` absichtlich kein `limit`
+nimmt — eine Trefferliste still abzuschneiden wäre ein Compliance-Fehler — sodass bei jeder Prüfung
+jeder Eintrag bewertet wird, gemessen mit **~70 µs pro Eintrag und streng linear**:
+
+| Einträge | pro Prüfung |
+|---|---|
+| 18 (vorher) | 1,4 ms |
+| 5.000 | 346 ms |
+| 12.000 | 845 ms |
+| 19.391 (alle) | ~1.360 ms |
+
+`/screen`, `/assess-risk` und `/sap-gts/compliance-check` zahlen das alle. Das gewählte Budget ist die
+eigene Hülle von `search()` — ~350 ms, die Kosten eines Scans über die 13,7k Nomenklaturzeilen — und
+das landet bei etwa 5.100 Einträgen. Im Nachhinein gemessen: **150–330 ms pro Prüfung**, wie
+beabsichtigt.
+
+**Die Auswahl ist begründet und reproduzierbar, nicht die ersten N Zeilen.** Zehn Programmfamilien der
+Exportkontrolle bleiben — Russland, Ukraine, Iran, DVRK, Belarus, Syrien, NPWMD, IFSR, IRGC, CAATSA —
+per *Präfix* erkannt, sodass eine neue Executive Order (`RUSSIA-EO14065` und dergleichen) ohne
+Änderung der Liste erfasst wird. Innerhalb dieser werden Einträge in `ent_num`-Reihenfolge genommen,
+der eigenen Listungsreihenfolge der OFAC: älteste zuerst, damit die langjährigen Designierungen, die
+ein Leser am ehesten wiedererkennt, die Obergrenze überleben. Die Obergrenze liegt bei **600 pro
+Programm**, und ein Eintrag bleibt, wenn *irgendeines* seiner Programme noch Platz hat — weshalb der
+Zähler von `RUSSIA-EO14024` 1.042 und nicht 600 zeigt und weshalb ein kleines Programm wie
+`DPRK-NKSPEA` (2 Einträge) nicht von einem großen überlappenden ausgehungert wird. Ein einfaches
+"erste 5.000 Zeilen" hätte den Russland-Block behalten und jedes andere Programm vollständig fallen
+lassen. Resultierende Abdeckung: 26 Programme, alle vier Eintragsarten (Unternehmen, Personen,
+Schiffe, Flugzeuge).
+
+**Warum die 18 erfundenen Einträge bleiben.** Genau die Anordnung, die das Nomenklatur-Bundle schon
+verwendet: `seed()` schreibt die Fixture, `load_bundled_sanctions()` legt die echten Daten darüber, und
+beides sind getrennte Aufrufe. Tests bauen eine `:memory:`-Verbindung und rufen nur `seed()`, sehen
+also 18 Zeilen und keine echten Daten — und genau das hält jeden fixierten Wert reproduzierbar und
+unabhängig davon, was die OFAC in diesem Monat veröffentlicht hat. Es ist außerdem eine harte
+Anforderung und keine Bequemlichkeit: der Docstring von `matching.name_similarity` verwendet
+`"Northwind Maritime" vs "Northwind Maritime Holdings Ltd" -> 1.00` als sein Beispiel für das
+Token-Overlap-Signal, und die Matching-Logik dieser Datei ist tabu. Geprüft: kein echter OFAC-Name
+kollidiert mit einem der 18, eine echte Zeile kann also nie ein fixiertes Beispiel überschreiben.
+
+**Was sich nicht geändert hat.** `matching.py` und `embargo_screener.py` sind beide unangetastet —
+`name_similarity`, das Trio aus einfachem, tokensortiertem und Token-Overlap-Signal, die
+Zwei-Token-Regel und `screening_threshold` sind genau wie vorher. `embargo_screener` brauchte gar keine
+Änderung, weil es bereits `fetch_all_entities(conn)` liest; die reicheren Daten kommen also durch eine
+Naht, die schon da war. Der komplette neue Code: ein Bundle-Builder, ein idempotentes
+`upsert_entities`, ein Loader und ein Aufruf beim Start.
+
+**Ein Verhalten, das jetzt Erwähnung verdient, wo die Daten echt sind.**
+`screen_entity(conn, "Sberbank")` liefert nichts, und das ist richtig und keine Lücke:
+`name_similarity` misstraut dem Token-Overlap bei einem Namen aus einem einzigen Token, weil ein
+einzelnes häufiges Wort sonst auf jeden Eintrag passen würde, der es enthält. Echte Sberbank-Einträge
+*sind* im Bundle — `"Sberbank Insurance"` findet sie. Die Regel war immer da; echte Daten machen sie
+nur sichtbar.
+
 ### 🚫 Namensabgleich ist kein Produktabgleich
 
 Die Sanktionsprüfung nutzt aus Konsistenzgründen denselben `difflib`-Kern ohne zusätzliche
@@ -2128,20 +2269,30 @@ im Stil der EU-Kombinierten Nomenklatur — dem ursprünglichen Mock-Set, oben b
 
 ### Sanktionsliste
 
-Die Tabelle `sanctioned_entities` wird mit **18 Einträgen** im Stil der konsolidierten
-EU-Finanzsanktionsliste vorbefüllt: erfundene Handels-, Schifffahrts- und Ingenieurunternehmen sowie
-einige synthetische Personennamen, nachnamenzuerst gespeichert, wie es echte Listen veröffentlichen.
+`sanctioned_entities` hält **5.121 Zeilen** aus zwei Quellen, die bewusst nicht vermischt werden:
 
-| Feld | Beispiel |
-|---|---|
-| `name` | `Northwind Maritime Holdings Ltd` · `Voronin-Teske, Aleksandr` |
-| `country` | `CY`, `AE`, `DE`, `RS`, `MT`, `NL`, … |
-| `list_source` | `EU Consolidated Financial Sanctions List` · `EU Dual-Use Export Control Watchlist` |
-| `date_added` | `2023-04-12` |
+| | Zeilen | was es ist |
+|---|---|---|
+| **Echt** | 5.103 | `data/sanctions_ofac_2026.csv` — eine Teilmenge der US-Liste der Specially Designated Nationals, bei jedem Start geladen. `list_source` benennt Liste und Programm. |
+| **Erfunden** | 18 | `database.SANCTIONED_ENTITIES` — die Fixture hinter den Beispielen dieses README. `list_source` ist `EU Consolidated Financial Sanctions List` oder `EU Dual-Use Export Control Watchlist`, und keines davon ist eine echte Zeile aus einer dieser Listen. |
 
-> 🚨 **Jeder Name in dieser Liste ist fiktiv.** Keiner entspricht einer real sanktionierten Person
-> oder Organisation, und die Liste darf niemals für eine echte Prüfung verwendet werden. Der
-> Produktivbetrieb erfordert die offizielle konsolidierte EU-Finanzsanktionsliste.
+| Feld | Echtes Beispiel | Erfundenes Beispiel |
+|---|---|---|
+| `name` | `GAZPROM INVEST, OOO` | `Northwind Maritime Holdings Ltd` |
+| `country` | `RU` | `CY` |
+| `list_source` | `US OFAC SDN — UKRAINE-EO13662/RUSSIA-EO14024` | `EU Consolidated Financial Sanctions List` |
+| `date_added` | `2026-09-22` | `2023-04-12` |
+
+Unterschieden werden beide über `list_source`: alles, was mit `US OFAC SDN` beginnt, ist echt, alles
+andere ist die Fixture. Bei 517 echten Zeilen steht `country` auf `ZZ` — ISO 3166-1s "unbekannt", denn
+die OFAC listet tatsächlich Personen ohne Adresse und ohne Staatsangehörigkeit.
+
+> 🚨 **Weiterhin nicht für echte Prüfungen verwendbar, und die Gründe sind konkret.** Die Daten sind
+> echt, aber sie sind ein *Snapshot* (2026-09-22 — Designierungen ändern sich wöchentlich), eine
+> *Teilmenge* (10 der 72 OFAC-Programme, pro Programm begrenzt), *eine Liste von vielen* (keine EU-,
+> UK-, UN- oder nationalen Listen), und der Namensabgleich ist bewusst unscharf, übersieht also
+> gelistete Parteien und markiert nicht gelistete. Echte Prüfungen erfordern die offiziellen,
+> aktuellen Listen.
 
 ### Zollsätze
 
@@ -2216,8 +2367,10 @@ da nur dieses Werkzeug sie je bräuchte. Ein CSV-Export erübrigt sie vollständ
 > englischer, deutscher und französischer Beschreibung, abgeleitet aus dem offiziellen
 > Eurostat/DG-TAXUD-CIRCABC-Export und im Rahmen dieser Politik ins Repo committet — ein
 > Unterschied zu früheren Phasen, die nur auf offizielle Quellen verwiesen, ohne Daten
-> einzubetten. Die Sanktionsliste und die Zollsätze auf dieser Seite bleiben vollständig
-> fiktiv und sind davon unberührt.
+> einzubetten. Die Zollsätze auf dieser Seite bleiben vollständig fiktiv und sind davon unberührt.
+> Die Sanktionsliste war fiktiv, als dies geschrieben wurde, und ist es nicht mehr — sie kommt nun
+> unter ihrer eigenen Lizenz, der US-Gemeinfreiheit; siehe
+> [🚨 Echte Sanktionsdaten](#-echte-sanktionsdaten-ofac-sdn-ersetzt-die-erfundene-liste).
 
 ---
 

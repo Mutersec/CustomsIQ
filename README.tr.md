@@ -31,9 +31,13 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 > Render'ın ücretsiz, kalıcı olmayan katmanında nasıl çalışır tutulduğunu (depoya gömülü, canlı
 > çekilmiyor — her yeniden başlamada sıfır ağ erişimiyle hayatta kalıyor) aşağıdaki
 > [🌍 Gerçek AB Kombine Nomanklatürü 2026](#-gerçek-ab-kombine-nomanklatürü-2026) bölümünde görün.
-> **Yaptırım listesi ve gümrük/tarife oranları hâlâ kurgusal mock veridir** — yalnızca ürün kodu
-> kataloğu gerçek; bu aracın herhangi bir parçasının üretim kullanımı yine de bu README boyunca
-> bağlantılanan resmî kaynakları gerektirir.
+> **OFAC fazından itibaren yaptırım listesi de gerçektir** — ABD OFAC Özel Olarak Belirlenmiş
+> Kişiler (SDN) Listesi'nin ihracat kontrolü programlarından yaklaşık 5.100 kayıt, anlık görüntü
+> 2026-09-22, bir ABD Devleti eseri ve kamu malı (17 U.S.C. § 105). Bkz.
+> [🚨 Gerçek yaptırım verisi: OFAC SDN uydurma listeyi değiştiriyor](#-gerçek-yaptırım-verisi-ofac-sdn-uydurma-listeyi-değiştiriyor).
+> **Gümrük/tarife oranları kurgusal mock veri olarak kalıyor**; bu README'nin örnek senaryolarının
+> arkasındaki fixture olarak gerçeklerin yanında tutulan 18 uydurma kayıt da öyle. Bu aracın herhangi
+> bir parçasının üretim kullanımı yine de bu README boyunca bağlantılanan resmî kaynakları gerektirir.
 
 ---
 
@@ -1293,6 +1297,134 @@ ve onu eşleştirmek doğru. Sorgu `"quokka zephyr wombat"` oldu; iddia değişm
 yaşıyor ve yalnızca `classify()` onu okuyor — dolayısıyla `models.HSCode`, `fetch_all`, API
 şemaları ve sonuç kartı işaretlemesi hiç ellenmedi.
 
+### 🚨 Gerçek yaptırım verisi: OFAC SDN uydurma listeyi değiştiriyor
+
+**Bu, bu README'deki daha önceki bir kararı tersine çeviriyor.** Gerçek nomanklatür fazı bilinçli
+olarak yalnızca ürün kodlarını gerçek yaptı ve bunu açıkça yazdı: *"Yaptırım listesi ve gümrük/tarife
+oranları hâlâ kurgusal mock veridir."* Bunun yaptırım tarafı kötü yaşlandı — tarama listesi uydurma
+olan bir uyum aracı mekanizmayı gösterebilir ama işin kendisini asla gösteremez. Artık liste gerçek:
+**ABD OFAC Özel Olarak Belirlenmiş Kişiler (SDN) Listesi'nden 5.103 kayıt**,
+`data/sanctions_ofac_2026.csv` olarak depoya işlenmiş ve her açılışta yükleniyor.
+
+**Lisans birincil kaynaktan doğrulandı ve bariz seçenek bu testi geçemedi.** Başlangıç noktası,
+üçüncü taraf bir kaynağın CC-BY 4.0 dediği OpenSanctions konsolide dışa aktarımıydı. Bu iddia yanlış:
+OpenSanctions **CC-BY-NC 4.0** ile yayımlıyor ve kendi ticari kullanım sayfası neyi dışladığı
+konusunda hiç muğlak değil —
+
+> "Compliance screening is a commercial use even though it generates no revenue: it's a cost of
+> doing business."
+> "Any use inside a for-profit business requires a data license."
+
+Muafiyetleri gazetecileri, kurumsal bağlantılı akademisyenleri, yolsuzlukla mücadele STK'larını ve
+"a student project, a hobby analysis, personal research"ü kapsıyor. Herkese açık şekilde deploy
+edilmiş bir tarama aracı bu iki okumanın arasında kalıyor ve bunu iyimser tarafa çekmek, bir commit
+içinde sessizce yapılacak bir şey değil.
+
+**Bu yüzden kaynak, bir agregatörün okuması yerine birincil listenin kendisi oldu.** OFAC'ın SDN
+Listesi bir Amerika Birleşik Devletleri Devleti eseridir ve bu nedenle **17 U.S.C. § 105** uyarınca
+kamu malıdır — ticari olmayan kaydı yok, ücretli katmanı yok, çözülecek bir soru yok. Aynı zamanda
+daha iyi mühendislik cevabı: gerçek bir dış ticaret uyum aracının fiilen taradığı listelerden biri
+bu, yani demo artık üçüncü bir tarafın derlemesi yerine birincil kaynağa karşı tarıyor. Atıf, onu
+dürüstçe adlandırmaktan ibaret; footer ve bu bölüm bunu yapıyor.
+
+**Buna yol açan dosya da iddia edildiği şey değildi.** Hedeflenen kaynak ~60.274 yaptırımlı kuruluş
+olarak tarif edilmişti. Ölçüm: **1.226.553 satır, bunun 1.017.433'ü `Person`** ve baskın kaynaklar
+hiç yaptırım listesi değil —
+
+| kaynak | satır |
+|---|---|
+| PEP position annotations by OpenSanctions | 465.817 |
+| Wikidata | 376.355 |
+| Wikidata Politically Exposed Persons | 262.994 |
+| Brazil Politically Exposed Persons | 106.478 |
+| Spain Mayors and Councillors | 75.266 |
+| French Mayors | 34.826 |
+
+Satırların yalnızca 312.510'unda bir `sanctions` alanı var. Ezici çoğunluk, **kimse tarafından
+yaptırıma tabi tutulmamış** belediye meclis üyeleri ve milletvekilleri. Bunun bir örneğini "denied
+party" yazan bir arayüzün arkasına koymak, gerçek, isimli ve yaptırımsız insanları yaptırım
+eşleşmesi olarak etiketlemek olurdu — lisans sorunundan farklı ve daha kötü bir problem, ve kaynak
+değiştikten sonra dosyanın kolaylık olsun diye bile kullanılmamasının nedeni.
+
+**Eşlemeyi yeniden kurmak gerekti, çünkü OFAC'ın şeması bu projenin şeması değil.** Eski CSV dışa
+aktarımı başlıksız üç dosya halinde geliyor — OFAC'ın kendi eğitim belgesi *"the column names are not
+stored in the actual sanctions list data files"* diyor — ve düzenler yayımladığı şartnameden alındı:
+
+```
+SDN.CSV  ent_num, SDN_Name, SDN_Type, Program, Title, Call_Sign,
+         Vess_type, Tonnage, GRT, Vess_flag, Vess_owner, Remarks
+ADD.CSV  Ent_num, Add_num, Address, City/State/Province/Postal Code,
+         Country, Add_remarks        -- ent_num üzerinden birleştirilir
+```
+
+| kolon | kaynak | karar |
+|---|---|---|
+| `name` | `SDN_Name` | Birebir. PRIMARY KEY olduğu için 5 mükerrer isim birleştirildi, ilk görülen kazandı. |
+| `country` | `add_num`'a göre ilk `ADD.CSV` adresi, yoksa geminin bayrağı | Kolonun belgelenmiş içeriği olan ISO 3166-1 alpha-2'ye eşlendi. İkisi de olmayan 517 kayıt için `ZZ`. |
+| `list_source` | `"US OFAC SDN — " + Program` | `Program` birkaç kodu `A] [B` biçiminde paketliyor; ayrıştırılıp `/` ile birleştiriliyor. |
+| `date_added` | listenin yayım tarihi | **Her satırda aynı ve bu tembellik değil.** OFAC'ın CSV dışa aktarımında *hiçbir tarih alanı yok* — ne listeleme tarihi ne son değişiklik tarihi. Dürüst değer, bu bundle'ın üretildiği anlık görüntü: `2026-09-22`. Kayıt başına makul görünen bir tarih uydurmak, tam olarak bu fazın ortadan kaldırmak için var olduğu sahtelik olurdu. |
+
+**Ülke eşlemesi elle yazıldı ve build tahmin etmek yerine hata veriyor.** OFAC adres ve gemi
+bayraklarında 217 farklı ülke yazımı kullanıyor ve bunlar derli toplu değil: `Panama` yanında
+`PANAMA`, St Kitts'in dört yazımı, `Botswana False`, `None Identified` ve `Region:` önekleri. ~200
+kayıtlık bir sözlük bunları karşılıyor; gerekçesi kimlik doğrulama bölümünün passlib'i reddederken
+verdiği gerekçeyle aynı — bu proje çalışma zamanını standart kütüphanede tutuyor. OFAC sonradan bir
+yazım eklerse `BundleError` fırlatılıp build durur, sessizce `ZZ` olmaz. Bölgeler yalnızca ISO
+3166'nın kendisi toprağı tek bir ülkenin içine koyduğunda çözülür (Kırım ISO 3166-2:UA içinde; Gazze
+ve Batı Şeria ISO 3166-1 PS). ISO toprağı bölüyorsa cevap `ZZ`'dir, çünkü taraf tutmak bir arama
+değil siyasi bir iddia olurdu.
+
+**Alt küme gecikme için var, repo boyutu için değil — boyut argümanı yanlış.** 19.391 SDN kaydının
+tamamı yaklaşık 2 MB olurdu, yani depoda zaten duran 3,1 MB'lık nomanklatür bundle'ından *daha
+küçük*. Asıl kısıt şu: `screen_entity` tasarım gereği `limit` almıyor — bir eşleşme listesini sessizce
+kırpmak uyum ihlali olurdu — bu yüzden her taramada her kayıt puanlanıyor; ölçüm **her biri ~70 µs ve
+tam lineer**:
+
+| kayıt | tarama başına |
+|---|---|
+| 18 (önce) | 1,4 ms |
+| 5.000 | 346 ms |
+| 12.000 | 845 ms |
+| 19.391 (tamamı) | ~1.360 ms |
+
+`/screen`, `/assess-risk` ve `/sap-gts/compliance-check` bunu birlikte ödüyor. Seçilen bütçe
+`search()`'ün kendi zarfı — 13,7 bin satırlık nomanklatürü taramanın maliyeti olan ~350 ms — ve bu
+yaklaşık 5.100 kayda denk geliyor. Sonradan ölçüldü: amaçlandığı gibi **tarama başına 150–330 ms**.
+
+**Seçim ilkeli ve yinelenebilir, ilk N satır değil.** On ihracat kontrolü programı ailesi tutuluyor —
+Rusya, Ukrayna, İran, KDHC, Belarus, Suriye, NPWMD, IFSR, IRGC, CAATSA — ve *önek* ile eşleştiriliyor,
+böylece yeni bir başkanlık kararnamesi (`RUSSIA-EO14065` gibi) listeyi düzenlemeye gerek kalmadan
+kapsama giriyor. Bunların içinde kayıtlar `ent_num` sırasıyla alınıyor, ki bu OFAC'ın kendi belirleme
+sırası: en eskiler önce, yani okurun tanıması en muhtemel köklü belirlemeler üst sınırdan sağ çıkıyor.
+Üst sınır **program başına 600** ve bir kayıt, programlarından *herhangi birinde* yer varsa tutuluyor
+— `RUSSIA-EO14024`'ün sayacının 600 değil 1.042 okumasının ve `DPRK-NKSPEA` gibi küçük bir programın
+(2 kayıt) kendisiyle kesişen büyük bir program tarafından açlığa mahkûm edilmemesinin nedeni bu. Düz
+bir "ilk 5.000 satır" Rusya bloğunu tutup diğer her programı tamamen düşürürdü. Ortaya çıkan kapsam:
+26 program, dört kayıt tipinin tamamı (şirketler, kişiler, gemiler, uçaklar).
+
+**18 uydurma kaydın neden kaldığı.** Tam olarak nomanklatür bundle'ının hâlihazırda kullandığı düzen:
+`seed()` fixture'ı yazıyor, `load_bundled_sanctions()` gerçek veriyi üstüne ekliyor ve ikisi ayrı
+çağrılar. Testler `:memory:` bağlantısı kurup yalnızca `seed()` çağırıyor, yani 18 satır görüyor ve
+hiç gerçek veri görmüyor — sabitlenmiş her puanın yinelenebilir ve OFAC'ın bu ay ne yayımladığından
+bağımsız kalmasını sağlayan şey bu. Ayrıca kolaylık değil, katı bir gereklilik:
+`matching.name_similarity`'nin kendi docstring'i token-örtüşme sinyali için örnek olarak `"Northwind
+Maritime" vs "Northwind Maritime Holdings Ltd" -> 1.00` kullanıyor ve o dosyanın eşleştirme mantığı
+dokunulamaz. Doğrulandı: hiçbir gerçek OFAC ismi 18'den biriyle çakışmıyor, yani gerçek bir satır
+sabitlenmiş bir örneği asla ezemez.
+
+**Değişmeyenler.** `matching.py` ve `embargo_screener.py` ikisi de hiç ellenmedi —
+`name_similarity`, düz/token-sıralı/token-örtüşme üçlüsü, 2-token kuralı ve `screening_threshold`
+aynen eskisi gibi. `embargo_screener` hiç düzenleme gerektirmedi çünkü zaten
+`fetch_all_entities(conn)` okuyor; daha zengin veri hâlihazırda var olan bir dikişten geliyor. Yeni
+kodun tamamı: bir bundle üreticisi, idempotent bir `upsert_entities`, bir yükleyici ve açılışta bir
+çağrı.
+
+**Veri gerçekleştiği için adı anılmaya değer bir davranış.** `screen_entity(conn, "Sberbank")` hiçbir
+şey döndürmüyor ve bu bir eksik değil, doğru olan: `name_similarity` tek kelimelik bir isimde
+token-örtüşmesine güvenmiyor, çünkü tek başına yaygın bir kelime onu içeren her kayda uyardı. Gerçek
+Sberbank kayıtları bundle'da *var* — `"Sberbank Insurance"` onları buluyor. Kural baştan beri
+oradaydı; gerçek veri sadece görünür kıldı.
+
 ### 🚫 İsim eşleştirmesi, ürün eşleştirmesi değildir
 
 Yaptırım taraması tutarlılık ve sıfır bağımlılık için aynı `difflib` çekirdeğini kullanır; ancak
@@ -2069,20 +2201,29 @@ koduyla** doldurulur — orijinal mock küme, yukarıda açıklandı:
 
 ### Yaptırım listesi
 
-`sanctioned_entities` tablosu, AB Konsolide Mali Yaptırımlar Listesi kayıtları tarzında **18 kayıtla**
-doldurulur: uydurma ticaret, denizcilik ve mühendislik şirketleri ile gerçek listelerin yayımlama
-biçimine uygun olarak soyadı önce yazılmış birkaç sentetik kişi ismi.
+`sanctioned_entities` **5.121 satır** tutuyor; bilinçli olarak birbirine karıştırılmayan iki kaynaktan:
 
-| Alan | Örnek |
-|---|---|
-| `name` | `Northwind Maritime Holdings Ltd` · `Voronin-Teske, Aleksandr` |
-| `country` | `CY`, `AE`, `DE`, `RS`, `MT`, `NL`, … |
-| `list_source` | `EU Consolidated Financial Sanctions List` · `EU Dual-Use Export Control Watchlist` |
-| `date_added` | `2023-04-12` |
+| | satır | nedir |
+|---|---|---|
+| **Gerçek** | 5.103 | `data/sanctions_ofac_2026.csv` — ABD OFAC Özel Olarak Belirlenmiş Kişiler Listesi'nin bir alt kümesi, her açılışta yükleniyor. `list_source` listeyi ve programı adlandırıyor. |
+| **Uydurma** | 18 | `database.SANCTIONED_ENTITIES` — bu README'nin örnek senaryolarının arkasındaki fixture. `list_source` değeri `EU Consolidated Financial Sanctions List` veya `EU Dual-Use Export Control Watchlist`; ikisi de bu listelerden gerçek bir kayıt değil. |
 
-> 🚨 **Bu listedeki her isim kurgusaldır.** Hiçbiri gerçek bir yaptırımlı kişi veya kuruluşa karşılık
-> gelmez ve liste asla gerçek tarama için kullanılmamalıdır. Üretim taraması, resmî AB Konsolide Mali
-> Yaptırımlar Listesi'ni gerektirir.
+| Alan | Gerçek örnek | Uydurma örnek |
+|---|---|---|
+| `name` | `GAZPROM INVEST, OOO` | `Northwind Maritime Holdings Ltd` |
+| `country` | `RU` | `CY` |
+| `list_source` | `US OFAC SDN — UKRAINE-EO13662/RUSSIA-EO14024` | `EU Consolidated Financial Sanctions List` |
+| `date_added` | `2026-09-22` | `2023-04-12` |
+
+İkisi `list_source` ile ayırt edilir: `US OFAC SDN` ile başlayan her şey gerçek, geri kalanı
+fixture'dır. 517 gerçek satırda `country` değeri `ZZ` — ISO 3166-1'in "bilinmiyor" kodu, çünkü OFAC
+gerçekten adresi boş ve uyruğu olmayan kişileri listeliyor.
+
+> 🚨 **Hâlâ gerçek tarama için kullanılamaz ve gerekçeler somut.** Veri gerçek ama bir *anlık
+> görüntü* (2026-09-22 — belirlemeler haftalık değişiyor), bir *alt küme* (OFAC'ın 72 programından
+> 10'u, program başına sınırlı), *birçok listeden biri* (AB, Birleşik Krallık, BM veya ulusal listeler
+> yok) ve isim eşleştirmesi bilinçli olarak bulanık; yani hem listedeki tarafları kaçırıyor hem de
+> listede olmayanları işaretliyor. Gerçek tarama resmî ve güncel listeleri gerektirir.
 
 ### Vergi oranları
 
@@ -2154,7 +2295,9 @@ Excel girdisi ayrıca `pip install openpyxl` gerektirir; bilinçli olarak proje 
 > resmî Eurostat/DG TAXUD CIRCABC dışa aktarımından türetilmiş 13.733 yaprak kod ve İngilizce,
 > Almanca, Fransızca açıklamaları, bu politika kapsamında depoya commit edilmiştir — önceki
 > fazların yalnızca resmî kaynaklara atıfta bulunup veri gömmediği bir değişiklik. Bu sayfadaki
-> yaptırım listesi ve vergi oranları tamamen kurgusal kalır ve bundan etkilenmez.
+> vergi oranları tamamen kurgusal kalır ve bundan etkilenmez. Yaptırım listesi bu satır yazıldığında
+> kurgusaldı, artık değil — kendi lisansıyla, ABD kamu malı olarak geliyor; bkz.
+> [🚨 Gerçek yaptırım verisi](#-gerçek-yaptırım-verisi-ofac-sdn-uydurma-listeyi-değiştiriyor).
 
 ---
 
