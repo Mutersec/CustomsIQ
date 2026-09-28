@@ -130,12 +130,13 @@ def test_screening_hint_honestly_states_the_two_token_minimum(
     assert _HONEST_QUALIFIER[language] in hint, f"{language} screen.hint: {hint!r}"
 
 
-#: Low-confidence warning: each language's copy must actually suggest English
-#: (the underlying corpus's language), not just resolve as a key.
-_SUGGESTS_ENGLISH = {
-    "en": "in English",
-    "tr": "İngilizce",
-    "de": "englischen",
+#: Low-confidence warning: each language's copy must name the reference
+#: languages the corpus is actually matched in (EN/DE/FR since translated
+#: matching), not just resolve as a key. It used to say "in English" only.
+_NAMES_REFERENCE_LANGUAGES = {
+    "en": "(English, German or French)",
+    "tr": "(İngilizce, Almanca veya Fransızca)",
+    "de": "(Englisch, Deutsch oder Französisch)",
 }
 
 
@@ -153,66 +154,80 @@ def _leaf_value(block: str, dotted_key: str) -> str:
 
 
 @pytest.mark.parametrize("language", LANGUAGES)
-def test_low_confidence_warning_suggests_english(dictionaries: dict, language: str) -> None:
-    """Every language's warning must point at the actual fix: English terms."""
+def test_low_confidence_warning_names_the_reference_languages(
+    dictionaries: dict, language: str
+) -> None:
+    """Every language's warning must point at a real fix: official wording."""
     text = _leaf_value(dictionaries[language], "common.lowConfidence")
-    assert _SUGGESTS_ENGLISH[language] in text, f"{language} common.lowConfidence: {text!r}"
+    assert _NAMES_REFERENCE_LANGUAGES[language] in text, f"{language}: {text!r}"
 
 
 @pytest.mark.parametrize("language", LANGUAGES)
-def test_every_language_offers_classify_as_the_next_thing_to_try(
-    dictionaries: dict, language: str
+def test_the_warning_states_the_threshold_it_is_gated_on(
+    source: str, dictionaries: dict, language: str
 ) -> None:
-    """The Search panel's weak-result advice now has a second half.
-
-    Search cannot be improved by the hierarchical context — its difflib ratio
-    normalises by combined length, so richer text lowers the score — but
-    Classify demonstrably can. The banner is where that is passed on to the
-    user, so every language has to carry it, not just English.
-    """
-    text = _leaf_value(dictionaries[language], "common.tryClassify")
-    assert text.strip(), f"{language} common.tryClassify is empty"
-    assert text.startswith(" "), "must append to lowConfidence, so it needs a leading space"
+    """The copy says "below N%"; N must be the constant the code actually uses."""
+    threshold = float(re.search(r"const LOW_CONFIDENCE_THRESHOLD = ([\d.]+);", source).group(1))
+    text = _leaf_value(dictionaries[language], "common.lowConfidence")
+    assert str(round(threshold * 100)) in text, f"{language}: {text!r}"
 
 
 @pytest.mark.parametrize("language", LANGUAGES)
-def test_the_advice_names_the_panel_the_way_the_ui_labels_it(
+def test_the_warning_no_longer_redirects_to_the_other_panel(
     dictionaries: dict, language: str
 ) -> None:
-    """Pointing at a panel the user cannot find by that name is not advice.
+    """The "try the Classify panel" advice is gone, in every language.
 
-    The banner said "the Classify panel" while the German heading read
-    "Code-Einreihung", so the one language most likely to see the banner was
-    sent looking for a panel that does not exist under that name. Pinned
-    against `classify.title` rather than against a literal, so renaming the
-    panel fails here instead of silently desynchronising the two.
+    It made sense while Search used a different (difflib) engine that could
+    not read the tariff hierarchy. Both panels now share one engine, so
+    pointing from one to the other would send the user to the same ranking.
     """
-    advice = _leaf_value(dictionaries[language], "common.tryClassify")
+    assert not _resolve(dictionaries[language], "common.tryClassify")
     panel = _leaf_value(dictionaries[language], "classify.title")
-    assert panel in advice, f"{language}: {advice!r} does not name {panel!r}"
+    assert panel not in _leaf_value(dictionaries[language], "common.lowConfidence")
 
 
-def test_only_the_search_panel_suggests_classify(source: str) -> None:
-    """Suggesting Classify from inside Classify would be nonsense."""
-    assert "const lowConfidenceBanner = (rows, suggestClassify = false)" in source
-    assert 'suggestClassify ? t("common.tryClassify") : ""' in source
+def test_neither_panel_suggests_the_other(source: str) -> None:
+    assert "tryClassify" not in source
+    assert "suggestClassify" not in source
 
 
 def test_low_confidence_threshold_exists_and_gates_both_panels(source: str) -> None:
     """A lightweight check that the served JS actually has the logic, not just copy.
 
-    Doesn't re-derive the calibration (that's a design decision, documented in
-    the source comment next to the constant) — just pins that a threshold
-    constant exists, in a plausible range, and that both the Search and
-    Classify renderers call the same gate rather than only one of them.
+    Pins the recalibrated value: 0.30, measured for the shared TF-IDF engine
+    (the old 0.50 was tuned on difflib scores — see the comment next to the
+    constant). Both renderers must call the same gate.
     """
     match = re.search(r"const LOW_CONFIDENCE_THRESHOLD = ([\d.]+);", source)
     assert match, "LOW_CONFIDENCE_THRESHOLD constant not found in served JS"
-    threshold = float(match.group(1))
-    assert 0.2 < threshold < 0.6, f"threshold {threshold} is outside a plausible range"
+    assert float(match.group(1)) == 0.3
 
-    assert "searchBox.innerHTML = lowConfidenceBanner(rows, true) + rows.map" in source
+    assert "searchBox.innerHTML = lowConfidenceBanner(rows) + rows.map" in source
     assert "classifyBox.innerHTML = lowConfidenceBanner(rows) + rows.map" in source
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+@pytest.mark.parametrize("key", ["common.hierarchy", "common.curatedAlias"])
+def test_hierarchy_and_alias_labels_exist_in_every_language(
+    dictionaries: dict, language: str, key: str
+) -> None:
+    assert _leaf_value(dictionaries[language], key).strip()
+
+
+def test_hierarchy_labels_are_actually_translated(dictionaries: dict) -> None:
+    """Not the English label copied into the other two dictionaries."""
+    labels = {lang: _leaf_value(dictionaries[lang], "common.hierarchy") for lang in LANGUAGES}
+    assert len(set(labels.values())) == len(LANGUAGES), labels
+
+
+def test_both_result_cards_render_the_hierarchy_path(source: str) -> None:
+    """Search and Classify cards both go through the one describeHtml helper."""
+    assert "row.hierarchy_path" in source
+    assert 't("common.hierarchy")' in source
+    assert 't("common.curatedAlias")' in source
+    assert source.count("${describeHtml(row)}") == 2
+    assert "escapeHtml(row.description)}</p>" not in source
 
 
 def test_the_page_never_sends_a_reviewer_name(source: str) -> None:

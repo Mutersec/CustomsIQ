@@ -287,7 +287,9 @@ def search_hs_codes(
     """Return the HS codes whose description best matches `q`.
 
     Reuses `src.customsiq.search.search`, the same function the CLI calls,
-    so ranking logic is defined in exactly one place.
+    which is itself a thin adapter over `classify()`: `/search` and
+    `/classify` rank with one engine and return the same codes and scores,
+    differing only in response shape.
     """
     try:
         results = search(_conn, q, limit=limit, language=language)
@@ -297,8 +299,10 @@ def search_hs_codes(
         {
             "code": r.hs_code.code,
             "description": r.hs_code.description,
+            "hierarchy_path": r.hierarchy_path,
             "category": r.hs_code.category,
             "score": r.score,
+            "alias": r.alias,
         }
         for r in results
     ]
@@ -320,9 +324,8 @@ def classify_description(
 ) -> list[dict]:
     """Suggest the CN codes a description most likely belongs to, with reasoning.
 
-    Complements `/search`: that ranks by character overlap for a quick lookup,
-    while this weighs how rare each term is across the corpus and reports which
-    terms drove each suggestion.
+    The same engine and ranking as `/search`; this route additionally reports
+    which terms drove each suggestion and a subject reference for review.
     """
     try:
         results = classify(_conn, description, top_n=top_n, language=language)
@@ -332,9 +335,11 @@ def classify_description(
         {
             "code": r.hs_code.code,
             "description": r.hs_code.description,
+            "hierarchy_path": r.hierarchy_path,
             "category": r.hs_code.category,
             "score": r.score,
             "matched_terms": r.matched_terms,
+            "alias": r.alias,
             "subject_reference": review.reference_for_classification(description),
         }
         for r in results

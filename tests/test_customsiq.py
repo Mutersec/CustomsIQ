@@ -112,10 +112,14 @@ class TestCodeShapedQuery:
         """Code-shaped and absent must come back clean, not as fuzzy garbage."""
         assert search(conn, "9999999999") == []
 
-    def test_numeric_but_not_code_shaped_still_falls_through_to_fuzzy_scoring(
+    def test_numeric_but_not_code_shaped_falls_through_to_text_scoring(
         self, conn: sqlite3.Connection
     ) -> None:
-        """Wrong length (not 8 or 10 digits): unchanged pre-fix behavior."""
-        results = search(conn, "12345")
-        assert len(results) == 5
-        assert all(isinstance(r.score, float) for r in results)
+        """Wrong length (not 8 or 10 digits): scored as text, not looked up.
+
+        Under the old difflib search this returned five arbitrary rows (it
+        always filled `limit`). Search now shares classify()'s TF-IDF engine,
+        where "12345" is one token no description contains, so the honest
+        answer is no match at all.
+        """
+        assert search(conn, "12345") == []

@@ -101,8 +101,10 @@ not a black box that decides alone.
 ## 🏗️ Architecture
 
 Two features — **CN code search** and **sanctions screening** — sit on one shared matching layer.
-The CLI and the HTTP API are thin adapters over `search()` and `screen_entity()`; scoring and
-validation logic exists in exactly one place and is never duplicated.
+The CLI and the HTTP API are thin adapters over `search()` and `screen_entity()`, and `search()`
+is itself a thin adapter over `classify()`, so CN search and classification share one TF-IDF
+engine (see [one engine](#-search-and-classify--one-engine-a-reversed-design-decision)). Scoring
+and validation logic exists in exactly one place and is never duplicated.
 
 ```mermaid
 flowchart LR
@@ -269,6 +271,10 @@ CREATE TABLE cn_code_versions (
 ## 🧠 Design decisions
 
 ### Why `difflib` instead of `rapidfuzz` / `thefuzz`?
+
+> **Scope update:** difflib now scores **sanctions screening only**. CN code search moved to the
+> TF-IDF engine `/classify` uses; see
+> [one engine](#-search-and-classify--one-engine-a-reversed-design-decision).
 
 `difflib.SequenceMatcher` ships with Python. That means **zero extra dependencies**, nothing to pin
 or audit, and no install friction — while being entirely adequate at the current data scale.
@@ -919,26 +925,110 @@ with capitalization) but exact for money (a different customs value **is** a dif
 
 (Full hashes and the same assertions live in `tests/test_review.py::TestDeterminism`.)
 
-### 🧠 `/search` vs `/classify` — two algorithms, one dataset
+### 🧠 `/search` and `/classify` — one engine (a reversed design decision)
 
-Both rank the same `hs_codes` table, but they answer different questions and fail in different
-ways. `/search` is a **lookup**: fast character overlap, good when you roughly know the wording.
-`/classify` is a **suggestion engine**: it weighs how *rare* each word is across the nomenclature,
-so a distinctive term counts for more than a common one, and it reports which of your terms drove
-each hit.
+**What this used to say.** Until this phase the two routes ranked the same `hs_codes` table
+with two deliberately different algorithms. `/search` was a *lookup* using difflib character
+overlap. `/classify` was a *suggestion engine* using TF-IDF term weighting plus the
+[hierarchical context](#-hierarchical-context-the-fragment-leaves-the-source-data-never-explains).
+A regression test (`test_rare_terms_outrank_common_ones`) pinned the two disagreeing on
+`knitted cotton shirt` **on purpose**: difflib said Men's cotton **trousers**, TF-IDF said
+**Cotton T-shirts, knitted**.
 
-Measured on the sample corpus:
+**Why it was reversed.** The split looked defensible on the 20-row mock catalog. On the real
+13,733-code nomenclature, six everyday queries were checked live against customsiq.org's
+`/search`, and character overlap got every one of them confidently wrong:
 
-| Query | `/search` (difflib) | `/classify` (TF-IDF) | |
+| Query | Expected | `/search` before: difflib top 5 | `/search` now: shared TF-IDF engine, top 5 |
 |---|---|---|---|
-| `knitted cotton shirt` | `6203420000` Men's cotton **trousers** | `6109100000` **Cotton T-shirts, knitted** | ✅ classify right |
-| `lithium battery` | `8507600000` Lithium-ion batteries | same | tie |
-| `laptop` | `3926909700` Plastic household articles | `8471300000` laptops | ✅ classify right |
+| `olive oil` | Ch. 15 | Pine oil, Olives ×3, Other oils | Olives ×3, 1604131190, **1509300090** (olive oil) |
+| `bicycle` | 8712 | Unicycles, Billets, **Brie**, Cylinder, Sodium cyclamate | 8714 bicycle parts ×3, **8712003090, 8712007099** |
+| `mobile phone charging cable` | 8544 | Mobile phones, Money-changing machines, Mobile homes, … | Mobile phones, Entry-phone systems, Mobile homes, **8544421000** USB cables, Cable-drums |
+| `honey` | 0409 | "Whole" (03063291), Mānuka honey, Hay, … | **0409000090 Natural honey > Other, 0409000010 Mānuka honey**, … |
+| `leather shoes` | Ch. 64 | Other skis, "For other uses", "Other memories", … | **6403 ×3** leather sports footwear, 4205, 4107 |
+| `solar panel` | 8541 | "Not painted" ×5 | ❌ **still fails**: silicone for solar-panel junction boxes, aluminium composite panels |
 
-Row 1 is the case that justifies the module: `knitted` appears in only one description, so term
-weighting lets it dominate, while character overlap is swayed by the bulk of letters shared with
-"cotton trousers". Row 3 shows the reverse failure — difflib returns *something* regardless, where
-classify returns nothing when no term is shared rather than dressing noise up as a suggestion.
+Five of six are fixed. **`solar panel` is not, and cannot be by any scoring change**: the
+bundled corpus contains **no heading 8541 at all**. It covers 871 distinct headings, well short
+of the full HS, which is a coverage gap in the bundle build, not in matching. That gap is pinned
+by `tests/test_unified_search.py::TestProductionFailures::test_solar_panel_cannot_reach_8541_because_the_bundle_lacks_it`
+and named as a follow-up (regenerate the bundle and audit which headings `select_leaf_codes`
+drops), not papered over with an alias to a code that isn't there.
+
+**The new shape.** `classify()` is the single scoring function. `search()` is a thin adapter over
+it, the same "thin adapter over one core function" pattern as `calculate_duty` and
+`assess_shipment`. It calls `classify(conn, q, top_n=limit, language=language)` and drops only
+`matched_terms`. The two routes, their response models and their UI panels stay separate for
+backward compatibility. They now return identical codes, scores and order by construction;
+`test_search_and_classify_agree` pins that on the same knitted-shirt query that used to pin
+the disagreement. `matching.similarity()` (difflib) is still used, by sanctions screening only.
+
+Three additions came with the move:
+
+- **`hierarchy_path`** on both responses: the leaf's description with its stored ancestor
+  context in front, e.g. `Live horses, asses, mules and hinnies > Horses > For slaughter`. It is
+  literally the string the classifier already builds to score each code (`_with_context`), kept
+  by position rather than rebuilt. It needs no new column, because the context already lives in
+  `hs_code_contexts`. A code whose own text stands alone gets its description unchanged. Both
+  result cards show it in place of the bare leaf text, labelled "Tariff hierarchy" /
+  "Tarife hiyerarşisi" / "Zolltarif-Hierarchie". The path itself is English, like `description`.
+- **A per-heading cap of 3.** On the real corpus one heading can fill the whole top 5 with
+  near-identical siblings. `bicycle` returned five 8714 bicycle *parts* rows and pushed 8712,
+  bicycles themselves, to #6. `leather shoes` returned the same "Sports footwear; tennis shoes"
+  text five times. At most 3 results now come from one 4-digit heading. Rows are only skipped,
+  never reordered, so the #1 suggestion (all `assess_shipment` ever reads) cannot change. A cap
+  of 2 was measured and rejected because it dropped correct sibling rows.
+- **A curated alias table, deliberately tiny.** Ten entries (`leech → 0106900090`, `drone`,
+  `nappy`, `crisps`, `jeans`, `popcorn`, `sneakers`, `earbuds`, `biro`, `power bank`) cover
+  everyday words that share **no word at all** with the official text of the code they mean,
+  a gap no term weighting can close. **This is a demo-scale illustration of the concept, not a
+  synonym dictionary.** Real coverage would need a maintained terminology database or a
+  licensed thesaurus, which is out of scope, in the same spirit as the stated limits on Turkish
+  and OCR. Tests enforce the table's rules: every target exists in the bundle, and no key shares
+  a token with its target's own hierarchy text. An alias is **blended, not a shortcut**: when
+  all of a key's words appear in the query, its code joins the ranked list at 1.0 (the same
+  flat score an exact code lookup gets), is marked `alias` in the response and labelled
+  "curated alias" in the UI, and the normal scored suggestions still follow it. So
+  `live leeches for medical purposes` now puts the leech basket first and still shows the
+  evidence around it.
+
+**Latency, measured on the real bundle (median of 5, same six queries):**
+
+| | before (difflib `search()`) | after (shared engine) |
+|---|---|---|
+| warm, English | 220–440 ms | **29–36 ms** |
+| warm, `language=de` | 407–1,004 ms | **56–66 ms** |
+| first call per process and language (builds the index) | ~310 ms / ~560 ms | ~310 ms / ~370 ms |
+
+The index cache that was tuned for `/classify` now serves both routes, so a `/search` warms
+`/classify` and vice versa.
+
+**What changed for clients.** `/search` no longer always returns `limit` rows. A query sharing no
+word with any code, such as a Turkish query or `xyz`, now returns `[]` rather than padding with
+unrelated 40–55% rows. The frontend already had a "no matches" state for this. The
+low-confidence banner's "try the Classify panel" advice was removed in all three languages,
+because both panels now give the same ranking. The warning itself stays, since a weak top score
+is still worth flagging. It now reads: *"The best match scores below 30% — treat these results as
+leads, not a classification, and check the code against the full tariff text. Wording closer to
+the official nomenclature (English, German or French) usually matches better."* The threshold was
+**recalibrated from 0.50 to 0.30**, because 0.50 was tuned on difflib's score distribution. Under
+TF-IDF, every measured wrong top hit below 0.30 (`cam şişe` 0.15, `toothbrush` 0.11,
+`vacuum cleaner` 0.27) sits under the weakest correct one (`tomato ketchup` 0.31, `wooden chair`
+0.38, `plastic toy` 0.49). Wrong answers still reach up to 0.57 (`red wine` → red phosphorus),
+which a score-only warning cannot catch. That is a stated limit, not a claim of coverage.
+
+**Tests whose pinned values changed, by name** (all others, including every pinned
+`classify()` score, are unchanged):
+
+| Test | Before | After |
+|---|---|---|
+| `test_cn_classifier.py::TestRanking::test_rare_terms_outrank_common_ones` | also asserted search's top = `6203420000` (disagreement) | classify half kept; disagreement moved to new `test_search_and_classify_agree`, which asserts the opposite |
+| `test_hierarchical_context.py::TestSearchIsDeliberatelyUntouched` (6 cases) | difflib pins: `ipek kumaş` 17019910 0.4762, `örgü pamuklu gömlek` 2931100010 0.4000, `leather jacket` 83014090 0.5600, `çelik boru` 11010090 0.5455, `live leeches…` 93069010 0.5926, plus the 0.50 separation check | replaced by `TestSearchNowReadsTheContext`: the three Turkish queries → `[]`; `leather jacket` → 42050090 0.5423; `live leeches…` → 0106900090 via alias |
+| `test_api.py::test_search_endpoint_no_match_returns_empty_list` | `xyz` → 1 row | `[]` |
+| `test_customsiq.py::TestCodeShapedQuery::test_numeric_but_not_code_shaped_…` | `12345` → 5 rows | `[]` |
+| `test_translated_matching.py::TestGermanQueriesScoreBetter::test_search_finds_the_german_term` | English-only `Haselnüsse` → a 0.63 row | `[]` (German still 1.0) |
+| `test_presentation_polish.py::…::test_search_response_has_exactly_the_expected_fields` | 4 fields | + `hierarchy_path`, `alias` |
+| `test_frontend_i18n.py` banner tests (8 cases) | `tryClassify` present, "in English" copy, threshold in (0.2, 0.6), `lowConfidenceBanner(rows, true)` | `tryClassify` absent, copy names EN/DE/FR, threshold exactly 0.3 and stated in the copy |
 
 **Why hand-rolled TF-IDF and not scikit-learn.** The implementation is sklearn's own formula
 (smoothed IDF `log((N+1)/(df+1))+1`, L2-normalised vectors, cosine via dot product) in ~40 lines of
@@ -1235,6 +1325,11 @@ What `search()` got instead is one line of honesty: when its top result falls be
 0.50 low-confidence threshold, the warning banner now also points at the Classify panel,
 in all three UI languages, because Classify genuinely does better on this class of query
 and Search cannot be made to.
+
+> **Superseded.** A later phase went the other way: rather than wiring context into
+> difflib, `search()` stopped using difflib and became a thin adapter over `classify()`, so
+> it reads this context for free. The Classify pointer in the banner was removed with it.
+> See [one engine](#-search-and-classify--one-engine-a-reversed-design-decision).
 
 **After:**
 
@@ -2138,7 +2233,7 @@ approach `tests/fixtures/sample_invoice.pdf` already uses for the invoice-extrac
 | Bundle size | 3.1 MB CSV, committed to the repo |
 | Added to every cold start | **~90 ms** (CSV parse + upsert into `hs_codes` + upsert into `hs_code_translations`, measured) |
 | `classify()` cost at this scale | ~150 ms cold, **~20 ms** once its per-connection cache is warm — see below |
-| `search()` cost at this scale | ~440–490 ms per call — no equivalent cache is possible for its character-overlap algorithm; a known, accepted cost of the larger real catalog, stated here rather than left unexplained |
+| `search()` cost at this scale | was ~440–490 ms per call under difflib; now the same ~30 ms as `classify()`, whose cached engine it shares (see [one engine](#-search-and-classify--one-engine-a-reversed-design-decision)) |
 
 `cn_classifier.py` already carried a comment from an earlier phase naming this exact scenario:
 *"the index is rebuilt per call — 0.1 ms at 20 codes, ~68 ms at 10k. Cache it per connection if a

@@ -298,6 +298,8 @@
   }
 
   .card-desc { margin: 5px 0 9px; font-size: 14px; }
+  .card-desc .label { display: block; color: var(--text-dim); font-size: 11.5px; }
+  .chip.alias { border-style: dashed; }
 
   .meta { color: var(--text-dim); font-size: 12.5px; margin: 4px 0 9px; }
 
@@ -1180,9 +1182,9 @@
         requestFailed: (status) => `Request failed (HTTP ${status}).`,
         couldNotReach: "Could not reach the API. Check your connection and try again.",
         lowConfidence:
-          "⚠ These results score below 50% and may not be reliable — try describing the goods in English, since the reference data is English-language.",
-        tryClassify:
-          " Try the Code Classification panel: it reads each code's place in the tariff hierarchy as well as its own text, so it often does better on a query like this.",
+          "⚠ The best match scores below 30% — treat these results as leads, not a classification, and check the code against the full tariff text. Wording closer to the official nomenclature (English, German or French) usually matches better.",
+        hierarchy: "Tariff hierarchy",
+        curatedAlias: "curated alias",
       },
       footer: {
         disclaimer:
@@ -1400,9 +1402,9 @@
         requestFailed: (status) => `İstek başarısız oldu (HTTP ${status}).`,
         couldNotReach: "API'ye ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.",
         lowConfidence:
-          "⚠ Bu sonuçlar %50'nin altında ve güvenilir olmayabilir — açıklamayı İngilizce yazmayı deneyin, çünkü referans veriler İngilizce.",
-        tryClassify:
-          " Kod Sınıflandırma panelini de deneyin: her kodun tarife hiyerarşisindeki yerini de okuduğu için bu tür sorgularda genellikle daha iyi sonuç verir.",
+          "⚠ En iyi eşleşme %30'un altında — bu sonuçları bir sınıflandırma değil, ipucu olarak değerlendirin ve kodu tarifenin tam metniyle karşılaştırın. Resmî nomenklatüre yakın bir ifade (İngilizce, Almanca veya Fransızca) genellikle daha iyi eşleşir.",
+        hierarchy: "Tarife hiyerarşisi",
+        curatedAlias: "derlenmiş eş anlamlı",
       },
       footer: {
         disclaimer:
@@ -1620,9 +1622,9 @@
         requestFailed: (status) => `Anfrage fehlgeschlagen (HTTP ${status}).`,
         couldNotReach: "Die API konnte nicht erreicht werden. Verbindung prüfen und erneut versuchen.",
         lowConfidence:
-          "⚠ Diese Ergebnisse liegen unter 50 % und sind möglicherweise nicht zuverlässig — versuchen Sie es mit einer englischen Beschreibung, da die Referenzdaten englischsprachig sind.",
-        tryClassify:
-          " Versuchen Sie auch die Code-Einreihung: Sie liest zusätzlich die Stellung jedes Codes in der Zolltarif-Hierarchie und liefert bei solchen Anfragen oft bessere Ergebnisse.",
+          "⚠ Der beste Treffer liegt unter 30 % — betrachten Sie diese Ergebnisse als Hinweise, nicht als Einreihung, und prüfen Sie den Code anhand des vollständigen Tariftexts. Eine Formulierung nahe an der amtlichen Nomenklatur (Englisch, Deutsch oder Französisch) passt meist besser.",
+        hierarchy: "Zolltarif-Hierarchie",
+        curatedAlias: "kuratiertes Synonym",
       },
       footer: {
         disclaimer:
@@ -1761,34 +1763,38 @@
   const pct0 = (count, total) => (total > 0 ? Math.round((count / total) * 100) : 0);
 
   // Below this, a percentage-looking score is more likely to mislead than
-  // inform. Calibrated against real Turkish queries scored against this
-  // English-only corpus (all unrelated results): "örgü pamuklu gömlek" 0.40,
-  // "ipek kumaş" 0.48, "deri ceket" 0.53, "plastik oyuncak" 0.54,
-  // "çelik boru" 0.55, "cam şişe" 0.57 — against weak-but-real English
-  // queries that must never be flagged: "leather jacket" 0.56, "steel pipe"
-  // 0.61, "glass bottle"/"plastic toy" 0.64, "silk fabric" 0.70. Those two
-  // sets overlap above ~0.55 (character-overlap scoring has no notion of
-  // meaning, so no threshold separates them perfectly there) — 0.50 sits in
-  // the gap below that overlap, catching the clearest unrelated-language
-  // cases without touching any real match measured. Some non-English queries
-  // above 0.50 (the "çelik boru" end of the range) still show no warning:
-  // a known, honest limit of a score-only heuristic, not a claim that this
-  // catches every case. The scores themselves are untouched; this only
-  // decides when to show a caveat alongside them.
-  const LOW_CONFIDENCE_THRESHOLD = 0.5;
-  // `suggestClassify` is for the Search panel only. Search scores raw character
-  // overlap against a code's own description, and half the real nomenclature's
-  // leaves describe themselves only relative to a parent they never name
-  // ("Other", "For feeding purpose") — so a weak search result is often the
-  // corpus's shape rather than the user's wording. Classify reads the
-  // hierarchical context those leaves are missing and does measurably better on
-  // exactly this class of query, which makes it worth pointing at. Suggesting
-  // it from inside Classify itself would be nonsense, hence the flag.
-  const lowConfidenceBanner = (rows, suggestClassify = false) => {
+  // inform. Both panels now score with the same TF-IDF engine, so one
+  // threshold serves both. Recalibrated for that engine (the old 0.50 was tuned
+  // on difflib's character-overlap scores, a different distribution): measured
+  // top scores on the real 13.7k-code bundle, wrong top results — "cam şişe"
+  // 0.15, "toothbrush" 0.11, "vacuum cleaner" 0.27 — against the weakest
+  // correct ones — "tomato ketchup" 0.31, "wooden chair" 0.38, "wooden table"
+  // 0.45, "plastic toy" 0.49. 0.30 sits in that gap, so no measured correct
+  // match is flagged. Wrong results also reach well above it ("red wine" ->
+  // red phosphorus at 0.57, "solar panel" at 0.49): TF-IDF has no notion of
+  // meaning either, and a score-only heuristic cannot catch those — a known,
+  // honest limit. Most non-English queries (Turkish) now return no rows at
+  // all rather than weak ones, which the "no matches" state already covers.
+  const LOW_CONFIDENCE_THRESHOLD = 0.3;
+  const lowConfidenceBanner = (rows) => {
     if (!rows.length || rows[0].score >= LOW_CONFIDENCE_THRESHOLD) return "";
-    const advice =
-      t("common.lowConfidence") + (suggestClassify ? t("common.tryClassify") : "");
-    return `<div class="state warn">${escapeHtml(advice)}</div>`;
+    return `<div class="state warn">${escapeHtml(t("common.lowConfidence"))}</div>`;
+  };
+
+  // A result's description line, shared by the Search and Classify cards.
+  // hierarchy_path already ends in the code's own description, so it replaces
+  // that line rather than repeating it; the label appears only when the path
+  // actually adds ancestors (an "Other" leaf, say). A curated-alias hit is
+  // labelled as such, so it is never mistaken for a scored text match.
+  const describeHtml = (row) => {
+    const path = row.hierarchy_path || row.description;
+    const label = path !== row.description
+      ? `<span class="label">${escapeHtml(t("common.hierarchy"))}</span>`
+      : "";
+    const alias = row.alias
+      ? `<span class="chip alias">${escapeHtml(t("common.curatedAlias"))}: ${escapeHtml(row.alias)}</span> `
+      : "";
+    return `<p class="card-desc">${label}${escapeHtml(path)}</p>${alias}`;
   };
 
   const escapeHtml = (value) =>
@@ -1966,13 +1972,13 @@
           setState(searchBox, "", t("search.noMatches"));
           return;
         }
-        searchBox.innerHTML = lowConfidenceBanner(rows, true) + rows.map((row) => `
+        searchBox.innerHTML = lowConfidenceBanner(rows) + rows.map((row) => `
           <article class="card">
             <div class="card-top">
               <span class="card-title mono">${escapeHtml(row.code)}</span>
               <span class="score">${pct(row.score)}% ${escapeHtml(t("search.matchSuffix"))}</span>
             </div>
-            <p class="card-desc">${escapeHtml(row.description)}</p>
+            ${describeHtml(row)}
             <span class="chip">${escapeHtml(row.category)}</span>
             <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
             ${historyToggleHtml(row.code)}
@@ -2042,7 +2048,7 @@
               <span class="card-title mono">${escapeHtml(row.code)}</span>
               <span class="score">${pct(row.score)}% ${escapeHtml(t("classify.confidenceSuffix"))}</span>
             </div>
-            <p class="card-desc">${escapeHtml(row.description)}</p>
+            ${describeHtml(row)}
             <span class="chip">${escapeHtml(row.category)}</span>
             <div class="bar"><span style="width:${pct(row.score)}%"></span></div>
             <div class="terms">

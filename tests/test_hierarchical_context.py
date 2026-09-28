@@ -14,12 +14,14 @@ Two halves, tested separately:
 - `classify()` reading it, with every already-pinned real-corpus value
   re-verified rather than assumed.
 
-`search()` is deliberately *not* wired to this and is pinned unchanged here:
-difflib's `ratio()` is `2*M/T` over the combined length, so appending ancestors
-can only lower a short fragment's score. Measured over five breadcrumb variants,
-three left the top-3 byte-identical and two moved it the wrong way. The
-`TestSearchIsDeliberatelyUntouched` class below is what keeps that decision
-honest if someone later wires it in without re-measuring.
+`search()` was originally left off this on purpose — difflib's `ratio()` is
+`2*M/T` over the combined length, so appending ancestors could only lower a
+short fragment's score — and a `TestSearchIsDeliberatelyUntouched` class pinned
+its difflib scores to keep that decision honest. That class is gone: search no
+longer uses difflib at all. It is now a thin adapter over `classify()`, so it
+reads this context for free. `TestSearchNowReadsTheContext` below pins the
+same calibration queries under the new engine, each one's old difflib result
+recorded next to it.
 """
 
 import csv
@@ -301,7 +303,8 @@ class TestTheReportedBugIsFixed:
     QUERY = "live leeches for medical purposes"
 
     def test_the_leech_basket_is_now_reachable(self, bundle: sqlite3.Connection) -> None:
-        """Before: absent from the top 5 entirely. After: rank 4."""
+        """Before: absent from the top 5. With context: rank 4. With the curated
+        "leech" alias (a later phase): rank 1."""
         codes = [result.hs_code.code for result in classify(bundle, self.QUERY, top_n=5)]
         assert LEECH_BASKET in codes
 
@@ -328,38 +331,37 @@ class TestTheReportedBugIsFixed:
         assert results[LEECH_BASKET] > min(results.values())
 
 
-class TestSearchIsDeliberatelyUntouched:
-    """Pinned so wiring context into search() cannot pass silently.
+class TestSearchNowReadsTheContext:
+    """The old difflib calibration corpus, re-pinned under the shared engine.
 
-    Every number here was measured before the change and is unchanged after it.
-    search() scores `hs_codes.description`, which this phase left byte-identical.
+    Old difflib top-1 values, recorded before the change:
+        "ipek kumaş"                        17019910   0.4762
+        "örgü pamuklu gömlek"               2931100010 0.4000
+        "leather jacket"                    83014090   0.5600
+        "çelik boru"                        11010090   0.5455
+        "live leeches for medical purposes" 93069010   0.5926 ("For military purposes")
     """
 
-    @pytest.mark.parametrize(
-        ("query", "score", "code"),
-        [
-            ("ipek kumaş", 0.4762, "17019910"),
-            ("örgü pamuklu gömlek", 0.4000, "2931100010"),
-            ("leather jacket", 0.5600, "83014090"),
-            ("çelik boru", 0.5455, "11010090"),
-            ("live leeches for medical purposes", 0.5926, "93069010"),
-        ],
-    )
-    def test_the_calibration_corpus_scores_exactly_as_before(
-        self, bundle: sqlite3.Connection, query: str, score: float, code: str
+    @pytest.mark.parametrize("query", ["ipek kumaş", "örgü pamuklu gömlek", "çelik boru"])
+    def test_turkish_queries_no_longer_produce_confident_noise(
+        self, bundle: sqlite3.Connection, query: str
     ) -> None:
-        top = search(bundle, query, limit=1)[0]
-        assert top.hs_code.code == code
-        assert top.score == pytest.approx(score, abs=1e-4)
+        """No Turkish word appears in the EN/DE/FR corpus, so nothing is returned
+        rather than an unrelated row at 40-55%."""
+        assert search(bundle, query, limit=1) == []
 
-    def test_the_low_confidence_threshold_still_separates_the_calibration_set(
-        self, bundle: sqlite3.Connection
-    ) -> None:
-        """0.50 still sits where the calibration phase put it."""
-        assert search(bundle, "ipek kumaş", limit=1)[0].score < 0.5
-        assert search(bundle, "örgü pamuklu gömlek", limit=1)[0].score < 0.5
-        assert search(bundle, "leather jacket", limit=1)[0].score > 0.5
-        assert search(bundle, "çelik boru", limit=1)[0].score > 0.5
+    def test_leather_jacket_now_reaches_leather_articles(self, bundle: sqlite3.Connection) -> None:
+        top = search(bundle, "leather jacket", limit=1)[0]
+        assert top.hs_code.code == "42050090"
+        assert top.score == pytest.approx(0.5423, abs=1e-4)
+        assert top.hierarchy_path == "Other articles of leather or of composition leather > Other"
+
+    def test_leeches_reach_the_live_animal_basket(self, bundle: sqlite3.Connection) -> None:
+        """Via the curated alias — no CN row contains the word "leech"."""
+        top = search(bundle, "live leeches for medical purposes", limit=1)[0]
+        assert top.hs_code.code == LEECH_BASKET
+        assert top.alias == "leech"
+        assert top.hierarchy_path == "Other live animals > Other"
 
 
 class TestPinnedExactMatchesSurvive:
@@ -368,7 +370,7 @@ class TestPinnedExactMatchesSurvive:
     def test_the_german_hazelnut_example_still_scores_a_flat_one(
         self, bundle: sqlite3.Connection
     ) -> None:
-        """The translated-matching phase's headline example, both engines."""
+        """The translated-matching phase's headline example, through both routes."""
         assert search(bundle, "Haselnüsse", limit=1, language="de")[0].score == pytest.approx(1.0)
         top = classify(bundle, "Haselnüsse", top_n=1, language="de")[0]
         assert top.hs_code.code == "2008191930"

@@ -932,27 +932,30 @@ büyük/küçük harfle değişmez) ama parasal değerde tam eşleşme ister (fa
 
 (Tam hash değerleri ve aynı doğrulamalar `tests/test_review.py::TestDeterminism` içinde bulunur.)
 
-### 🧠 `/search` ile `/classify` — tek veri, iki algoritma
+### 🧠 `/search` ve `/classify` — tek motor (geri alınan bir tasarım kararı)
 
-İkisi de aynı `hs_codes` tablosunu sıralar, ama farklı sorulara yanıt verir ve farklı şekillerde
-hata yapar. `/search` bir **arama**dır: hızlı karakter örtüşmesi, ifadeyi aşağı yukarı bildiğinizde
-iyidir. `/classify` bir **öneri motorudur**: her kelimenin nomanklatür genelinde ne kadar *nadir*
-olduğunu tartar; böylece ayırt edici bir terim, yaygın olandan daha fazla ağırlık taşır ve hangi
-terimlerinizin sonucu getirdiğini bildirir.
+**Önceden** iki rota aynı tabloyu bilerek iki farklı algoritmayla sıralıyordu: `/search` difflib
+karakter örtüşmesiyle, `/classify` ise TF-IDF ve hiyerarşi bağlamıyla. Bir test, ikisinin
+`knitted cotton shirt` için kasıtlı olarak farklı yanıt verdiğini bile sabitliyordu.
 
-Örnek veri kümesi üzerinde ölçülen:
+**Neden geri alındı.** customsiq.org'daki canlı `/search` üzerinde denenen altı gündelik sorgu
+kendinden emin ama yanlış sonuçlar verdi: `bicycle` → Brie, `solar panel` → beş kez "Not painted",
+`leather shoes` → kayaklar. `search()` artık `classify()` üzerinde ince bir bağdaştırıcıdır: aynı
+kodlar, aynı skorlar, aynı sıra. Rotalar ve yanıt biçimleri ayrı kaldı. Altı sorgudan beşi artık
+doğru pozisyonu ilk 5'te buluyor. **`solar panel` hâlâ başarısız**, çünkü paketlenmiş veri
+kümesinde 8541 pozisyonu hiç yok. Bu, eşleştirmedeki değil veri kümesindeki bir eksiklik.
 
-| Sorgu | `/search` (difflib) | `/classify` (TF-IDF) | |
-|---|---|---|---|
-| `knitted cotton shirt` | `6203420000` Erkek pamuklu **pantolon** | `6109100000` **Pamuklu tişört, örme** | ✅ classify doğru |
-| `lithium battery` | `8507600000` Lityum iyon piller | aynı | berabere |
-| `laptop` | `3926909700` Plastik ev eşyaları | `8471300000` dizüstü | ✅ classify doğru |
+Ek olarak: `hierarchy_path` (açıklama, üst bağlamıyla birlikte; iki sonuç kartında da „Tarife
+hiyerarşisi“ olarak gösterilir), dört haneli pozisyon başına en fazla 3 sonuç (8712'nin beş 8714
+parça satırı tarafından dışarı itilmemesi için) ve **bilerek küçük tutulmuş, elle derlenmiş on
+girdilik bir eş anlamlı tablosu** (`leech → 0106900090` vb.). Bu tablo kavramın bir demosudur,
+kapsamlı bir eş anlamlılar sözlüğü değildir; gerçek kapsam, bakımı yapılan bir terminoloji
+veritabanı gerektirir. Sıcak gecikme: 220–440 ms → **29–36 ms** (İngilizce). Düşük güven eşiği
+TF-IDF için yeniden kalibre edildi (0,50 → 0,30). Her iki panel artık aynı sıralamayı verdiği
+için „Kod Sınıflandırma panelini deneyin“ önerisi kaldırıldı.
 
-1. satır bu modülün varlık sebebidir: `knitted` yalnızca tek bir açıklamada geçer, bu yüzden terim
-ağırlıklandırması onun baskın olmasını sağlar; karakter örtüşmesi ise "cotton trousers" ile
-paylaşılan harf yığınına kanar. 3. satır ters yöndeki hatayı gösterir: difflib ne olursa olsun
-*bir şey* döndürür, classify ise hiçbir terim paylaşılmadığında gürültüyü öneri kılığına sokmak
-yerine hiçbir şey döndürmez.
+Önce/sonra tablolarının tamamı, ölçümler ve değişen her test değeri
+[İngilizce README](README.md#-search-and-classify--one-engine-a-reversed-design-decision)'de.
 
 **Neden elle yazılmış TF-IDF, scikit-learn değil.** Uygulama, sklearn'ün kendi formülüdür
 (yumuşatılmış IDF `log((N+1)/(df+1))+1`, L2 normalize vektörler, iç çarpımla kosinüs) ve ~40 satır

@@ -1,9 +1,15 @@
-"""CN classification by term-frequency weighting (TF-IDF over the stored codes).
+"""CN matching by term-frequency weighting (TF-IDF over the stored codes).
 
-A deliberate counterpart to `search.py`, not a duplicate of it. Search ranks by
-raw character overlap, which is fooled by long shared substrings; this weighs
-each word by how rare it is across the corpus, so an unusual term like
-"knitted" outranks a common one like "cotton".
+The one scoring engine behind both `/classify` and `/search`. `search.py` is a
+thin adapter over `classify()` below; it used to be a second, deliberately
+different algorithm (difflib character overlap), and that design was reversed
+once real everyday queries showed what character overlap does on the real
+nomenclature — "bicycle" matching "Brie", "solar panel" matching "Not painted".
+See the README's "/search and /classify — one engine" section.
+
+Each word is weighted by how rare it is across the corpus, so an unusual term
+like "knitted" outranks a common one like "cotton", and each code is scored
+together with the ancestor context its own text leaves out.
 """
 
 import logging
@@ -26,6 +32,53 @@ from src.customsiq.models import HSCode
 logger = logging.getLogger(__name__)
 
 TOP_TERMS = 3
+
+# At most this many suggestions from one 4-digit heading. Result lists are a
+# shortlist a person picks from, and on the real nomenclature a single heading
+# can supply five near-identical siblings that crowd out an adjacent heading
+# entirely: "bicycle" returned five 8714 bicycle *parts* rows and pushed 8712
+# (bicycles themselves) to #6; "leather shoes" returned the same "Sports
+# footwear; tennis shoes" text five times. Three rather than two because two
+# measurably dropped correct sibling rows ("leather shoes" lost a 6403 row,
+# "knitted cotton shirt" a 6109 one). Only rows are skipped, never reordered,
+# so the top suggestion is always exactly what it was without the cap.
+MAX_PER_HEADING = 3
+
+# A hand-curated alias table: everyday words that share no vocabulary at all
+# with the official CN text of the code they mean, so no amount of term
+# weighting can connect them. "leech" is the motivating case — no row of the EU
+# nomenclature contains the word, so "leeches" can only ever fall to 0106900090,
+# "Other live animals > Other".
+#
+# THIS IS A DEMO-SCALE ILLUSTRATION OF THE CONCEPT, NOT A SYNONYM DICTIONARY.
+# Ten entries cannot cover commercial and colloquial product language; real
+# coverage needs a maintained terminology database or a licensed thesaurus,
+# which is out of scope for this project. Every entry is checked by a test:
+# its target code must exist in the bundled nomenclature, and none of its words
+# may appear in that code's own hierarchy text (an alias for a word the corpus
+# already contains would only paper over the scorer). Keys are English only.
+#
+# An alias is a signal blended into the results, not a shortcut: when every
+# word of a key appears in the query, its code joins the ranked list at
+# ALIAS_SCORE and the ordinary TF-IDF suggestions still follow it, so the
+# person sees the curated hit *and* the evidence around it.
+_ALIASES: dict[str, str] = {
+    "leech": "0106900090",  # Other live animals > Other
+    "drone": "8806920090",  # Unmanned aircraft > 250 g - 7 kg > Other
+    "nappy": "96190081",  # Napkins and napkin liners for babies
+    "crisps": "20052020",  # Thin slices (of potato), fried or baked
+    "jeans": "62034231",  # Of cotton > Trousers and breeches > Of denim
+    "popcorn": "19041010",  # Prepared foods obtained by swelling cereals > maize
+    "sneakers": "64041990",  # Footwear, rubber/plastics soles, textile uppers
+    "earbuds": "8518300090",  # Headphones and earphones > Other
+    "biro": "96081099",  # Ballpoint pens > Other
+    "power bank": "8507600090",  # Electric accumulators > Lithium-ion > Other
+}
+
+# The score an alias hit is reported at. A curator's explicit mapping is not a
+# text-similarity estimate, so it takes the same flat 1.0 an exact code lookup
+# already does rather than a made-up cosine.
+ALIAS_SCORE = 1.0
 
 # Joins a leaf's hierarchical context to its own description. Purely cosmetic:
 # `_WORD` below splits on non-word characters, so the ">" never reaches the
@@ -79,11 +132,19 @@ def _index_for(conn: sqlite3.Connection, texts: list, language: Optional[str] = 
 
 
 class ClassificationResult(NamedTuple):
-    """A suggested code, its confidence, and the terms that drove the match."""
+    """A suggested code, its confidence, and the terms that drove the match.
+
+    `hierarchy_path` is the code's English description with its ancestor
+    context in front ("Other live animals > Other"), i.e. exactly the text it
+    was scored against. `alias` is the curated alias key that produced this
+    suggestion, or None for an ordinary scored match.
+    """
 
     hs_code: HSCode
     score: float
     matched_terms: list[str]
+    hierarchy_path: str
+    alias: Optional[str] = None
 
 
 def _singular(word: str) -> str:
@@ -139,6 +200,31 @@ def _with_context(description: str, context: Optional[str]) -> str:
     if not context or not description:
         return description
     return f"{context}{_CONTEXT_SEPARATOR}{description}"
+
+
+def _alias_hits(tokens: list[str]) -> list[tuple[str, str]]:
+    """Return (alias key, code) for every alias whose words all appear in `tokens`.
+
+    Keys go through the same `_tokenize` as the query, so "leeches" in a query
+    meets the "leech" key and "sneaker" meets "sneakers".
+    """
+    present = set(tokens)
+    return [(key, code) for key, code in _ALIASES.items() if set(_tokenize(key)) <= present]
+
+
+def _diversify(results: list, top_n: int) -> list:
+    """Take the first `top_n` results, at most MAX_PER_HEADING per 4-digit heading."""
+    kept: list = []
+    per_heading: Counter = Counter()
+    for result in results:
+        heading = result.hs_code.code[:4]
+        if per_heading[heading] >= MAX_PER_HEADING:
+            continue
+        per_heading[heading] += 1
+        kept.append(result)
+        if len(kept) == top_n:
+            break
+    return kept
 
 
 def _normalise(weights: dict[str, float]) -> dict[str, float]:
@@ -234,6 +320,11 @@ def classify(
     and `matched_terms` comes from whichever language actually won, so the
     reasoning stays readable either way.
 
+    Two steps follow the scoring. A curated alias (see `_ALIASES`) whose words
+    all appear in the description adds its code at ALIAS_SCORE, replacing that
+    code's own score if it had one. Then the ranked list is thinned to at most
+    MAX_PER_HEADING suggestions per 4-digit heading before `top_n` is applied.
+
     Args:
         conn: An open database connection.
         description: Free-text description of the goods, or an HS/CN code.
@@ -243,9 +334,9 @@ def classify(
 
     Returns:
         A single exact match at score 1.0, matched_terms=[], if `description`
-        is a known code; an empty list if it's code-shaped but no such code
-        exists; otherwise suggestions above zero confidence, most likely
-        first.
+        is a known code (its hierarchy_path included); an empty list if it's
+        code-shaped but no such code exists; otherwise suggestions above zero
+        confidence, most likely first.
 
     Raises:
         InvalidQueryError: If the description is blank or too long.
@@ -255,9 +346,11 @@ def classify(
     code = as_code(description)
     if code is not None:
         try:
-            return [ClassificationResult(get_by_code(conn, code), 1.0, [])]
+            record = get_by_code(conn, code)
         except HSCodeNotFoundError:
             return []
+        context = fetch_all_contexts(conn, "en").get(record.code)
+        return [ClassificationResult(record, 1.0, [], _with_context(record.description, context))]
 
     tokens = _tokenize(description)
     if not any(len(token) > 1 for token in tokens):
@@ -268,15 +361,12 @@ def classify(
     counts = Counter(tokens)
 
     english_contexts = fetch_all_contexts(conn, "en")
-    scored = _score_against(
-        conn,
-        [
-            _with_context(record.description, english_contexts.get(record.code))
-            for record in records
-        ],
-        None,
-        counts,
-    )
+    # Also each result's hierarchy_path: the text a code is scored against is
+    # the breadcrumb a person needs to read it, so it is built exactly once.
+    english_texts = [
+        _with_context(record.description, english_contexts.get(record.code)) for record in records
+    ]
+    scored = _score_against(conn, english_texts, None, counts)
 
     translations = fetch_all_translations(conn, language)
     if translations:
@@ -290,11 +380,29 @@ def classify(
             if best is None or hit[0] > best[0]:
                 scored[position] = hit
 
+    aliased = {}
+    hits = _alias_hits(tokens)
+    if hits:
+        positions = {record.code: position for position, record in enumerate(records)}
+        for key, alias_code in hits:
+            # A corpus without the target (the 20-row mock catalog) simply
+            # has nothing to add; the alias never invents a record.
+            if alias_code in positions:
+                scored[positions[alias_code]] = (ALIAS_SCORE, [key])
+                aliased[positions[alias_code]] = key
+
     # Sorted by position first so ties break on record order, then stably by
     # score — which leaves the English-only path ordered exactly as before.
     results = [
-        ClassificationResult(records[position], *scored[position]) for position in sorted(scored)
+        ClassificationResult(
+            hs_code=records[position],
+            score=scored[position][0],
+            matched_terms=scored[position][1],
+            hierarchy_path=english_texts[position],
+            alias=aliased.get(position),
+        )
+        for position in sorted(scored)
     ]
     results.sort(key=lambda result: result.score, reverse=True)
     logger.debug("classified %r into %d suggestion(s)", description, len(results))
-    return results[:top_n]
+    return _diversify(results, top_n)

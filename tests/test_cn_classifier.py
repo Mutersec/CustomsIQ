@@ -38,16 +38,28 @@ class TestRanking:
     """Which codes come back, and in what order."""
 
     def test_rare_terms_outrank_common_ones(self, conn: sqlite3.Connection) -> None:
-        """The defining word wins over the merely shared one.
-
-        Regression guard for the case that justifies this module existing:
-        difflib ranks "Men's cotton trousers" first here because of raw
-        character overlap, while term weighting picks the knitted T-shirt.
-        """
+        """The defining word wins over the merely shared one."""
         top = classify(conn, "knitted cotton shirt")[0]
         assert top.hs_code.code == "6109100000"
 
-        assert search(conn, "knitted cotton shirt")[0].hs_code.code == "6203420000"
+    def test_search_and_classify_agree(self, conn: sqlite3.Connection) -> None:
+        """One engine, so one answer — the reverse of what this test used to pin.
+
+        This query used to prove the two routes disagreed *on purpose*: difflib
+        search ranked "Men's cotton trousers" (6203420000) first on raw
+        character overlap while classify picked the knitted T-shirt. That split
+        was a documented design decision, reversed once real production queries
+        ("bicycle" -> Brie, "solar panel" -> "Not painted") showed character
+        overlap failing everyday lookups. search() is now a thin adapter over
+        classify(), so the disagreement is gone by construction; this pins that
+        the two stay identical, code for code and score for score.
+        """
+        searched = search(conn, "knitted cotton shirt")
+        classified = classify(conn, "knitted cotton shirt")
+        assert searched[0].hs_code.code == "6109100000"
+        assert [(r.hs_code.code, r.score) for r in searched] == [
+            (r.hs_code.code, r.score) for r in classified
+        ]
 
     def test_scores_are_ordered_and_bounded(self, conn: sqlite3.Connection) -> None:
         """Confidence decreases down the list and stays a cosine in (0, 1]."""
