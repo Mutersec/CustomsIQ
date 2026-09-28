@@ -218,7 +218,13 @@
   }
 
   /* ---------- form ---------- */
-  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  /* align-items: flex-end bottom-aligns every field and the button on each
+     flex line. Without it (the default is stretch), a field whose label wraps
+     to two lines pushes its own input down while siblings with a one-line
+     label stay higher — inputs end up off one baseline. Bottom-aligning the
+     field boxes is equivalent to aligning the inputs themselves, since every
+     input is the same height regardless of its label's line count. */
+  form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
 
   label {
     display: block;
@@ -230,6 +236,16 @@
   }
 
   .field { flex: 1 1 220px; }
+
+  /* Risk panel only: description/HS-code accepts free text or a 10-digit
+     code and carries the longest label and placeholder of any field on the
+     page (German placeholder alone is 39 characters) — 220px truncates it.
+     field-sm shrinks the two short fixed-shape fields (2-letter country code,
+     a plain number) to buy back that room, so all four fields plus the
+     button still fit on one row at typical desktop widths instead of the
+     button reliably wrapping to its own line. */
+  .field.field-lg { flex: 1.6 1 300px; }
+  .field.field-sm { flex: 0.7 1 150px; }
 
   input[type="text"],
   input[type="password"] {
@@ -927,11 +943,11 @@
     <div class="panel-body">
       <p class="hint" data-i18n="risk.hint"></p>
       <form id="risk-form">
-        <div class="field">
+        <div class="field field-lg">
           <label for="risk-subject" data-i18n="risk.subjectLabel"></label>
           <input type="text" id="risk-subject" data-i18n-placeholder="risk.subjectPlaceholder" autocomplete="off">
         </div>
-        <div class="field">
+        <div class="field field-sm">
           <label for="risk-origin" data-i18n="risk.originLabel"></label>
           <input type="text" id="risk-origin" data-i18n-placeholder="risk.originPlaceholder" maxlength="2" autocomplete="off">
         </div>
@@ -939,7 +955,7 @@
           <label for="risk-party" data-i18n="risk.partyLabel"></label>
           <input type="text" id="risk-party" data-i18n-placeholder="risk.partyPlaceholder" autocomplete="off">
         </div>
-        <div class="field">
+        <div class="field field-sm">
           <label for="risk-value" data-i18n="risk.valueLabel"></label>
           <input type="text" id="risk-value" data-i18n-placeholder="risk.valuePlaceholder" inputmode="decimal" autocomplete="off">
         </div>
