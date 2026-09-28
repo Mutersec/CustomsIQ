@@ -335,11 +335,11 @@ def seed_demo_users(conn: sqlite3.Connection) -> int:
 #
 # No account exists until the person proves they can read mail sent to the
 # address they gave: a sign-up is parked in `pending_signups` with a hash of a
-# six-digit code, and only `confirm_signup` turns it into a `users` row. The
-# same holds for Google sign-ups — Google's own `email_verified` claim is
-# checked too, and the code is required on top of it, as the second of two
-# independent proofs. An account that already exists signs in with Google
-# directly, without a code.
+# six-digit code, and only `confirm_signup` turns it into a `users` row.
+# Google sign-ups skip the code: Google has already proved the address, and
+# `google_identity.verify_credential` only accepts a token whose signature,
+# audience, issuer and `email_verified` claim all check out (see
+# `google_sign_in` below).
 #
 # What makes a six-digit code safe is not the hash — a million candidates are
 # trivial to try offline — but the limits around it: it expires after
@@ -516,15 +516,18 @@ def _username_from_email(conn: sqlite3.Connection, email: str) -> str:
     return candidate
 
 
-def google_sign_in(
-    conn: sqlite3.Connection, identity: GoogleIdentity, language: str = "en"
-) -> Optional[User]:
-    """Sign in with a verified Google identity, or start its sign-up.
+def google_sign_in(conn: sqlite3.Connection, identity: GoogleIdentity) -> User:
+    """Sign in with a verified Google identity, creating the account if needed.
+
+    No e-mail code is involved: `google_identity.verify_credential` has already
+    checked Google's signature, that the token was issued for this app, and
+    that Google verified the address. An e-mailed code would prove the same
+    thing a second time.
 
     Returns:
-        The User for an existing account — matched by Google account id, or by
-        a verified e-mail equal to Google's (which then gets linked). None when
-        a new sign-up was started and a code sent to the Google e-mail.
+        The existing account — matched by Google account id, or by a verified
+        e-mail equal to Google's (which then gets linked) — or a new one with
+        `SELF_REGISTRATION_ROLE` and a username derived from the e-mail.
     """
     user_id = database.get_user_id_by_google_sub(conn, identity.sub)
     if user_id is None:
@@ -532,12 +535,18 @@ def google_sign_in(
         if user_id is not None:
             database.link_google_account(conn, user_id, identity.sub)
     if user_id is not None:
-        return database.get_user_by_id(conn, user_id)
+        user = database.get_user_by_id(conn, user_id)
+        assert user is not None  # user_emails rows are only written for real users
+        return user
 
-    _check_cooldown(conn, identity.email)
     username = _username_from_email(conn, identity.email)
+    created_at = _now().isoformat()
     # Google accounts sign in through Google; this password exists only because
     # users.password_hash is NOT NULL, and nobody ever learns it.
     unusable = hash_password(secrets.token_urlsafe(32))
-    _issue_code(conn, identity.email, username, unusable, identity.sub, language)
-    return None
+    new_id = database.insert_user(conn, username, unusable, SELF_REGISTRATION_ROLE, created_at)
+    database.insert_user_email(conn, new_id, identity.email, identity.sub, created_at)
+    # A half-finished e-mail sign-up for the same address is now moot.
+    database.delete_pending_signup(conn, identity.email)
+    logger.info("created Google user %s", username)
+    return User(id=new_id, username=username, role=SELF_REGISTRATION_ROLE, created_at=created_at)

@@ -149,6 +149,9 @@ class TestMailer:
         assert seen["url"] == "https://api.brevo.com/v3/smtp/email"
         assert seen["h"]["api-key"] == "test-key"
 
+    def test_the_sender_defaults_to_the_support_address(self) -> None:
+        assert settings.mail_from == "support@customsiq.org"
+
     @pytest.mark.parametrize(
         ("language", "word"), [("en", "verification"), ("tr", "doğrulama"), ("de", "Bestätigung")]
     )
@@ -229,24 +232,32 @@ class TestGoogleCredential:
 
 
 class TestGoogleSignIn:
+    """Google sign-in creates or finds the account at once, with no e-mail code.
+
+    These used to pin a second proof: a new Google user had to confirm an
+    e-mailed code before the account existed. That step was dropped — Google's
+    signed `email_verified` claim (checked in TestGoogleCredential) already
+    proves the address — so these now pin "signed in immediately, nothing sent".
+    """
+
     IDENTITY = GoogleIdentity("google-123", "ada@example.com", "Ada")
 
-    def test_a_new_google_user_must_also_confirm_the_code(
+    def test_a_new_google_user_is_signed_in_at_once_and_no_mail_is_sent(
         self, conn: sqlite3.Connection, outbox: list
     ) -> None:
-        assert auth.google_sign_in(conn, self.IDENTITY) is None
-        user = auth.confirm_signup(conn, "ada@example.com", code_sent_to(outbox, "ada@example.com"))
+        user = auth.google_sign_in(conn, self.IDENTITY)
         assert user.username == "ada"
+        assert user.role == auth.SELF_REGISTRATION_ROLE
         assert auth.database.get_user_id_by_google_sub(conn, "google-123") == user.id
+        assert auth.database.get_email_for_user(conn, user.id) == "ada@example.com"
+        assert outbox == []
 
-    def test_afterwards_google_signs_in_without_a_code(
+    def test_the_second_sign_in_finds_the_same_account(
         self, conn: sqlite3.Connection, outbox: list
     ) -> None:
-        auth.google_sign_in(conn, self.IDENTITY)
-        auth.confirm_signup(conn, "ada@example.com", code_sent_to(outbox, "ada@example.com"))
-        sent = len(outbox)
-        assert auth.google_sign_in(conn, self.IDENTITY).username == "ada"
-        assert len(outbox) == sent
+        first = auth.google_sign_in(conn, self.IDENTITY)
+        assert auth.google_sign_in(conn, self.IDENTITY).id == first.id
+        assert auth.database.count_users(conn) == 1
 
     def test_an_existing_verified_email_is_linked_not_duplicated(
         self, conn: sqlite3.Connection, outbox: list
@@ -256,11 +267,26 @@ class TestGoogleSignIn:
         assert auth.google_sign_in(conn, self.IDENTITY).id == created.id
         assert auth.database.get_user_id_by_google_sub(conn, "google-123") == created.id
 
-    def test_a_google_username_never_collides(self, conn: sqlite3.Connection, outbox: list) -> None:
+    def test_a_half_finished_email_signup_does_not_block_google(
+        self, conn: sqlite3.Connection, outbox: list
+    ) -> None:
+        _start(conn, "ada@example.com")
+        user = auth.google_sign_in(conn, self.IDENTITY)
+        # The pending sign-up is for the very address Google just proved, so the
+        # same person may take the username it had reserved.
+        assert user.username == "ada"
+        assert get_pending_signup(conn, "ada@example.com") is None
+
+    def test_a_google_username_never_collides(self, conn: sqlite3.Connection) -> None:
         auth.create_user(conn, "ada", PASSWORD)
+        assert auth.google_sign_in(conn, self.IDENTITY).username == "ada-2"
+
+    def test_a_google_account_has_no_usable_password(self, conn: sqlite3.Connection) -> None:
         auth.google_sign_in(conn, self.IDENTITY)
-        user = auth.confirm_signup(conn, "ada@example.com", code_sent_to(outbox, "ada@example.com"))
-        assert user.username == "ada-2"
+        with pytest.raises(AuthenticationError):
+            auth.authenticate(conn, "ada", "")
+        with pytest.raises(AuthenticationError):
+            auth.authenticate(conn, "ada@example.com", PASSWORD)
 
 
 class TestAuthRoutes:
@@ -275,22 +301,44 @@ class TestAuthRoutes:
     def test_the_google_flow_end_to_end(
         self, monkeypatch: pytest.MonkeyPatch, outbox: list
     ) -> None:
+        """One request: verified token in, session out. It used to be two (plus a code)."""
         email = unique_email("google")
         claims = _claims(sub=f"sub-{email}", email=email)
         monkeypatch.setattr(settings, "google_client_id", CLIENT_ID)
         monkeypatch.setattr(google_identity, "verify_token", lambda token, cid: claims)
         with TestClient(app) as browser:
-            started = browser.post("/auth/google", json={"credential": "t", "language": "tr"})
-            assert started.json() == {"status": "pending", "user": None, "email": email}
-            assert "doğrulama" in outbox[-1]["subject"]
-            verified = browser.post(
-                "/auth/verify", json={"email": email, "code": code_sent_to(outbox, email)}
-            )
-            assert verified.status_code == 200
+            response = browser.post("/auth/google", json={"credential": "t", "language": "tr"})
+            assert response.status_code == 200
+            body = response.json()
+            assert body["status"] == "signed_in"
+            assert body["email"] == email
+            assert body["user"]["role"] == auth.SELF_REGISTRATION_ROLE
+            assert outbox == []
+            assert browser.get("/search", params={"q": "honey"}).status_code == 200
         with TestClient(app) as later:
             again = later.post("/auth/google", json={"credential": "t"})
-            assert again.json()["status"] == "signed_in"
-            assert later.get("/search", params={"q": "honey"}).status_code == 200
+            assert again.json()["user"]["username"] == body["user"]["username"]
+
+    def test_google_works_without_any_mail_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """So "Continue with Google" needs only the client ID, not Brevo."""
+        monkeypatch.setattr(settings, "brevo_api_key", None)
+        monkeypatch.setattr(settings, "google_client_id", CLIENT_ID)
+        email = unique_email("nomail")
+        monkeypatch.setattr(
+            google_identity, "verify_token", lambda t, c: _claims(sub=f"s-{email}", email=email)
+        )
+        response = TestClient(app).post("/auth/google", json={"credential": "t"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "signed_in"
+
+    def test_an_unverified_google_email_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "google_client_id", CLIENT_ID)
+        monkeypatch.setattr(
+            google_identity, "verify_token", lambda t, c: _claims(email_verified=False)
+        )
+        response = TestClient(app).post("/auth/google", json={"credential": "t"})
+        assert response.status_code == 400
+        assert "set-cookie" not in response.headers
 
     def test_register_is_503_without_a_mail_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "brevo_api_key", None)
