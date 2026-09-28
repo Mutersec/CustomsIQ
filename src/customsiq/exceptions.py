@@ -31,3 +31,14 @@ class RateNotFoundError(CustomsIQError):
     Distinct from a zero rate: this is a gap in the tariff data, and treating
     it as duty-free would understate what an importer owes.
     """
+
+
+class VerificationCooldownError(CustomsIQError):
+    """Raised when a new verification code is requested too soon after the last.
+
+    Mapped to HTTP 429. Carries how long the caller has to wait.
+    """
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(f"please wait {retry_after} seconds before requesting a new code")
+        self.retry_after = retry_after

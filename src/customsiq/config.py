@@ -53,6 +53,29 @@ class Settings(BaseSettings):
     auth_rate_limit_per_minute: int = 10
     search_rate_limit_per_minute: int = 30
 
+    # Interactive API docs (/docs, /redoc, /openapi.json). Off by default: the
+    # whole API sits behind sign-in, and a public schema is a map of every
+    # route for anyone probing it. Turn on for local development only.
+    enable_api_docs: bool = False
+
+    # Sign-up e-mail verification. Codes are sent through Brevo's HTTP API
+    # (free tier, 300 mails/day) because Render's free instances cannot open
+    # outbound SMTP connections. `mail_from` must be a sender or domain
+    # verified in Brevo. With no API key, registration fails closed — unless
+    # `mail_dev_log_codes` is set, which writes codes to the server log for
+    # local development. Never enable that on a public deployment.
+    brevo_api_key: Optional[str] = None
+    mail_from: str = "noreply@customsiq.org"
+    mail_from_name: str = "CustomsIQ"
+    mail_dev_log_codes: bool = False
+    verification_code_ttl_minutes: int = 10
+    verification_max_attempts: int = 5
+    verification_resend_seconds: int = 60
+
+    # "Sign in with Google". The OAuth client ID from Google Cloud Console
+    # (type: Web application). Unset, the Google button is simply not shown.
+    google_client_id: Optional[str] = None
+
     @field_validator("database_url")
     @classmethod
     def _postgres_url_only(cls, value: Optional[str]) -> Optional[str]:
@@ -62,6 +85,14 @@ class Settings(BaseSettings):
         if not value.startswith(_POSTGRES_SCHEMES):
             raise ValueError("CUSTOMSIQ_DATABASE_URL must start with postgresql:// or postgres://")
         return value
+
+    @field_validator("brevo_api_key", "google_client_id")
+    @classmethod
+    def _blank_is_unset(cls, value: Optional[str]) -> Optional[str]:
+        """An empty environment variable means "not configured", not an empty key."""
+        if value is None or not value.strip():
+            return None
+        return value.strip()
 
     @property
     def database_target(self) -> str:

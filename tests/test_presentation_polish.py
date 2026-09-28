@@ -13,9 +13,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.customsiq.api import app
-from tests.helpers import signed_in_client
+from tests.helpers import signed_in_client, signed_in_test_client
 
-client = TestClient(app)
+# Every API route requires a session; anonymous behaviour is tested explicitly.
+client = signed_in_test_client()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = REPO_ROOT / "src" / "customsiq" / "static"
@@ -90,11 +91,16 @@ class TestFaviconAndOpenGraph:
 
 
 class TestTypedResponseSchemas:
-    """/openapi.json shows real field schemas, not additionalProperties: true."""
+    """The OpenAPI schema has real field schemas, not additionalProperties: true.
+
+    Read from `app.openapi()` rather than GET /openapi.json: the schema is no
+    longer served (the API reference is unpublished), but the typing it
+    describes still documents and validates every response.
+    """
 
     @pytest.fixture(scope="class")
     def openapi(self) -> dict:
-        return client.get("/openapi.json").json()
+        return app.openapi()
 
     def test_app_has_a_description_and_version(self, openapi: dict) -> None:
         assert openapi["info"]["description"]
@@ -224,7 +230,8 @@ class TestResponseBodyUnchanged:
         }
 
     def test_auth_me_still_returns_null_user_when_anonymous(self) -> None:
-        assert client.get("/auth/me").json() == {"user": None}
+        """/auth/me stays reachable without a session; the sign-in page calls it."""
+        assert TestClient(app).get("/auth/me").json() == {"user": None}
 
     def test_dashboard_stats_field_set_is_unchanged(self) -> None:
         body = client.get("/dashboard/stats").json()

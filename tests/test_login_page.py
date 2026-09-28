@@ -28,7 +28,7 @@ class TestLoginPage:
         assert 'id="auth-submit"' in html
 
     def test_not_included_in_the_openapi_schema(self) -> None:
-        schema = client.get("/openapi.json").json()
+        schema = app.openapi()
         assert "/login" not in schema["paths"]
 
 

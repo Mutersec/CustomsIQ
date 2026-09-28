@@ -16,7 +16,7 @@ tarayın ve ödenecek vergiyi hesaplayın.**
 ![Mypy](https://img.shields.io/badge/tip%20denetimi-mypy-2A6DB2)
 ![Lisans](https://img.shields.io/badge/lisans-MIT-green)
 
-**[🌐 Canlı demo](https://customsiq-gs0u.onrender.com/)** · [📖 API referansı](https://customsiq-gs0u.onrender.com/docs)
+**[🌐 Canlı demo](https://customsiq-gs0u.onrender.com/)** · giriş gerekli — bkz. [🔒 Giriş zorunluluğu](#-giriş-zorunluluğu-e-posta-doğrulamalı-kayıt-ve-google)
 
 <sub>Boştayken uykuya geçen ücretsiz bir Render örneğinde barındırılıyor — ilk istek ~30 sn sürebilir.</sub>
 
@@ -86,7 +86,7 @@ noktasıdır; tek başına karar veren bir kara kutu değildir.
 | 🖥️ | **Web arayüzü** | `/` adresinde sunulan tek sayfalık arayüz — derleme adımı, framework veya CDN yok |
 | 📥 | **Gerçek veri içe aktarma** | Resmî AB CN nomanklatürünü yerel dosyadan yükler, değişiklikleri sürümleyerek |
 | 💻 | **Etkileşimli CLI** | Aynı komut satırından kod araması veya `screen <isim>` taraması |
-| 🌐 | **REST API** | FastAPI üzerinde `GET /search` ve `GET /screen`, otomatik `/docs` arayüzü |
+| 🌐 | **REST API** | FastAPI üzerinde `GET /search`, `GET /screen` ve diğerleri, giriş gerektirir; `/docs` yalnızca yerelde açılabilir |
 | 🗄️ | **Kurulum gerektirmeyen depolama** | Standart kütüphanedeki SQLite; 20 kod + 18 kurgusal kayıtla gelir |
 | 🧩 | **SAP GTS terminoloji görünümü** | Sonuçları SAP GTS söz dağarcığı ve BAPIRET2 biçiminde gösterir — etiketlenmiş bir simülasyon, sistem bağlantısı değil |
 | 📄 | **Fatura okuma** | PDF fatura yükleyin; sınıflandırma, vergi ve risk formları önceden dolu gelsin — metin katmanlı PDF, saf Python, hiçbir şey saklanmaz |
@@ -740,6 +740,105 @@ arka uç seçimi onu değiştirmez, atlayamaz ve çoğaltamaz. Etkin sınırı d
 arka uç değil, süreç sayısıdır: iki örnek her biri tam kotayı verir ve yeniden başlatma
 sayacı sıfırlar. Bu tek örnek için doğru; paylaşımlı durum (Redis ya da bir tablo) bir
 gün bu doğru olmaktan çıkarsa izlenecek yoldur.
+
+### 🔒 Giriş zorunluluğu, e-posta doğrulamalı kayıt ve Google
+
+**Ne değişti.** Eskiden arama, sınıflandırma, tarama, vergi ve risk herkese açıktı; yalnızca
+inceleme onayı hesap istiyordu. Artık site özel bir çalışma alanı:
+
+- **Her şey için tek kilit.** `api.py` içindeki `require_sign_in` ara katmanı, oturumu
+  olmayan hiçbir isteği geçirmez. Açık kalanlar yalnızca giriş sayfası ve onun ihtiyaçları:
+  `/login`, `/auth/*`, `/health` ve `/static/*`. Tarayıcıdan `/` isteyen `/login`'e
+  yönlendirilir, API çağrıları JSON `401` alır. Tek bir izin listesi olduğu için yeni bir
+  uç **varsayılan olarak kapalıdır**.
+- **API referansı yok.** `/docs`, `/redoc` ve `/openapi.json` gizlenmekle kalmaz, tamamen
+  kapatılır; başlıktaki bağlantı da kaldırıldı. Yerel geliştirme için
+  `CUSTOMSIQ_ENABLE_API_DOCS=true` ile açılabilir.
+- **Kayıt için e-posta kodu şart.** `POST /auth/register` artık hesap açmaz; kaydı bekletir
+  ve 6 haneli bir kod e-postalar. Hesabı yalnızca `POST /auth/verify` açar.
+  - Kod 10 dakika geçerlidir ve 5 yanlış denemede iptal olur.
+  - Yeni kod 60 saniyede bir istenebilir; tüm uçlar IP başına istek sınırının arkasındadır.
+  - Veritabanında kodun yalnızca özeti (SHA-256) tutulur.
+- **"Google ile devam et", iki kez doğrulanır.** Sunucu Google'ın kimlik belgesinin imzasını
+  `google-auth` ile doğrular, bu uygulama için verildiğini ve e-postanın Google tarafından
+  doğrulandığını kontrol eder. **Yeni** bir Google kullanıcısına ayrıca aynı e-posta kodu
+  gider. Mevcut hesaplar Google ile doğrudan girer.
+- Parolayla girişte **kullanıcı adı veya doğrulanmış e-posta** kullanılabilir.
+
+**Neden Brevo?** Ücretsiz planı (günde 300 e-posta, kredi kartı istemez) en düşük maliyetli
+seçenek. Ayrıca HTTP API ile çalışıyor; Render'ın ücretsiz sunucuları dışarıya SMTP bağlantısı
+açamadığı için SMTP servisleri orada hiç çalışmaz. Anahtar tanımlı değilse kayıt güvenli
+tarafta kalır ve `503` döner; doğrulanmamış hesap açılmaz.
+
+#### Kurulum: adım adım
+
+Bu adımlar yapılmadan da site çalışır: mevcut hesaplar giriş yapabilir. Ancak Google düğmesi
+görünmez ve yeni kayıt `503` döner.
+
+**1. Brevo (e-posta gönderimi, ücretsiz)**
+1. [brevo.com](https://www.brevo.com/) adresinde ücretsiz hesap açın.
+2. **Senders, Domains & Dedicated IPs → Domains → Add a domain** ile `customsiq.org` ekleyin.
+3. Brevo size birkaç DNS kaydı verir (TXT: `brevo-code`, DKIM; SPF ve DMARC önerisi).
+4. **Hostinger → Domains → customsiq.org → DNS / Nameservers → DNS records** bölümüne bu
+   kayıtları aynen ekleyin:
+   - SPF için kök (`@`) altında tek bir TXT kaydı olmalı. Zaten varsa Brevo'nun
+     `include:spf.brevo.com` parçasını mevcut kaydın içine ekleyin; ikinci bir SPF kaydı
+     açmayın.
+5. Brevo'da **Verify / Authenticate** deyin. DNS yayılması birkaç dakika ile birkaç saat
+   sürebilir.
+6. **SMTP & API → API Keys → Generate a new API key** ile bir anahtar oluşturun
+   (`xkeysib-…` ile başlar). Anahtarı kimseyle paylaşmayın ve repoya koymayın.
+
+**2. Google ile giriş**
+1. [console.cloud.google.com](https://console.cloud.google.com/) → yeni proje oluşturun.
+2. **APIs & Services → OAuth consent screen**:
+   - kullanıcı türü **External**;
+   - uygulama adı "CustomsIQ", destek e-postanız;
+   - yetkili alan adı `customsiq.org`.
+   Yayınlama durumunu **In production** yapın; aksi hâlde yalnızca test kullanıcıları
+   girebilir.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**, tür
+   **Web application**.
+4. **Authorized JavaScript origins** alanına şunları ekleyin (yönlendirme adresi gerekmez):
+   - `https://customsiq.org`
+   - `https://www.customsiq.org` (kullanıyorsanız)
+   - `https://customsiq-gs0u.onrender.com`
+5. Oluşan **Client ID**'yi kopyalayın (`….apps.googleusercontent.com`). Client secret
+   gerekmez.
+
+**3. Render ortam değişkenleri**
+
+Render panelinde servisinizi açın → **Environment** → şunları ekleyin:
+
+| Anahtar | Değer |
+|---|---|
+| `CUSTOMSIQ_BREVO_API_KEY` | Brevo'dan aldığınız `xkeysib-…` anahtarı |
+| `CUSTOMSIQ_MAIL_FROM` | `noreply@customsiq.org` |
+| `CUSTOMSIQ_GOOGLE_CLIENT_ID` | Google'dan aldığınız Client ID |
+
+Kaydedince Render servisi yeniden başlatır.
+
+**Önemli sınırlama.** Render'ın ücretsiz planında SQLite dosyası her yeniden başlatmada
+silinir; kayıtlı hesaplar bir sonraki deploy'da kaybolur. Kalıcı hesaplar için
+[PostgreSQL arka ucu](#-postgresql-ile-çalıştırma) (`CUSTOMSIQ_DATABASE_URL`) gerekir. Bu
+değişikliğin kapsamında değil.
+
+**Görünüm.** Giriş sayfası ve uygulama lacivert-altın bir gümrük temasını ve özgün bir amblemi
+paylaşıyor. Amblem, hiçbir gerçek gümrük idaresinin işaretini taklit etmez.
+
+Arkada canlı bir liman sahnesi var: vinçlerle yüklenen bir konteyner gemisi, gümrük kapısı ve
+deniz feneri.
+- Sahne **kodla çizilmiş özgün bir çizimdir** (`static/harbor-scene.svg`,
+  `scripts/make_harbor_scene.py` üretir); telif sorunu yoktur.
+- Boyutu 36 KB'tır; tüm animasyonlar tek bir 5 saniyelik döngüyü paylaşır, bu yüzden dikişsiz
+  tekrarlar.
+- İşletim sisteminde "hareketi azalt" seçili kullanıcılar için sahne durağandır.
+
+Giriş kartı, sahnenin üzerinde buzlu cam görünümündedir. Tüm metinler EN/TR/DE'dir. Düzen
+sabit genişlik yerine esnek yerleşim kullanır. Üç dilde 390 px ve 1280 px genişlikte tarayıcıda
+denendi: yatay taşma ve kırpılan düğme yok.
+
+Değişen testlerin tam listesi [İngilizce README](README.md#-sign-in-required-e-mail-verified-sign-up-and-google)'de.
 
 ### 🔐 Bağımlılıksız kimlik doğrulama
 
@@ -1560,6 +1659,10 @@ opak bir ikili dosya olarak kalmıyor.
 
 ### 🔐 Oturum açma
 
+> **Güncel durum:** artık her şey hesap ister ve kayıt e-posta koduyla tamamlanır — bkz.
+> [🔒 Giriş zorunluluğu](#-giriş-zorunluluğu-e-posta-doğrulamalı-kayıt-ve-google). Aşağıdaki
+> metin önceki aşamayı anlatır.
+
 Okumak ve hesaplamak için hesap gerekmez. İnceleme kaydetmek için gerekir. Oturum açma
 artık ana uygulamadaki bir panel değil, kendi sayfasına sahip (`GET /login`) — başlıktaki
 **Oturum aç** bağlantısı oraya götürür ve başarılı girişten sonra `/` adresine döner.
@@ -1733,7 +1836,8 @@ arayüzü için **http://localhost:8000/** adresini açın — her iki yetenek t
 
 Aynı sunucu JSON API'yi de sunar:
 
-Ardından etkileşimli Swagger arayüzü için **http://localhost:8000/docs** adresini açın.
+Etkileşimli Swagger arayüzü **varsayılan olarak kapalıdır**; yerelde `CUSTOMSIQ_ENABLE_API_DOCS=true`
+ile başlatıp **http://localhost:8000/docs** adresini açın. Her API çağrısı oturum çerezi ister.
 
 ```bash
 curl "http://localhost:8000/search?q=cotton+t-shirt&limit=2"
@@ -1776,7 +1880,9 @@ for result in search(conn, "lithium battery", limit=3):
 | Metot | Uç nokta | Açıklama |
 |---|---|---|
 | `GET` | `/` | **Web arayüzü** (HTML sayfa) |
-| `GET` | `/health` | Canlılık kontrolü — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
+| `GET` | `/health` | Canlılık kontrolü, herkese açık — `{"service": "CustomsIQ API", "docs": "", "status": "running"}` |
+| `POST` | `/auth/register` · `/auth/verify` · `/auth/resend` | E-posta kodlu kayıt |
+| `POST` | `/auth/google` · `GET /auth/config` | Google ile giriş |
 | `GET` | `/search` | Ürün açıklaması için sıralanmış CN kodu eşleşmeleri |
 | `GET` | `/classify` | Güven skoru ve eşleşen terimlerle sıralanmış kod önerileri |
 | `GET` | `/screen` | Kişi veya kuruluş ismi için yaptırım listesi eşleşmeleri |
@@ -1790,7 +1896,9 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/extract-invoice` | Yüklenen fatura PDF'ini okur ve bulunan alanları döndürür (oturum gerekir) |
 | `GET` | `/sap-gts/compliance-check` | Aynı risk değerlendirmesini SAP GTS terimleriyle gösterir (simülasyon) |
 | `GET` | `/sap-gts/legal-control/{subject_reference}` | Bir konunun inceleme kararlarını bloke/serbest bırakma kaydı olarak gösterir (simülasyon) |
-| `GET` | `/docs` | Etkileşimli Swagger arayüzü (otomatik üretilir) |
+| `GET` | `/docs` | Etkileşimli Swagger arayüzü — **yalnızca `CUSTOMSIQ_ENABLE_API_DOCS=true` ile**, aksi hâlde `404` |
+
+`/login`, `/auth/*`, `/health` ve `/static/*` dışındaki her uç oturum ister; yoksa `401` döner.
 
 **Tipli yanıtlar.** Yukarıdaki her uç nokta bir Pydantic `response_model` bildirir; bu yüzden
 `/docs` ve `/openapi.json`, tipsiz bir `additionalProperties: true` yerine — iki `/sap-gts/*` uç

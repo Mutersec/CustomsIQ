@@ -16,7 +16,7 @@ prüfen und den fälligen Zoll berechnen.**
 ![Mypy](https://img.shields.io/badge/typisiert-mypy-2A6DB2)
 ![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green)
 
-**[🌐 Live-Demo](https://customsiq-gs0u.onrender.com/)** · [📖 API-Referenz](https://customsiq-gs0u.onrender.com/docs)
+**[🌐 Live-Demo](https://customsiq-gs0u.onrender.com/)** · Anmeldung erforderlich — siehe [🔒 Anmeldepflicht](#-anmeldepflicht-e-mail-bestätigte-registrierung-und-google)
 
 <sub>Läuft auf einer kostenlosen Render-Instanz, die im Leerlauf schläft — die erste Anfrage kann ~30 s dauern.</sub>
 
@@ -88,7 +88,7 @@ entscheidet.
 | 🖥️ | **Weboberfläche** | Single-Page-Frontend unter `/` — ohne Build-Schritt, Framework oder CDN |
 | 📥 | **Import echter Daten** | Lädt die offizielle EU-KN-Nomenklatur aus einer lokalen Datei, versioniert Änderungen |
 | 💻 | **Interaktive CLI** | Codes suchen oder `screen <Name>` am selben Prompt ausführen |
-| 🌐 | **REST-API** | `GET /search` und `GET /screen` über FastAPI, mit erzeugter `/docs`-Oberfläche |
+| 🌐 | **REST-API** | `GET /search`, `GET /screen` u. a. über FastAPI, nur nach Anmeldung; `/docs` nur lokal zuschaltbar |
 | 🗄️ | **Speicherung ohne Einrichtungsaufwand** | SQLite aus der Standardbibliothek, vorbefüllt mit 20 Codes + 18 fiktiven Einträgen |
 | 🧩 | **SAP-GTS-Terminologieansicht** | Stellt Ergebnisse im SAP-GTS-Vokabular und in BAPIRET2-Form dar — eine gekennzeichnete Simulation, keine Systemanbindung |
 | 📄 | **Rechnungsauslesung** | Ein Rechnungs-PDF hochladen und die Einreihungs-, Zoll- und Risikoformulare kommen vorausgefüllt zurück — Text-PDFs, reines Python, nichts wird gespeichert |
@@ -762,6 +762,57 @@ effektive Limit ändert, ist nicht das Backend, sondern die Prozessanzahl: zwei 
 gewähren je das volle Kontingent, und ein Neustart setzt den Zähler zurück. Für die eine
 Instanz hier korrekt; gemeinsamer Zustand (Redis oder eine Tabelle) ist der Ausbauweg,
 falls das einmal nicht mehr stimmt.
+
+### 🔒 Anmeldepflicht, E-Mail-bestätigte Registrierung und Google
+
+**Was sich geändert hat.** Suche, Einreihung, Prüfung, Zoll und Risiko waren früher öffentlich;
+nur Prüffreigaben brauchten ein Konto. Jetzt ist die Seite ein privater Arbeitsbereich:
+
+- **Eine Sperre für alles.** Die Middleware `require_sign_in` in `api.py` lässt ohne gültige
+  Sitzung nichts durch, außer der Anmeldeseite und dem, was sie braucht: `/login`, `/auth/*`,
+  `/health` und `/static/*`. `/` leitet zu `/login` weiter, API-Aufrufe erhalten JSON `401`.
+  Eine neue Route ist damit standardmäßig privat.
+- **Keine öffentliche API-Referenz.** `/docs`, `/redoc` und `/openapi.json` sind abgeschaltet,
+  nicht nur ausgeblendet. Für die lokale Entwicklung schaltet `CUSTOMSIQ_ENABLE_API_DOCS=true`
+  sie wieder ein.
+- **Registrierung nur mit E-Mail-Code.** `POST /auth/register` legt kein Konto mehr an, sondern
+  sendet einen sechsstelligen Code; erst `POST /auth/verify` erstellt das Konto.
+  - Der Code ist 10 Minuten gültig und verfällt nach 5 Fehlversuchen.
+  - Ein neuer Code ist frühestens nach 60 s möglich; alle Routen unterliegen dem IP-Limit.
+  - Gespeichert wird nur ein SHA-256 des Codes.
+- **„Mit Google fortfahren", doppelt geprüft.** Der Server prüft die Signatur des Google-ID-Tokens
+  mit `google-auth`, die Client-ID und die von Google bestätigte E-Mail. Ein **neuer**
+  Google-Nutzer erhält zusätzlich denselben E-Mail-Code. Bestehende Konten melden sich direkt an.
+- Anmeldung mit **Benutzername oder bestätigter E-Mail**.
+
+**Warum Brevo.** Brevo ist die günstigste Option: der kostenlose Tarif erlaubt 300 Mails/Tag
+ohne Kreditkarte. Die HTTP-API funktioniert auch dort, wo kostenlose Render-Instanzen keine
+ausgehenden SMTP-Verbindungen aufbauen können. Ohne API-Schlüssel schlägt die Registrierung
+sicher fehl (`503`).
+
+Benötigte Einstellungen:
+- `CUSTOMSIQ_BREVO_API_KEY`
+- `CUSTOMSIQ_MAIL_FROM`, z. B. `noreply@customsiq.org`; die Domain muss in Brevo
+  authentifiziert sein.
+- `CUSTOMSIQ_GOOGLE_CLIENT_ID`: OAuth-Client (Web) mit den Origins der Seite.
+
+Die Schritt-für-Schritt-Anleitung steht in der [türkischen README](README.tr.md).
+
+**Einschränkung.** Auf dem kostenlosen Render-Tarif wird die SQLite-Datei bei jedem Neustart
+gelöscht; registrierte Konten überleben kein Redeploy. Für dauerhafte Konten ist das
+PostgreSQL-Backend nötig (`CUSTOMSIQ_DATABASE_URL`).
+
+**Das Erscheinungsbild.** Anmeldeseite und App teilen ein Zoll-Design in Marineblau und Gold mit
+eigenem Emblem, das bewusst keinem echten Hoheitszeichen nachempfunden ist.
+
+Dahinter läuft eine animierte Hafenszene:
+- **eigene, im Code gezeichnete Grafik** (`static/harbor-scene.svg`, erzeugt von
+  `scripts/make_harbor_scene.py`), ohne Lizenzfragen;
+- 36 KB groß, ein gemeinsamer 5-Sekunden-Zyklus, nahtlos wiederholt;
+- still bei „Bewegung reduzieren".
+
+Alle Texte gibt es in EN/TR/DE. Das Layout wurde in allen drei Sprachen bei 390 px und
+1280 px im Browser geprüft: kein horizontaler Überlauf, keine abgeschnittenen Schaltflächen.
 
 ### 🔐 Authentifizierung ohne Abhängigkeit
 
@@ -1618,6 +1669,10 @@ undurchsichtige Binärdatei.
 
 ### 🔐 Anmelden
 
+> **Aktueller Stand:** Jetzt braucht alles ein Konto, und die Registrierung wird per E-Mail-Code
+> abgeschlossen — siehe [🔒 Anmeldepflicht](#-anmeldepflicht-e-mail-bestätigte-registrierung-und-google).
+> Der folgende Text beschreibt die vorherige Phase.
+
 Lesen und Rechnen braucht kein Konto. Eine Prüfung zu erfassen schon. Die Anmeldung hat
 jetzt eine eigene Seite (`GET /login`) statt einer Karte in der Hauptanwendung — der Link
 **Anmelden** im Kopfbereich führt dorthin, und eine erfolgreiche Anmeldung leitet zu `/`
@@ -1795,7 +1850,8 @@ lokalen Betrieb **http://localhost:8000/** für die Weboberfläche — beide Fun
 
 Derselbe Server stellt die JSON-API bereit:
 
-Öffnen Sie anschließend **http://localhost:8000/docs** für die interaktive Swagger-Oberfläche.
+Die interaktive Swagger-Oberfläche ist **standardmäßig aus**; lokal mit `CUSTOMSIQ_ENABLE_API_DOCS=true`
+starten und **http://localhost:8000/docs** öffnen. Jeder API-Aufruf braucht ein Sitzungs-Cookie.
 
 ```bash
 curl "http://localhost:8000/search?q=cotton+t-shirt&limit=2"
@@ -1838,7 +1894,9 @@ for result in search(conn, "lithium battery", limit=3):
 | Methode | Endpunkt | Beschreibung |
 |---|---|---|
 | `GET` | `/` | **Weboberfläche** (HTML-Seite) |
-| `GET` | `/health` | Liveness-Prüfung — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
+| `GET` | `/health` | Liveness-Prüfung, öffentlich — `{"service": "CustomsIQ API", "docs": "", "status": "running"}` |
+| `POST` | `/auth/register` · `/auth/verify` · `/auth/resend` | Registrierung mit E-Mail-Code |
+| `POST` | `/auth/google` · `GET /auth/config` | Anmeldung mit Google |
 | `GET` | `/search` | Sortierte KN-Code-Treffer zu einer Produktbeschreibung |
 | `GET` | `/classify` | Sortierte Code-Vorschläge mit Konfidenz und passenden Begriffen |
 | `GET` | `/screen` | Sanktionslistentreffer zu einem Personen- oder Firmennamen |
@@ -1852,7 +1910,9 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/extract-invoice` | Liest ein hochgeladenes Rechnungs-PDF und gibt die gefundenen Felder zurück (Anmeldung erforderlich) |
 | `GET` | `/sap-gts/compliance-check` | Dieselbe Risikobewertung in SAP-GTS-Terminologie (Simulation) |
 | `GET` | `/sap-gts/legal-control/{subject_reference}` | Die Prüfentscheidungen eines Vorgangs als Sperr-/Freigabeprotokoll (Simulation) |
-| `GET` | `/docs` | Interaktive Swagger-Oberfläche (automatisch erzeugt) |
+| `GET` | `/docs` | Interaktive Swagger-Oberfläche — **nur mit `CUSTOMSIQ_ENABLE_API_DOCS=true`**, sonst `404` |
+
+Jede Route außer `/login`, `/auth/*`, `/health` und `/static/*` verlangt eine Sitzung und antwortet sonst mit `401`.
 
 **Typisierte Antworten.** Jede Route oben deklariert ein Pydantic-`response_model`, sodass `/docs`
 und `/openapi.json` echte Feldschemas zeigen — einschließlich der BAPIRET2-Feldnamen der beiden

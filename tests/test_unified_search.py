@@ -17,10 +17,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from src.customsiq import cn_classifier
-from src.customsiq.api import app
 from src.customsiq.cn_classifier import (
     _ALIASES,
     ALIAS_SCORE,
@@ -37,10 +35,12 @@ from src.customsiq.database import (
     seed,
 )
 from src.customsiq.search import search
+from tests.helpers import signed_in_test_client
 
 BUNDLE = Path(__file__).parent.parent / "data" / "cn_nomenclature_2026.csv"
 
-client = TestClient(app)
+# Every API route requires a session; anonymous behaviour is tested explicitly.
+client = signed_in_test_client()
 
 
 @pytest.fixture(scope="module")

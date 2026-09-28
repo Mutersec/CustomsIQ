@@ -7,18 +7,20 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from src.customsiq import auth, review, sap_gts_bridge
+from src.customsiq import auth, google_identity, mailer, review, sap_gts_bridge
 from src.customsiq.api_schemas import (
+    AuthConfigResponse,
     ClassificationResultResponse,
     CodeTranslationsResponse,
     DashboardStatsResponse,
     DutyCalculationResponse,
     ExtractionResultResponse,
+    GoogleSignInResponse,
     GtsDocumentResponse,
     HealthResponse,
     HSCodeVersionResponse,
@@ -28,6 +30,7 @@ from src.customsiq.api_schemas import (
     RoleChangeResponse,
     ScreeningResultResponse,
     SearchResult,
+    SignupPendingResponse,
     UserResponse,
     WhoAmIResponse,
 )
@@ -52,6 +55,7 @@ from src.customsiq.exceptions import (
     HSCodeNotFoundError,
     InvalidQueryError,
     RateNotFoundError,
+    VerificationCooldownError,
 )
 from src.customsiq.models import User
 from src.customsiq.risk import assess_shipment
@@ -66,6 +70,12 @@ app = FastAPI(
         "EU Combined Nomenclature."
     ),
     version="1.0.0",
+    # The interactive docs and the schema they read are off unless explicitly
+    # enabled: every route is behind sign-in now, and a public /openapi.json
+    # would still hand anyone a complete map of them.
+    docs_url="/docs" if settings.enable_api_docs else None,
+    redoc_url="/redoc" if settings.enable_api_docs else None,
+    openapi_url="/openapi.json" if settings.enable_api_docs else None,
 )
 
 # Resolved from this module, not the working directory: the deployed process
@@ -89,6 +99,51 @@ if settings.seed_demo_users:
     auth.seed_demo_users(_conn)
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
+#: Paths reachable without a session: the sign-in page and what it needs.
+#: Everything else — the app page and every API route — requires sign-in.
+_PUBLIC_PATHS = frozenset(
+    {
+        "/login",
+        "/health",
+        "/favicon.ico",
+        "/auth/login",
+        "/auth/register",
+        "/auth/verify",
+        "/auth/resend",
+        "/auth/google",
+        "/auth/config",
+        "/auth/me",
+        "/auth/logout",
+    }
+)
+_PUBLIC_PREFIXES = ("/static/",)
+
+
+def _is_public(path: str) -> bool:
+    return path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES)
+
+
+# Registered before add_security_headers so that one wraps this: middleware
+# added later runs outermost, and the 401s and redirects issued here need the
+# security headers as much as any other response.
+@app.middleware("http")
+async def require_sign_in(request: Request, call_next: Callable) -> Response:
+    """Admit only signed-in users, except to the sign-in page and its routes.
+
+    A browser asking for a page is redirected to /login; any other request
+    (the API) gets a JSON 401. Enforced here once rather than per route, so a
+    new route is private by default instead of public by omission.
+    """
+    if _is_public(request.url.path):
+        return await call_next(request)
+    user = await run_in_threadpool(auth.user_for_token, _conn, request.cookies.get(SESSION_COOKIE))
+    if user is None:
+        if request.method == "GET" and request.url.path == "/":
+            return RedirectResponse("/login", status_code=303)
+        return JSONResponse({"detail": "Sign in to use CustomsIQ."}, status_code=401)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -270,8 +325,13 @@ def login_page() -> FileResponse:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict:
-    """Liveness check and basic service info."""
-    return {"service": "CustomsIQ API", "docs": "/docs", "status": "running"}
+    """Liveness check and basic service info.
+
+    Public, for uptime checks. `docs` is empty unless the API docs are enabled,
+    so it never advertises a route that answers 404.
+    """
+    docs = "/docs" if settings.enable_api_docs else ""
+    return {"service": "CustomsIQ API", "docs": docs, "status": "running"}
 
 
 @app.get(
@@ -675,7 +735,7 @@ def code_translations(code: str) -> dict:
 
 
 class Credentials(BaseModel):
-    """Body of a POST /auth/register or /auth/login request."""
+    """Body of a POST /auth/login request. `username` may also be a verified e-mail."""
 
     username: str
     password: str
@@ -687,22 +747,139 @@ class RoleChange(BaseModel):
     role: str
 
 
-@app.post(
-    "/auth/register", response_model=UserResponse, dependencies=[Depends(_check_auth_rate_limit)]
-)
-def register(body: Credentials, request: Request, response: Response) -> dict:
-    """Create an account and sign it in.
+class SignupRequest(BaseModel):
+    """Body of POST /auth/register."""
 
-    New accounts get `auth.SELF_REGISTRATION_ROLE`. That default is a demo
-    affordance: a real trade-compliance system grants roles administratively
-    rather than letting a signup form choose one (see the README).
+    username: str
+    email: str
+    password: str
+    language: str = "en"
+
+
+class VerifyRequest(BaseModel):
+    """Body of POST /auth/verify."""
+
+    email: str
+    code: str
+
+
+class ResendRequest(BaseModel):
+    """Body of POST /auth/resend."""
+
+    email: str
+
+
+class GoogleRequest(BaseModel):
+    """Body of POST /auth/google: the ID token Google's button returned."""
+
+    credential: str
+    language: str = "en"
+
+
+def _signup_errors(exc: Exception) -> HTTPException:
+    """Map a sign-up failure to the HTTP status a client can act on."""
+    if isinstance(exc, VerificationCooldownError):
+        return HTTPException(
+            status_code=429, detail=str(exc), headers={"Retry-After": str(exc.retry_after)}
+        )
+    if isinstance(exc, mailer.MailNotConfiguredError):
+        return HTTPException(
+            status_code=503, detail="E-mail verification is not configured on this server."
+        )
+    if isinstance(exc, mailer.MailDeliveryError):
+        return HTTPException(status_code=502, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+_SIGNUP_FAILURES = (
+    InvalidQueryError,
+    AuthenticationError,
+    VerificationCooldownError,
+    mailer.MailNotConfiguredError,
+    mailer.MailDeliveryError,
+)
+
+
+@app.post(
+    "/auth/register",
+    response_model=SignupPendingResponse,
+    status_code=202,
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
+def register(body: SignupRequest) -> dict:
+    """Start a sign-up: a six-digit code is e-mailed to `email`.
+
+    No account exists yet; POST the code to /auth/verify to create it. New
+    accounts get `auth.SELF_REGISTRATION_ROLE`, a demo affordance — a real
+    trade-compliance system grants roles administratively (see the README).
     """
     try:
-        user = auth.create_user(_conn, body.username, body.password)
-    except InvalidQueryError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        email = auth.start_signup(_conn, body.username, body.email, body.password, body.language)
+    except _SIGNUP_FAILURES as exc:
+        raise _signup_errors(exc) from exc
+    return {"pending": True, "email": email}
+
+
+@app.post(
+    "/auth/verify", response_model=UserResponse, dependencies=[Depends(_check_auth_rate_limit)]
+)
+def verify_signup(body: VerifyRequest, request: Request, response: Response) -> dict:
+    """Confirm a sign-up with its e-mailed code, create the account, sign it in."""
+    try:
+        user = auth.confirm_signup(_conn, body.email, body.code)
+    except _SIGNUP_FAILURES as exc:
+        raise _signup_errors(exc) from exc
     _set_session_cookie(request, response, auth.create_session(_conn, user))
     return _user_payload(user)
+
+
+@app.post(
+    "/auth/resend",
+    response_model=SignupPendingResponse,
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
+def resend_signup_code(body: ResendRequest) -> dict:
+    """E-mail a new code for a sign-up still waiting to be confirmed."""
+    try:
+        auth.resend_code(_conn, body.email)
+    except _SIGNUP_FAILURES as exc:
+        raise _signup_errors(exc) from exc
+    return {"pending": True, "email": auth.normalize_email(body.email)}
+
+
+@app.get("/auth/config", response_model=AuthConfigResponse)
+def auth_config() -> dict:
+    """Tell the sign-in page whether to show "Sign in with Google", and with what ID.
+
+    The client ID is public by design — Google's button needs it in the page.
+    """
+    return {"google_client_id": settings.google_client_id}
+
+
+@app.post(
+    "/auth/google",
+    response_model=GoogleSignInResponse,
+    dependencies=[Depends(_check_auth_rate_limit)],
+)
+def google_sign_in(body: GoogleRequest, request: Request, response: Response) -> dict:
+    """Sign in with Google, or start a Google sign-up.
+
+    An existing account (by Google id, or by the same verified e-mail) is
+    signed in directly. A new one gets the same e-mailed code as any sign-up:
+    Google's own verification of the address is checked and then required a
+    second time, by the code, before the account exists.
+    """
+    if not settings.google_client_id:
+        raise HTTPException(status_code=404, detail="Google sign-in is not enabled.")
+    try:
+        identity = google_identity.verify_credential(body.credential, settings.google_client_id)
+        user = auth.google_sign_in(_conn, identity, body.language)
+    except _SIGNUP_FAILURES as exc:
+        raise _signup_errors(exc) from exc
+    if user is None:
+        return {"status": "pending", "user": None, "email": identity.email}
+    _set_session_cookie(request, response, auth.create_session(_conn, user))
+    return {"status": "signed_in", "user": _user_payload(user), "email": identity.email}
 
 
 @app.post(

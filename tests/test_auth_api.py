@@ -15,7 +15,15 @@ from fastapi.testclient import TestClient
 
 from src.customsiq import auth
 from src.customsiq.api import SESSION_COOKIE, _conn, app
-from tests.helpers import PASSWORD, create_test_user, signed_in_client, unique_username
+from tests.helpers import (
+    PASSWORD,
+    code_sent_to,
+    create_test_user,
+    register_and_verify,
+    signed_in_client,
+    unique_email,
+    unique_username,
+)
 
 #: Stays anonymous for the whole module: never used to register or sign in,
 #: because TestClient keeps cookies and one stray login would silently
@@ -29,60 +37,96 @@ def _ref() -> str:
 
 
 class TestRegistration:
-    """POST /auth/register."""
+    """POST /auth/register then /auth/verify: no account until the e-mailed code.
 
-    def test_creates_an_account_and_signs_it_in(self) -> None:
+    Registration used to create and sign in the account in one request. It now
+    parks the sign-up and e-mails a six-digit code; the detailed code rules
+    (expiry, attempts, cooldown) are in tests/test_signup_verification.py.
+    """
+
+    def test_register_sends_a_code_and_creates_nothing_yet(self, outbox: list) -> None:
+        username, email = unique_username("newbie"), unique_email("newbie")
+        response = client.post(
+            "/auth/register", json={"username": username, "email": email, "password": PASSWORD}
+        )
+        assert response.status_code == 202
+        assert response.json() == {"pending": True, "email": email}
+        assert len(code_sent_to(outbox, email)) == 6
+        assert "set-cookie" not in response.headers
+        assert (
+            client.post(
+                "/auth/login", json={"username": username, "password": PASSWORD}
+            ).status_code
+            == 401
+        )
+
+    def test_the_code_creates_the_account_and_signs_it_in(self, outbox: list) -> None:
         with TestClient(app) as fresh:
             username = unique_username("newbie")
-            response = fresh.post(
-                "/auth/register", json={"username": username, "password": PASSWORD}
-            )
-            assert response.status_code == 200
-            assert response.json() == {
+            body = register_and_verify(fresh, outbox, username)
+            assert body == {
                 "username": username,
                 "role": auth.SELF_REGISTRATION_ROLE,
-                "created_at": response.json()["created_at"],
+                "created_at": body["created_at"],
             }
             assert fresh.get("/auth/me").json()["user"]["username"] == username
 
-    def test_the_session_cookie_is_httponly(self) -> None:
+    def test_the_session_cookie_is_httponly(self, outbox: list) -> None:
         """So script on the page can never read it — this is why it isn't a JWT in JS."""
         with TestClient(app) as fresh:
-            response = fresh.post(
+            email = unique_email("cookie")
+            fresh.post(
                 "/auth/register",
-                json={"username": unique_username("cookie"), "password": PASSWORD},
+                json={"username": unique_username("cookie"), "email": email, "password": PASSWORD},
+            )
+            response = fresh.post(
+                "/auth/verify", json={"email": email, "code": code_sent_to(outbox, email)}
             )
             cookie_header = response.headers["set-cookie"]
             assert SESSION_COOKIE in cookie_header
             assert "HttpOnly" in cookie_header
             assert "SameSite=lax" in cookie_header.replace("samesite", "SameSite")
 
-    def test_a_duplicate_username_is_refused(self) -> None:
+    def test_a_duplicate_username_is_refused(self, outbox: list) -> None:
         username = unique_username("dup")
         with TestClient(app) as first:
-            first.post("/auth/register", json={"username": username, "password": PASSWORD})
-        with TestClient(app) as second:
-            response = second.post(
-                "/auth/register", json={"username": username, "password": PASSWORD}
-            )
+            register_and_verify(first, outbox, username)
+        response = client.post(
+            "/auth/register",
+            json={"username": username, "email": unique_email("dup"), "password": PASSWORD},
+        )
         assert response.status_code == 400
         assert "already taken" in response.json()["detail"]
 
     @pytest.mark.parametrize("password", ["", "short"])
     def test_a_weak_password_is_refused(self, password: str) -> None:
         response = client.post(
-            "/auth/register", json={"username": unique_username("weak"), "password": password}
+            "/auth/register",
+            json={
+                "username": unique_username("weak"),
+                "email": unique_email("weak"),
+                "password": password,
+            },
         )
         assert response.status_code == 400
         assert "password" in response.json()["detail"]
 
-    def test_registration_never_grants_a_role_the_client_asks_for(self) -> None:
+    def test_registration_never_grants_a_role_the_client_asks_for(self, outbox: list) -> None:
         """An extra field must not be a privilege-escalation path."""
-        username = unique_username("sneaky")
+        email = unique_email("sneaky")
+        client.post(
+            "/auth/register",
+            json={
+                "username": unique_username("sneaky"),
+                "email": email,
+                "password": PASSWORD,
+                "role": "admin",
+            },
+        )
         with TestClient(app) as fresh:
             response = fresh.post(
-                "/auth/register",
-                json={"username": username, "password": PASSWORD, "role": "admin"},
+                "/auth/verify",
+                json={"email": email, "code": code_sent_to(outbox, email), "role": "admin"},
             )
         assert response.status_code == 200
         assert response.json()["role"] == auth.SELF_REGISTRATION_ROLE
@@ -136,13 +180,22 @@ class TestLoginLogout:
         assert client.post("/auth/logout").status_code == 200
 
 
-class TestPublicEndpointsStayPublic:
-    """The demo's whole pitch: no account needed to try the compute endpoints."""
+class TestEveryRouteRequiresSignIn:
+    """The reverse of what this class used to pin.
+
+    It was `TestPublicEndpointsStayPublic`: "the demo's whole pitch: no account
+    needed to try the compute endpoints", asserting 200 for anonymous callers.
+    The site now requires sign-in for everything except the sign-in page and
+    its auth routes, enforced once in the `require_sign_in` middleware. The
+    same list of routes now pins 401. Only /health stays open, for uptime checks.
+    """
+
+    def test_health_stays_public(self) -> None:
+        assert client.get("/health").status_code == 200
 
     @pytest.mark.parametrize(
         ("path", "params"),
         [
-            ("/health", {}),
             ("/search", {"q": "cotton"}),
             ("/classify", {"description": "cotton t-shirt"}),
             ("/screen", {"name": "Northwind Maritime"}),
@@ -163,8 +216,18 @@ class TestPublicEndpointsStayPublic:
             ("/dashboard/stats", {}),
         ],
     )
-    def test_anonymous_access_is_allowed(self, path: str, params: dict) -> None:
-        assert client.get(path, params=params).status_code == 200
+    def test_anonymous_access_is_refused(self, path: str, params: dict) -> None:
+        response = client.get(path, params=params)
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Sign in to use CustomsIQ."}
+
+    @pytest.mark.parametrize(
+        ("path", "params"),
+        [("/search", {"q": "cotton"}), ("/dashboard/stats", {})],
+    )
+    def test_any_signed_in_account_may_use_them(self, path: str, params: dict) -> None:
+        with signed_in_client(auth.VIEWER) as viewer:
+            assert viewer.get(path, params=params).status_code == 200
 
 
 class TestReviewWriteRequiresTheRightRole:
@@ -320,17 +383,23 @@ class TestReviewerNameComesFromTheSession:
         assert rows[0]["authenticated"] is False
 
         auth.create_user(_conn, legacy_name, PASSWORD, auth.ANALYST)
-        rows = client.get("/review/history", params={"subject_reference": reference}).json()
+        with signed_in_client(auth.VIEWER) as reader:
+            rows = reader.get("/review/history", params={"subject_reference": reference}).json()
         assert rows[0]["authenticated"] is False, "a legacy row was claimed by name"
 
 
 class TestAuditReads:
-    """The full log needs an account; one result's own trail does not."""
+    """Every audit read needs an account now, including one result's own trail."""
 
     def test_the_full_log_is_401_when_anonymous(self) -> None:
         assert client.get("/review/history").status_code == 401
 
-    def test_one_subjects_trail_stays_public(self) -> None:
+    def test_one_subjects_trail_now_needs_sign_in_too(self) -> None:
+        """Used to be `test_one_subjects_trail_stays_public` (anonymous 200).
+
+        Every route is behind sign-in now, so the per-subject trail is too; any
+        signed-in account still reads it.
+        """
         reference = _ref()
         with signed_in_client(auth.ANALYST) as analyst:
             analyst.post(
@@ -341,7 +410,10 @@ class TestAuditReads:
                     "decision": "approved",
                 },
             )
-        response = client.get("/review/history", params={"subject_reference": reference})
+        params = {"subject_reference": reference}
+        assert client.get("/review/history", params=params).status_code == 401
+        with signed_in_client(auth.VIEWER) as viewer:
+            response = viewer.get("/review/history", params=params)
         assert response.status_code == 200
         assert len(response.json()) == 1
 
@@ -350,11 +422,9 @@ class TestAuditReads:
         with signed_in_client(auth.VIEWER) as viewer:
             assert viewer.get("/review/history").status_code == 200
 
-    def test_dashboard_hides_reviewer_identities_from_anonymous_callers(self) -> None:
-        stats = client.get("/dashboard/stats").json()
-        assert stats["recent_reviews"] == []
-        assert stats["recent_reviews_restricted"] is True
-        assert stats["hs_code_count"] > 0  # the counts themselves stay public
+    def test_the_dashboard_is_closed_to_anonymous_callers(self) -> None:
+        """Used to return counts with reviewer identities hidden; now it is a 401."""
+        assert client.get("/dashboard/stats").status_code == 401
 
     def test_dashboard_shows_reviewer_identities_to_a_signed_in_user(self) -> None:
         with signed_in_client(auth.VIEWER) as viewer:

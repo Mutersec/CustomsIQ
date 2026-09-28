@@ -19,15 +19,22 @@ import base64
 import hashlib
 import hmac
 import logging
+import re
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from functools import cache
 from typing import Optional
 
-from src.customsiq import database
+from src.customsiq import database, mailer
 from src.customsiq.config import settings
-from src.customsiq.exceptions import AuthenticationError, InvalidQueryError
+from src.customsiq.database import PendingSignup
+from src.customsiq.exceptions import (
+    AuthenticationError,
+    InvalidQueryError,
+    VerificationCooldownError,
+)
+from src.customsiq.google_identity import GoogleIdentity
 from src.customsiq.models import User
 
 logger = logging.getLogger(__name__)
@@ -214,11 +221,12 @@ def create_user(
 
 
 def authenticate(conn: sqlite3.Connection, username: str, password: str) -> User:
-    """Verify a username and password.
+    """Verify a username (or verified e-mail) and password.
 
     Args:
         conn: An open database connection.
-        username: Login name, matched case-insensitively.
+        username: Login name, or the verified e-mail of an account, matched
+            case-insensitively.
         password: Plaintext password to check.
 
     Returns:
@@ -230,7 +238,11 @@ def authenticate(conn: sqlite3.Connection, username: str, password: str) -> User
             which usernames exist.
     """
     normalized = username.strip().lower()
-    stored = database.get_password_hash(conn, normalized)
+    if "@" in normalized:
+        user_id = database.get_user_id_by_email(conn, normalized)
+        owner = database.get_user_by_id(conn, user_id) if user_id is not None else None
+        normalized = owner.username if owner else ""
+    stored = database.get_password_hash(conn, normalized) if normalized else None
     if stored is None:
         # Spend the same time as a real verification: without this, a fast
         # rejection would tell an attacker the username doesn't exist. Exactly
@@ -316,3 +328,216 @@ def seed_demo_users(conn: sqlite3.Connection) -> int:
         create_user(conn, username, password, role)
     logger.info("seeded %d demo accounts", len(DEMO_USERS))
     return len(DEMO_USERS)
+
+
+# ---------------------------------------------------------------------------
+# Sign-up with e-mail verification
+#
+# No account exists until the person proves they can read mail sent to the
+# address they gave: a sign-up is parked in `pending_signups` with a hash of a
+# six-digit code, and only `confirm_signup` turns it into a `users` row. The
+# same holds for Google sign-ups — Google's own `email_verified` claim is
+# checked too, and the code is required on top of it, as the second of two
+# independent proofs. An account that already exists signs in with Google
+# directly, without a code.
+#
+# What makes a six-digit code safe is not the hash — a million candidates are
+# trivial to try offline — but the limits around it: it expires after
+# `verification_code_ttl_minutes`, dies after `verification_max_attempts`
+# wrong guesses, a new one cannot be requested for
+# `verification_resend_seconds`, and every route involved sits behind the
+# per-IP auth rate limit. Hashing only keeps the code out of the database in
+# clear.
+# ---------------------------------------------------------------------------
+
+_EMAIL_PATTERN = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
+_MAX_EMAIL_LENGTH = 254
+_CODE_DIGITS = 6
+
+
+def normalize_email(email: str) -> str:
+    """Return the case-folded e-mail, or raise InvalidQueryError if it isn't one."""
+    normalized = email.strip().lower()
+    if len(normalized) > _MAX_EMAIL_LENGTH or not _EMAIL_PATTERN.match(normalized):
+        raise InvalidQueryError("please enter a valid e-mail address")
+    return normalized
+
+
+def _code_hash(email: str, code: str) -> str:
+    return hashlib.sha256(f"{email}:{code}".encode()).hexdigest()
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _check_cooldown(conn: sqlite3.Connection, email: str) -> None:
+    pending = database.get_pending_signup(conn, email)
+    if pending is None:
+        return
+    elapsed = (_now() - datetime.fromisoformat(pending.sent_at)).total_seconds()
+    wait = settings.verification_resend_seconds - int(elapsed)
+    if wait > 0:
+        raise VerificationCooldownError(wait)
+
+
+def _issue_code(
+    conn: sqlite3.Connection,
+    email: str,
+    username: str,
+    password_hash: str,
+    google_sub: Optional[str],
+    language: str,
+    attempts: int = 0,
+) -> None:
+    """Store a fresh code for this e-mail and send it. Raises if the mail fails."""
+    code = f"{secrets.randbelow(10**_CODE_DIGITS):0{_CODE_DIGITS}d}"
+    now = _now()
+    pending = PendingSignup(
+        email=email,
+        username=username,
+        password_hash=password_hash,
+        google_sub=google_sub,
+        code_hash=_code_hash(email, code),
+        language=language if language in mailer.LANGUAGES else "en",
+        attempts=attempts,
+        sent_at=now.isoformat(),
+        expires_at=(now + timedelta(minutes=settings.verification_code_ttl_minutes)).isoformat(),
+    )
+    database.upsert_pending_signup(conn, pending)
+    try:
+        mailer.send_verification_code(email, code, pending.language)
+    except Exception:
+        # A code nobody received must not block a retry behind the cooldown.
+        database.delete_pending_signup(conn, email)
+        raise
+
+
+def _ensure_available(conn: sqlite3.Connection, username: str, email: str) -> None:
+    if database.get_user_by_username(conn, username) is not None:
+        raise InvalidQueryError(f"username '{username}' is already taken")
+    if database.pending_username_taken(conn, username, email):
+        raise InvalidQueryError(f"username '{username}' is already taken")
+    if database.get_user_id_by_email(conn, email) is not None:
+        raise InvalidQueryError("an account with this e-mail already exists")
+
+
+def start_signup(
+    conn: sqlite3.Connection, username: str, email: str, password: str, language: str = "en"
+) -> str:
+    """Begin an e-mail/password sign-up: validate, park it, and e-mail a code.
+
+    Returns:
+        The normalized e-mail the code was sent to.
+
+    Raises:
+        InvalidQueryError: Unusable username, password or e-mail, or one taken.
+        VerificationCooldownError: A code was sent to this e-mail very recently.
+        mailer.MailNotConfiguredError / mailer.MailDeliveryError: Sending failed.
+    """
+    normalized = _validate_credentials(username, password)
+    email = normalize_email(email)
+    _ensure_available(conn, normalized, email)
+    _check_cooldown(conn, email)
+    _issue_code(conn, email, normalized, hash_password(password), None, language)
+    return email
+
+
+def resend_code(conn: sqlite3.Connection, email: str) -> None:
+    """Send a new code for a pending sign-up, keeping its attempt count.
+
+    Raises:
+        AuthenticationError: There is no live pending sign-up for this e-mail.
+        VerificationCooldownError: The last code was sent too recently.
+    """
+    email = normalize_email(email)
+    pending = database.get_pending_signup(conn, email)
+    if pending is None or pending.expires_at <= _now().isoformat():
+        raise AuthenticationError("this sign-up has expired; please start again")
+    _check_cooldown(conn, email)
+    _issue_code(
+        conn,
+        email,
+        pending.username,
+        pending.password_hash,
+        pending.google_sub,
+        pending.language,
+        attempts=pending.attempts,
+    )
+
+
+def confirm_signup(conn: sqlite3.Connection, email: str, code: str) -> User:
+    """Check a sign-up's code and, if right, create the account.
+
+    Raises:
+        AuthenticationError: No live sign-up, the code is wrong, or the attempts
+            are used up (which also discards the sign-up).
+        InvalidQueryError: The username or e-mail was taken in the meantime.
+    """
+    email = normalize_email(email)
+    pending = database.get_pending_signup(conn, email)
+    if pending is None or pending.expires_at <= _now().isoformat():
+        if pending is not None:
+            database.delete_pending_signup(conn, email)
+        raise AuthenticationError("this code has expired; please start again")
+    if pending.attempts >= settings.verification_max_attempts:
+        database.delete_pending_signup(conn, email)
+        raise AuthenticationError("too many wrong codes; please start again")
+    if not hmac.compare_digest(pending.code_hash, _code_hash(email, code.strip())):
+        database.record_failed_code_attempt(conn, email)
+        if pending.attempts + 1 >= settings.verification_max_attempts:
+            database.delete_pending_signup(conn, email)
+            raise AuthenticationError("too many wrong codes; please start again")
+        raise AuthenticationError("that code is not correct")
+
+    _ensure_available(conn, pending.username, email)
+    created_at = _now().isoformat()
+    user_id = database.insert_user(
+        conn, pending.username, pending.password_hash, SELF_REGISTRATION_ROLE, created_at
+    )
+    database.insert_user_email(conn, user_id, email, pending.google_sub, created_at)
+    database.delete_pending_signup(conn, email)
+    logger.info("created verified user %s", pending.username)
+    return User(
+        id=user_id, username=pending.username, role=SELF_REGISTRATION_ROLE, created_at=created_at
+    )
+
+
+def _username_from_email(conn: sqlite3.Connection, email: str) -> str:
+    """A free username derived from an e-mail's local part (for Google sign-ups)."""
+    base = "".join(c for c in email.split("@")[0].lower() if c.isalnum() or c in "_-.")
+    base = (base or "user")[: _MAX_USERNAME_LENGTH - 4]
+    candidate, suffix = base, 1
+    while database.get_user_by_username(conn, candidate) is not None or (
+        database.pending_username_taken(conn, candidate, email)
+    ):
+        suffix += 1
+        candidate = f"{base}-{suffix}"
+    return candidate
+
+
+def google_sign_in(
+    conn: sqlite3.Connection, identity: GoogleIdentity, language: str = "en"
+) -> Optional[User]:
+    """Sign in with a verified Google identity, or start its sign-up.
+
+    Returns:
+        The User for an existing account — matched by Google account id, or by
+        a verified e-mail equal to Google's (which then gets linked). None when
+        a new sign-up was started and a code sent to the Google e-mail.
+    """
+    user_id = database.get_user_id_by_google_sub(conn, identity.sub)
+    if user_id is None:
+        user_id = database.get_user_id_by_email(conn, identity.email)
+        if user_id is not None:
+            database.link_google_account(conn, user_id, identity.sub)
+    if user_id is not None:
+        return database.get_user_by_id(conn, user_id)
+
+    _check_cooldown(conn, identity.email)
+    username = _username_from_email(conn, identity.email)
+    # Google accounts sign in through Google; this password exists only because
+    # users.password_hash is NOT NULL, and nobody ever learns it.
+    unusable = hash_password(secrets.token_urlsafe(32))
+    _issue_code(conn, identity.email, username, unusable, identity.sub, language)
+    return None

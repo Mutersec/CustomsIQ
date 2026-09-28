@@ -102,6 +102,32 @@ CREATE TABLE IF NOT EXISTS review_authorship (
     user_id INTEGER NOT NULL
 );
 
+-- A verified e-mail address (and, for Google sign-ups, the Google account id)
+-- per user. A separate table rather than columns on users, because
+-- CREATE TABLE IF NOT EXISTS never adds a column to an existing database.
+-- Accounts created before e-mail verification existed (the demo accounts)
+-- simply have no row here.
+CREATE TABLE IF NOT EXISTS user_emails (
+    user_id INTEGER PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    google_sub TEXT UNIQUE,
+    verified_at TEXT NOT NULL
+);
+
+-- A sign-up waiting for its e-mail code. No users row exists until the code
+-- is confirmed. Only a hash of the code is stored.
+CREATE TABLE IF NOT EXISTS pending_signups (
+    email TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    google_sub TEXT,
+    code_hash TEXT NOT NULL,
+    language TEXT NOT NULL,
+    attempts INTEGER NOT NULL,
+    sent_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
 -- Supplementary German/French descriptions for hs_codes. A separate table,
 -- not description_de/description_fr columns on hs_codes, for the same reason
 -- hs_code_history is separate from hs_codes: CREATE TABLE IF NOT EXISTS never
@@ -321,7 +347,7 @@ def get_connection(db_path: Union[str, Path] = ":memory:") -> sqlite3.Connection
             backend.
 
     Returns:
-        An open connection with all nine tables ready.
+        An open connection with every table in SCHEMA ready.
     """
     # Postgres is imported lazily and only on this branch, so the SQLite path
     # never touches the adapter and psycopg stays an optional extra.
@@ -996,6 +1022,106 @@ def delete_expired_sessions(conn: sqlite3.Connection, now: str) -> int:
     cursor = conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
     conn.commit()
     return int(cursor.rowcount)
+
+
+class PendingSignup(NamedTuple):
+    """One row of `pending_signups`: a sign-up waiting for its e-mail code."""
+
+    email: str
+    username: str
+    password_hash: str
+    google_sub: Optional[str]
+    code_hash: str
+    language: str
+    attempts: int
+    sent_at: str
+    expires_at: str
+
+
+_PENDING_COLUMNS = (
+    "email, username, password_hash, google_sub, code_hash, language, attempts, sent_at, expires_at"
+)
+
+
+def upsert_pending_signup(conn: sqlite3.Connection, pending: PendingSignup) -> None:
+    """Store a pending sign-up, replacing any earlier one for the same e-mail."""
+    conn.execute("DELETE FROM pending_signups WHERE email = ?", (pending.email,))
+    conn.execute(
+        f"INSERT INTO pending_signups ({_PENDING_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        tuple(pending),
+    )
+    conn.commit()
+
+
+def get_pending_signup(conn: sqlite3.Connection, email: str) -> Optional[PendingSignup]:
+    """Return the pending sign-up for this e-mail, or None."""
+    row = conn.execute(
+        f"SELECT {_PENDING_COLUMNS} FROM pending_signups WHERE email = ?", (email,)
+    ).fetchone()
+    return PendingSignup(*row) if row else None
+
+
+def record_failed_code_attempt(conn: sqlite3.Connection, email: str) -> None:
+    """Count one wrong code against a pending sign-up."""
+    conn.execute("UPDATE pending_signups SET attempts = attempts + 1 WHERE email = ?", (email,))
+    conn.commit()
+
+
+def delete_pending_signup(conn: sqlite3.Connection, email: str) -> None:
+    """Remove a pending sign-up (confirmed, expired, or out of attempts)."""
+    conn.execute("DELETE FROM pending_signups WHERE email = ?", (email,))
+    conn.commit()
+
+
+def pending_username_taken(conn: sqlite3.Connection, username: str, email: str) -> bool:
+    """Whether another e-mail's unexpired sign-up has already claimed this username."""
+    now = datetime.now(timezone.utc).isoformat()
+    row = conn.execute(
+        "SELECT 1 FROM pending_signups WHERE username = ? AND email <> ? AND expires_at > ?",
+        (username, email, now),
+    ).fetchone()
+    return row is not None
+
+
+def insert_user_email(
+    conn: sqlite3.Connection,
+    user_id: int,
+    email: str,
+    google_sub: Optional[str],
+    verified_at: str,
+) -> None:
+    """Attach a verified e-mail (and optional Google account id) to a user."""
+    conn.execute(
+        "INSERT INTO user_emails (user_id, email, google_sub, verified_at) VALUES (?, ?, ?, ?)",
+        (user_id, email, google_sub, verified_at),
+    )
+    conn.commit()
+
+
+def link_google_account(conn: sqlite3.Connection, user_id: int, google_sub: str) -> None:
+    """Record the Google account id on a user who verified their e-mail another way."""
+    conn.execute("UPDATE user_emails SET google_sub = ? WHERE user_id = ?", (google_sub, user_id))
+    conn.commit()
+
+
+def get_user_id_by_email(conn: sqlite3.Connection, email: str) -> Optional[int]:
+    """Return the id of the user with this verified e-mail, or None."""
+    row = conn.execute("SELECT user_id FROM user_emails WHERE email = ?", (email,)).fetchone()
+    return int(row[0]) if row else None
+
+
+def get_user_id_by_google_sub(conn: sqlite3.Connection, google_sub: str) -> Optional[int]:
+    """Return the id of the user linked to this Google account, or None."""
+    row = conn.execute(
+        "SELECT user_id FROM user_emails WHERE google_sub = ?", (google_sub,)
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def get_email_for_user(conn: sqlite3.Connection, user_id: int) -> Optional[str]:
+    """Return a user's verified e-mail, or None for accounts that have none."""
+    row = conn.execute("SELECT email FROM user_emails WHERE user_id = ?", (user_id,)).fetchone()
+    return str(row[0]) if row else None
 
 
 class ImportStats(NamedTuple):

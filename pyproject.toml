@@ -25,6 +25,8 @@ extend-immutable-calls = [
 [tool.ruff.lint.per-file-ignores]
 # Standalone scripts prepend the repo root to sys.path before importing src.*
 "scripts/*.py" = ["E402"]
+# SVG markup in the template string; wrapping it would only obscure the drawing.
+"scripts/make_harbor_scene.py" = ["E402", "E501"]
 
 [tool.black]
 line-length = 100
