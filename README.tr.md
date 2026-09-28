@@ -413,6 +413,12 @@ tek bir sayının iki işi birden taşıması yerine iki alan var:
 | `composite_score` / `level` | değişmedi, hâlâ `0.6609` / `high` — ne kadar risk ve neden |
 | `override` | `"sanctions_hit"` ya da `null` — yanıtın zaten kesinleşip kesinleşmediği |
 
+> **Bu sayı hangi korpustan geliyor.** `0.6609`, sabitlenmiş testlerin çalıştığı 20 satırlık
+> `SAMPLE_DATA` fixture'ına karşı elde edilen değerdir. Canlı site gerçek 13.733 kodluk
+> nomanklatüre karşı sınıflandırıyor ve aynı çağrı orada **`0.6495`** döndürüyor — aynı kod
+> (`6109100000`), aynı `high` bandı; tek fark sınıflandırma faktöründe (`0.1535` yerine `0.1081`,
+> yani %84,65 yerine %89,19 güven). Tarama ve vergi faktörleri birebir aynı.
+
 Tetikleyici **yalnızca tarama faktörüdür**: `screening.score == 1.0`, yani `screen_entity()`'nin
 normal uyum eşiğindeki bir eşleşme. Diğer iki faktörden bilinçli olarak bağımsızdır — güvenle
 sınıflandırılmış, düşük vergili hiçbir sevkiyat doğrulanmış bir eşleşmeyi yumuşatamaz — ve 0,4
@@ -626,6 +632,12 @@ kurgusu olan: mesaj sınıfı, mesaj numaraları, başlık zarfı ve `BLOCKED` /
 **Örnek** — risk bölümünün ve CLI örneklerinin zaten kullandığı sabitlenmiş değerlendirme
 (`assess_shipment(conn, "NO", "Northwind Maritime", 1000, description="cotton t-shirt")`
 → `0.6609`, yüksek):
+
+> **Bu sayı hangi korpustan geliyor.** `0.6609`, sabitlenmiş testlerin çalıştığı 20 satırlık
+> `SAMPLE_DATA` fixture'ına karşı elde edilen değerdir. Canlı site gerçek 13.733 kodluk
+> nomanklatüre karşı sınıflandırıyor ve aynı çağrı orada **`0.6495`** döndürüyor — aynı kod
+> (`6109100000`), aynı `high` bandı; tek fark sınıflandırma faktöründe (`0.1535` yerine `0.1081`,
+> yani %84,65 yerine %89,19 güven). Tarama ve vergi faktörleri birebir aynı.
 
 | ROW | TYPE | NUMBER | PARAMETER | MESSAGE |
 |---|---|---|---|---|
@@ -1697,7 +1709,7 @@ Recorded: approved 1 on duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d
 2026-01-01T12:00:00+00:00  duty:8e4b03f6c0353ab018c024b6e7045251867255b083df5637f5d01ef5602e3c2e  approved  by alice  (confirmed correct)
 
 > risk 6109100000 NO 1000 Northwind Maritime
-Risk for 6109100000 from NO, party 'Northwind Maritime': HIGH (0.6609)
+Risk for 6109100000 from NO, party 'Northwind Maritime': HIGH (0.6225)
   screening       1.0000 (weight 0.60)  real sanctions match: Northwind Maritime Holdings Ltd (1.00)
   classification  0.0000 (weight 0.25)  HS code given directly
   duty            0.1500 (weight 0.15)  preferential rate 0.0%
