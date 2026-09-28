@@ -13,3 +13,8 @@ httpx==0.25.2
 # put there because it is a pure-Python py3-none-any wheel with no system
 # library and no compiler step — verified before adding, not assumed.
 pypdf==6.19.0
+# "Sign in with Google": verifies the ID token's signature against Google's
+# published keys. Pulls in cryptography (prebuilt manylinux wheels, no compiler
+# step) and pyasn1-modules. Its HTTP fetches go through a stdlib urllib
+# transport (src/customsiq/google_identity.py), so `requests` is not needed.
+google-auth==2.58.1

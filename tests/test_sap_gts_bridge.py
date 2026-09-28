@@ -14,10 +14,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from src.customsiq import auth, sap_gts_bridge
-from src.customsiq.api import app
 from src.customsiq.database import get_connection, seed
 from src.customsiq.models import ReviewDecision
 from src.customsiq.review import reference_for_classification
@@ -29,9 +27,10 @@ from src.customsiq.sap_gts_bridge import (
     compliance_check,
     legal_control_log,
 )
-from tests.helpers import signed_in_client
+from tests.helpers import signed_in_client, signed_in_test_client
 
-client = TestClient(app)
+# Every API route requires a session; anonymous behaviour is tested explicitly.
+client = signed_in_test_client()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 READMES = ("README.md", "README.tr.md", "README.de.md")
@@ -338,7 +337,10 @@ class TestEndpoints:
         nothing left to show once identity is withheld — gating is the honest
         treatment rather than redaction.
         """
-        assert client.get("/sap-gts/legal-control/no-such-reference-at-all").status_code == 401
+        with signed_in_client(auth.VIEWER) as reader:
+            reader.post("/auth/logout")
+            response = reader.get("/sap-gts/legal-control/no-such-reference-at-all")
+        assert response.status_code == 401
 
     def test_empty_is_still_not_a_404_for_a_permitted_caller(self) -> None:
         with signed_in_client(auth.VIEWER) as reader:

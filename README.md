@@ -16,7 +16,7 @@ lists, and calculate the duty owed.**
 ![Mypy](https://img.shields.io/badge/typed-mypy-2A6DB2)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**[🌐 Live demo](https://customsiq-gs0u.onrender.com/)** · [📖 API reference](https://customsiq-gs0u.onrender.com/docs)
+**[🌐 Live demo](https://customsiq-gs0u.onrender.com/)** · sign-in required — see [🔒 Sign-in required](#-sign-in-required-e-mail-verified-sign-up-and-google)
 
 <sub>Hosted on a free Render instance that sleeps when idle — the first request may take ~30 s to wake.</sub>
 
@@ -86,7 +86,7 @@ not a black box that decides alone.
 | 🖥️ | **Web UI** | Single-page frontend served at `/` — no build step, no framework, no CDN |
 | 📥 | **Real-data import** | Load the official EU CN nomenclature from a local file, versioning any changes |
 | 💻 | **Interactive CLI** | Search codes or run `screen <name>` from the same prompt |
-| 🌐 | **REST API** | `GET /search` and `GET /screen` on FastAPI, with auto-generated `/docs` |
+| 🌐 | **REST API** | `GET /search`, `GET /screen` and more on FastAPI, behind sign-in; interactive `/docs` only when enabled locally |
 | 🗄️ | **Zero-setup storage** | SQLite via the standard library, seeded with 20 codes + 18 mock entities |
 | 🧩 | **SAP GTS terminology view** | Renders results in SAP GTS vocabulary and a BAPIRET2-shaped structure — a labelled simulation, not a system connection |
 | 📄 | **Invoice extraction** | Upload a PDF invoice and the classification, duty and risk forms arrive pre-filled — text-layer PDFs, pure Python, nothing stored |
@@ -736,6 +736,89 @@ it and cannot bypass or duplicate it. What *does* change the effective limit is 
 count: two instances would each allow the full quota, and a restart clears it. Correct
 for the single instance this runs on; shared state (Redis, or a table) is the upgrade
 path if that ever stops being true.
+
+### 🔒 Sign-in required, e-mail-verified sign-up, and Google
+
+**What changed.** The demo used to pitch "no account needed to try the compute endpoints":
+search, classification, screening, duty and risk were public, and only review sign-offs
+needed an account. That was reversed. The site is now a private workspace:
+
+- **One gate for everything.** A single `require_sign_in` middleware in `api.py` admits a
+  request only with a valid session, except the sign-in page and what it needs (`/login`,
+  `/auth/*`, `/health`, `/static/*`). A browser asking for `/` is redirected to `/login`;
+  any API call gets a JSON `401`. It is one allow-list rather than a check per route, so a
+  new route is **private by default**. `tests/test_signup_verification.py` enumerates
+  `app.routes` and asserts the `401` for every one of them.
+- **No public API reference.** `/docs`, `/redoc` and `/openapi.json` are disabled
+  (`docs_url=None`, …), not merely unlinked, and the header link is gone. A public schema is
+  a map of every route for anyone probing the service. `CUSTOMSIQ_ENABLE_API_DOCS=true` turns
+  them back on for local development.
+- **Sign-up requires an e-mailed code.** `POST /auth/register` no longer creates an account.
+  It parks the sign-up in `pending_signups` and e-mails a six-digit code; only
+  `POST /auth/verify` with that code creates the `users` row. A code is 6 digits, expires after
+  10 minutes, dies after 5 wrong guesses, and a new one cannot be requested for 60 seconds.
+  All of these routes sit behind the per-IP auth rate limit. Only a SHA-256 of the code is
+  stored. That keeps it out of the database in clear, but a million candidates are cheap
+  offline, so the real protection is the expiry, attempt and rate limits, and the code says
+  so.
+- **"Continue with Google", verified twice.** The browser's Google button returns an ID
+  token. The server verifies its signature against Google's keys with `google-auth`, checks
+  that it was issued for this app's client ID by Google, and that Google has verified the
+  e-mail. A **new** Google user then gets the same e-mailed code before an account exists.
+  That is two independent proofs of the address, the stricter of the options and the one
+  asked for. An existing account signs in with Google directly, matched by Google account
+  id, or by the same verified e-mail, which is then linked.
+- **Username or e-mail** both work for password sign-in once an address is verified.
+
+**Why Brevo, and why not SMTP.** Codes are sent through Brevo's HTTP API: its free tier
+(300 mails/day, no card) is the lowest-cost option, and Render's free instances cannot open
+outbound SMTP connections, so an SMTP provider would not work there at all. `mailer.py` calls
+it with `urllib`, with no new dependency. With no API key configured, registration **fails
+closed** (`503`) rather than creating unverified accounts. `CUSTOMSIQ_MAIL_DEV_LOG_CODES=true`
+writes codes to the server log instead, for local development only.
+
+**What the deployment needs** (none of it is in the repo; without it, Google stays hidden
+and sign-up returns `503`, while existing accounts keep working):
+
+| Setting | Where it comes from |
+|---|---|
+| `CUSTOMSIQ_BREVO_API_KEY` | brevo.com → SMTP & API → API keys |
+| `CUSTOMSIQ_MAIL_FROM` | an address on a domain authenticated in Brevo (SPF/DKIM records added at the DNS host), e.g. `noreply@customsiq.org` |
+| `CUSTOMSIQ_GOOGLE_CLIENT_ID` | Google Cloud Console → Credentials → OAuth client ID (Web), with the site's origins under "Authorized JavaScript origins" |
+
+The Turkish README has the full click-by-click setup.
+
+**A limit worth stating.** On Render's free tier the SQLite file is wiped on every restart,
+so registered accounts do not survive a redeploy. Persistent accounts need the
+[PostgreSQL backend](#-running-with-postgresql) (`CUSTOMSIQ_DATABASE_URL`). That is not part
+of this change.
+
+**The look.** The sign-in page and the app now share a navy-and-gold customs theme and a
+custom emblem (deliberately not any real customs authority's insignia). Behind them is an
+animated harbour scene: a container ship being loaded by gantry cranes, a customs gate, a
+lighthouse. It is **original artwork drawn in code** (`static/harbor-scene.svg`, generated
+by `scripts/make_harbor_scene.py`), so there is no image licence to track. It weighs 36 KB,
+and every animation shares one 5-second cycle, so it loops without a seam. It stands still
+for visitors who ask their OS for reduced motion. The sign-in card is frosted glass over the
+scene rather than a card on a grey page. Every string is in EN/TR/DE. Layouts use wrapping
+and flexible widths instead of fixed ones, so the longest (German) labels still fit. This
+was checked in a browser in all three languages at 390 px and 1280 px, with no horizontal
+overflow and no clipped control.
+
+**Tests whose expectations changed**, by name. Each docstring records the old behaviour:
+
+| Test | Before | After |
+|---|---|---|
+| `test_auth_api.py::TestPublicEndpointsStayPublic` (8 cases) | anonymous `200` on the compute routes | renamed `TestEveryRouteRequiresSignIn`: anonymous `401`; `/health` still `200` |
+| `test_auth_api.py::TestRegistration` (6 cases) | register → `200`, account created and signed in | register → `202` + e-mailed code; `/auth/verify` creates and signs in |
+| `test_auth_api.py::TestAuditReads::test_one_subjects_trail_stays_public` | anonymous `200` | `…_now_needs_sign_in_too`: `401`, any signed-in account `200` |
+| `test_auth_api.py::TestAuditReads::test_dashboard_hides_reviewer_identities_from_anonymous_callers` | counts public, identities hidden | `test_the_dashboard_is_closed_to_anonymous_callers`: `401` |
+| `test_security_patch.py::TestFinding5AuditDisclosure::test_anonymous_sees_the_decision_but_not_the_reviewer` | decision visible anonymously | `…anonymous_callers_now_get_nothing_at_all`: `401` |
+| `test_security_patch.py` Finding 3 / Finding 7 registration tests | one-step register | two-step register with e-mail |
+| `test_api.py::test_api_docs_are_not_shadowed_by_the_root_route` | `/docs` → `200` | `test_api_docs_are_not_served`: `/docs`, `/redoc`, `/openapi.json` → `404` |
+| `test_presentation_polish.py::TestTypedResponseSchemas` (12 cases), `test_login_page.py` schema test | read `GET /openapi.json` | read `app.openapi()` |
+| `test_header_link.py` | anonymous `/` shows the app title | `/` read signed in; the sign-in page's brand links to `/login` |
+| Module-level `client` in `test_api.py`, `test_presentation_polish.py`, `test_sap_gts_bridge.py`, `test_security_patch.py`, `test_unified_search.py` | anonymous | signed in as a fresh viewer (`tests.helpers.signed_in_test_client`) |
 
 ### 🔐 Authentication without a dependency
 
@@ -1653,9 +1736,16 @@ opaque binary in the repo.
 
 ### 🔐 Signing in
 
-Reading and computing needs no account. Recording a review does. Login now has its
-own page (`GET /login`) rather than a panel on the main app — the header's **Sign
-in** link navigates there, and a successful sign-in redirects back to `/`.
+**Everything requires an account now**: the app page, every API route and the review
+trail. A visitor without a session is redirected from `/` to `/login`, and any API call
+answers `401`. Only `/login`, the `/auth/*` routes it uses, `/health` and `/static/*` are
+open. See [🔒 Sign-in required](#-sign-in-required-e-mail-verified-sign-up-and-google) for
+why and how.
+
+A new account is created in two steps. `POST /auth/register` e-mails a six-digit code, and
+`POST /auth/verify` with that code creates the account and signs it in. "Continue with
+Google" works the same way: the first time, the same code goes to the Google address.
+Sign in with your username **or** your verified e-mail.
 
 Four demo accounts are seeded on first start — one per role, so the permission model
 can actually be tried rather than just read about. Their credentials are **available
@@ -1663,24 +1753,28 @@ on request** rather than published here or on the page; they're seeded only when
 `users` table is empty, so a deployment with real accounts can't be handed them by a
 restart, and `CUSTOMSIQ_SEED_DEMO_USERS=false` turns them off entirely.
 
-Registering gives you `analyst` — see [why that's a demo choice](#-self-registration-grants-analyst--a-demo-choice-not-a-model-of-real-onboarding).
+Registering gives you `viewer` (read-only); an admin promotes accounts that need to sign off.
 
 ```bash
-# sign in (or register), keeping the session cookie
-curl -c cookies.txt -X POST "http://localhost:8000/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "<username>", "password": "<password>"}'
+# 1) start a sign-up: a code is e-mailed (locally, set CUSTOMSIQ_MAIL_DEV_LOG_CODES=true
+#    and read it from the server log instead)
+curl -X POST "http://localhost:8000/auth/register" -H "Content-Type: application/json" \
+  -d '{"username": "ada", "email": "ada@example.com", "password": "<password>"}'
 
-# the cookie is what authorises a sign-off
-curl -b cookies.txt -X POST "http://localhost:8000/review" \
-  -H "Content-Type: application/json" \
-  -d '{"subject_type": "screening", "subject_reference": "<from the /screen response>", "decision": "flagged"}'
+# 2) confirm it, keeping the session cookie
+curl -c cookies.txt -X POST "http://localhost:8000/auth/verify" -H "Content-Type: application/json" \
+  -d '{"email": "ada@example.com", "code": "<six digits>"}'
 
-curl -b cookies.txt "http://localhost:8000/auth/me"
+# later: sign in with username or e-mail
+curl -c cookies.txt -X POST "http://localhost:8000/auth/login" -H "Content-Type: application/json" \
+  -d '{"username": "ada@example.com", "password": "<password>"}'
+
+# the cookie is what authorises every call
+curl -b cookies.txt "http://localhost:8000/search?q=honey"
 curl -b cookies.txt -X POST "http://localhost:8000/auth/logout"
 ```
 
-In the browser this is the **/login** page; once signed in, the header shows your
+In the browser this is the **/login** page. Once signed in, the header shows your
 username and role, and review controls appear on exactly the results your role may
 sign off on. Everything is translated (EN/TR/DE) like the rest of the UI.
 
@@ -1822,10 +1916,13 @@ when running locally — both features in one page.
 
 The same server exposes the JSON API:
 
-Then open **http://localhost:8000/docs** for the interactive Swagger UI.
+The interactive Swagger UI is **off by default** (see [🔒 Sign-in required](#-sign-in-required-e-mail-verified-sign-up-and-google)).
+For local development, start the server with `CUSTOMSIQ_ENABLE_API_DOCS=true` and open
+**http://localhost:8000/docs**. Every API call needs a session cookie, so sign in first
+(see [🔐 Signing in](#-signing-in)).
 
 ```bash
-curl "http://localhost:8000/search?q=cotton+t-shirt&limit=2"
+curl -b cookies.txt "http://localhost:8000/search?q=cotton+t-shirt&limit=2"
 ```
 
 ```json
@@ -1865,7 +1962,14 @@ for result in search(conn, "lithium battery", limit=3):
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/` | **Web frontend** (HTML page) |
-| `GET` | `/health` | Liveness check — `{"service": "CustomsIQ API", "docs": "/docs", "status": "running"}` |
+| `GET` | `/login` | **Sign-in page** (HTML); the only page reachable without a session |
+| `GET` | `/health` | Liveness check, public — `{"service": "CustomsIQ API", "docs": "", "status": "running"}` |
+| `POST` | `/auth/register` | Start a sign-up; e-mails a six-digit code (`202`) |
+| `POST` | `/auth/verify` | Confirm the code, create the account, sign in |
+| `POST` | `/auth/resend` | New code for a pending sign-up (once a minute) |
+| `POST` | `/auth/google` | Sign in with a Google ID token, or start a Google sign-up |
+| `GET` | `/auth/config` | Whether Google sign-in is enabled (its public client ID) |
+| `POST` | `/auth/login` · `/auth/logout` · `GET /auth/me` | Session handling |
 | `GET` | `/search` | Ranked CN code matches for a product description |
 | `GET` | `/classify` | Ranked code suggestions with confidence and matched terms |
 | `GET` | `/screen` | Sanctions-list hits for a person or organisation name |
@@ -1879,10 +1983,13 @@ for result in search(conn, "lithium battery", limit=3):
 | `POST` | `/extract-invoice` | Read an uploaded invoice PDF and return the fields found in it (sign-in required) |
 | `GET` | `/sap-gts/compliance-check` | The same risk assessment, rendered in SAP GTS terminology (simulation) |
 | `GET` | `/sap-gts/legal-control/{subject_reference}` | A subject's review decisions as a block/release check log (simulation) |
-| `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
+| `GET` | `/docs` | Interactive Swagger UI — **only with `CUSTOMSIQ_ENABLE_API_DOCS=true`**, otherwise `404` |
 
-**Typed responses.** Every route above declares a Pydantic `response_model`, so `/docs` and
-`/openapi.json` show real field schemas — including the BAPIRET2 field names on the two
+Every route except `/login`, `/auth/*`, `/health` and `/static/*` requires a signed-in
+session and answers `401` without one.
+
+**Typed responses.** Every route above declares a Pydantic `response_model`, so the OpenAPI
+schema (`app.openapi()`, or `/openapi.json` when docs are enabled) shows real field schemas — including the BAPIRET2 field names on the two
 `/sap-gts/*` routes — rather than an untyped `additionalProperties: true`. This is a typing
 addition only: every response body is unchanged, verified by diffing each route's actual JSON
 before and after the models were added.

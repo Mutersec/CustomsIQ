@@ -195,13 +195,38 @@ class CodeTranslationsResponse(BaseModel):
 class UserResponse(BaseModel):
     """The public shape of an account — never carries a password hash.
 
-    Returned by /auth/register, /auth/login, /auth/users, and nested inside
-    WhoAmIResponse.
+    Returned by /auth/login, /auth/verify, /auth/users, and nested inside
+    WhoAmIResponse and GoogleSignInResponse.
     """
 
     username: str
     role: str
     created_at: str
+
+
+class SignupPendingResponse(BaseModel):
+    """POST /auth/register and /auth/resend: a code was e-mailed to `email`."""
+
+    pending: bool
+    email: str
+
+
+class GoogleSignInResponse(BaseModel):
+    """POST /auth/google.
+
+    `status` is "signed_in" (an existing account; `user` is set and the session
+    cookie issued) or "pending" (a new sign-up; a code went to `email`).
+    """
+
+    status: str
+    user: Optional[UserResponse]
+    email: Optional[str]
+
+
+class AuthConfigResponse(BaseModel):
+    """GET /auth/config: what the sign-in page needs to render itself."""
+
+    google_client_id: Optional[str]
 
 
 class LogoutResponse(BaseModel):

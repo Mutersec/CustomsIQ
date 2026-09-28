@@ -117,7 +117,7 @@ class TestDdlTranslation:
         assert "rate_percent DOUBLE PRECISION NOT NULL" in ddl
 
     def test_every_table_survives_translation(self) -> None:
-        """All nine tables are still created, none dropped by the rewrite."""
+        """Every table is still created, none dropped by the rewrite."""
         ddl = to_postgres_ddl(SCHEMA)
         for table in (
             "hs_codes",
@@ -129,6 +129,8 @@ class TestDdlTranslation:
             "users",
             "sessions",
             "review_authorship",
+            "user_emails",
+            "pending_signups",
         ):
             assert f"CREATE TABLE IF NOT EXISTS {table}" in ddl
 

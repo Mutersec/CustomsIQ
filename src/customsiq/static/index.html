@@ -15,15 +15,17 @@
 <meta name="twitter:card" content="summary_large_image">
 <style>
   :root {
-    --bg: #f5f6f8;
+    --bg: #eef2f7;
     --surface: #ffffff;
-    --surface-2: #f1f3f6;
-    --border: #dee1e7;
-    --text: #161a22;
-    --text-dim: #5b6472;
-    --primary: #1d3557;
-    --primary-dim: #14273f;
-    --primary-soft: #e9edf3;
+    --surface-2: #f4f6fa;
+    --border: #d9e0ea;
+    --text: #0f1b2d;
+    --text-dim: #52607a;
+    --primary: #0b2545;
+    --primary-dim: #13315c;
+    --primary-soft: #e6ecf4;
+    --gold: #c9a227;
+    --navy-deep: #081a31;
     --accent-screen: #b45309;
     --accent-classify: #3a6ea5;
     --accent-duty: #2f6f4f;
@@ -36,7 +38,11 @@
 
   body {
     margin: 0;
-    background: var(--bg);
+    /* The harbour scene sits behind the whole app, washed out so the panels
+       stay legible; the hero band below shows it at full strength. */
+    background:
+      linear-gradient(rgba(238, 242, 247, 0.93), rgba(238, 242, 247, 0.93)),
+      #eef2f7 url("/static/harbor-scene.svg") center / cover no-repeat fixed;
     color: var(--text);
     font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
     font-size: 15px;
@@ -49,18 +55,24 @@
 
   /* ---------- header ---------- */
   header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 20px 24px;
+    background: var(--navy-deep);
+    border-top: 4px solid var(--gold);
+    padding: 14px 24px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    box-shadow: 0 2px 12px rgba(3, 12, 28, 0.35);
   }
+
+  .brand-mark { flex: none; align-self: center; display: block; }
 
   .header-inner {
     max-width: 1180px;
     margin: 0 auto;
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: 8px 16px;
+    align-items: center;
+    gap: 8px 14px;
   }
 
   h1 {
@@ -68,10 +80,10 @@
     font-size: 21px;
     font-weight: 700;
     letter-spacing: 0.2px;
-    color: var(--primary-dim);
+    color: #ffffff;
   }
 
-  h1 .accent { color: var(--primary); font-weight: 700; }
+  h1 .accent { color: var(--gold); font-weight: 700; }
 
   h1 a {
     color: inherit;
@@ -79,8 +91,9 @@
   }
 
   .tagline {
-    color: var(--text-dim);
-    font-size: 13.5px;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 13px;
+    min-width: 0;
   }
 
   .header-links {
@@ -93,7 +106,7 @@
   }
 
   .header-links a {
-    color: var(--text-dim);
+    color: rgba(255, 255, 255, 0.8);
     text-decoration: none;
     border-bottom: 1px solid transparent;
   }
@@ -104,17 +117,17 @@
   /* ---------- language switcher ---------- */
   .lang-switch {
     display: flex;
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 999px;
     overflow: hidden;
   }
 
   .lang-btn {
-    padding: 5px 10px;
-    background: var(--surface);
-    color: var(--text-dim);
+    padding: 5px 11px;
+    background: transparent;
+    color: #ffffff;
     border: none;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid rgba(255, 255, 255, 0.2);
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.3px;
@@ -123,15 +136,55 @@
   }
 
   .lang-btn:last-child { border-right: none; }
-  .lang-btn:hover:not(.active) { background: var(--primary-soft); color: var(--text); }
-  .lang-btn.active { background: var(--primary); color: #ffffff; }
-  .lang-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+  .lang-btn:hover:not(.active) { background: rgba(255, 255, 255, 0.14); }
+  .lang-btn.active,
+  .lang-btn.active:hover { background: var(--gold); color: var(--primary); }
+  .lang-btn:focus-visible { outline: 2px solid #ffffff; outline-offset: -2px; }
+
+  /* ---------- hero ---------- */
+  .hero {
+    background:
+      linear-gradient(90deg, rgba(8, 26, 49, 0.92) 0%, rgba(8, 26, 49, 0.6) 55%, rgba(8, 26, 49, 0.15) 100%),
+      #0b2545 url("/static/harbor-scene.svg") center 64% / cover no-repeat;
+    color: #ffffff;
+    padding: 40px 24px 64px;
+  }
+  .hero-inner { max-width: 1180px; margin: 0 auto; }
+  .hero-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+  .hero-eyebrow::before { content: ""; width: 22px; height: 3px; border-radius: 2px; background: var(--gold); }
+  .hero-title {
+    margin: 10px 0 8px;
+    max-width: 720px;
+    font-size: clamp(22px, 3.2vw, 32px);
+    line-height: 1.2;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+  .hero-sub {
+    margin: 0;
+    max-width: 640px;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 15px;
+    overflow-wrap: anywhere;
+  }
+  .hero-user { margin-top: 18px; font-size: 13.5px; color: rgba(255, 255, 255, 0.9); }
+  .hero-user strong { color: #ffffff; }
 
   /* ---------- layout ---------- */
   main {
     max-width: 1180px;
-    margin: 0 auto;
-    padding: 24px;
+    margin: -36px auto 0;
+    padding: 0 24px 24px;
+    position: relative;
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 24px;
@@ -139,21 +192,26 @@
   }
 
   @media (max-width: 820px) {
-    main { grid-template-columns: 1fr; padding: 16px; gap: 16px; }
-    header { padding: 16px; }
+    main { grid-template-columns: 1fr; padding: 0 12px 16px; gap: 16px; }
+    header { padding: 12px 16px; position: static; }
     .header-links { margin-left: 0; width: 100%; }
+    .tagline { display: none; }
+    .hero { padding: 28px 16px 56px; }
   }
 
   .panel {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(11, 37, 69, 0.08), 0 1px 2px rgba(11, 37, 69, 0.06);
+    min-width: 0;
   }
 
   .panel-head {
-    padding: 14px 18px;
+    padding: 15px 20px;
     border-bottom: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    background: linear-gradient(180deg, #fbfcfe, #f4f7fb);
     display: flex;
     align-items: center;
     gap: 10px;
@@ -161,6 +219,8 @@
 
   .panel-head h2 {
     margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
     font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.4px;
@@ -209,7 +269,7 @@
 
   .breakdown b { color: var(--text); font-weight: 600; }
 
-  .panel-body { padding: 18px; }
+  .panel-body { padding: 20px; }
 
   .hint {
     margin: 0 0 14px;
@@ -253,7 +313,7 @@
     padding: 10px 12px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 8px;
     color: var(--text);
     font-size: 14.5px;
     font-family: inherit;
@@ -272,9 +332,12 @@
     background: var(--primary);
     color: #ffffff;
     border: 1px solid var(--primary);
-    border-radius: 4px;
+    border-radius: 8px;
     font-size: 14px;
     font-weight: 600;
+    line-height: 1.25;
+    max-width: 100%;
+    overflow-wrap: anywhere;
     font-family: inherit;
     cursor: pointer;
   }
@@ -382,6 +445,16 @@
     font-size: 12.5px;
   }
 
+  .site-footer {
+    background: var(--navy-deep);
+    border-top: 3px solid var(--gold);
+    margin-top: 16px;
+  }
+  .site-footer footer { color: rgba(255, 255, 255, 0.75); padding-top: 20px; }
+  .site-footer footer strong { color: var(--gold); }
+  .site-footer footer a { color: #ffffff; }
+  .site-footer footer .disclaimer { border-top: 0; }
+
   footer .disclaimer {
     border-top: 1px solid var(--border);
     padding-top: 14px;
@@ -396,15 +469,15 @@
     align-items: center;
     gap: 8px;
     font-size: 12.5px;
-    color: var(--text-dim);
+    color: rgba(255, 255, 255, 0.8);
   }
 
   .auth-chip button {
-    padding: 5px 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
+    padding: 5px 12px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 999px;
+    color: #ffffff;
     font-size: 12.5px;
     font-weight: 600;
     font-family: inherit;
@@ -413,7 +486,7 @@
 
   .auth-user { display: flex; align-items: center; gap: 6px; }
   .auth-user[hidden] { display: none; }
-  .auth-user strong { color: var(--text); font-weight: 600; }
+  .auth-user strong { color: #ffffff; font-weight: 600; }
 
   .role-badge {
     padding: 2px 7px;
@@ -784,6 +857,12 @@
 
 <header>
   <div class="header-inner">
+    <svg class="brand-mark" width="34" height="38" viewBox="0 0 40 44" aria-hidden="true">
+      <path d="M20 2 L37 8 V22 C37 32 29.5 39.5 20 42 C10.5 39.5 3 32 3 22 V8 Z" fill="#13315c" stroke="#c9a227" stroke-width="2.5"/>
+      <rect x="10" y="17" width="20" height="12" rx="1.5" fill="#c9a227"/>
+      <path d="M14 19 V27 M18 19 V27 M22 19 V27 M26 19 V27" stroke="#13315c" stroke-width="1.6"/>
+      <path d="M11 13 H29" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+    </svg>
     <h1><a href="/">Customs<span class="accent">IQ</span></a></h1>
     <span class="tagline" data-i18n="tagline"></span>
     <span class="header-links">
@@ -799,10 +878,17 @@
         <button type="button" class="lang-btn" data-lang="tr">TR</button>
         <button type="button" class="lang-btn" data-lang="de">DE</button>
       </span>
-      <a href="/docs" data-i18n="apiReference"></a>
     </span>
   </div>
 </header>
+
+<section class="hero">
+  <div class="hero-inner">
+    <span class="hero-eyebrow" data-i18n="hero.eyebrow"></span>
+    <h2 class="hero-title" data-i18n="hero.title"></h2>
+    <p class="hero-sub" data-i18n="hero.subtitle"></p>
+  </div>
+</section>
 
 <main>
   <!-- ============ Dashboard ============ -->
@@ -994,16 +1080,33 @@
   </section>
 </main>
 
+<div class="site-footer">
 <footer>
   <p class="disclaimer" data-i18n-html="footer.disclaimer"></p>
 </footer>
+</div>
 
 <script>
+  // Every API route requires a session. If one expires mid-visit, the next
+  // request answers 401 and the visitor is sent back to the sign-in page
+  // instead of seeing a raw error in a result panel.
+  const rawFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await rawFetch(...args);
+    const url = String(args[0] && args[0].url ? args[0].url : args[0]);
+    if (response.status === 401 && !url.startsWith("/auth/")) window.location.href = "/login";
+    return response;
+  };
+
   // ---------- i18n ----------
   const STRINGS = {
     en: {
       tagline: "EU trade compliance toolkit — search, classification, screening & duty",
-      apiReference: "API reference →",
+      hero: {
+        eyebrow: "Customs compliance workspace",
+        title: "Classify, screen and calculate before the goods reach the border.",
+        subtitle: "HS/CN classification on the EU Combined Nomenclature, denied-party screening, duty calculation and shipment risk in one place.",
+      },
       auth: {
         signIn: "Sign in",
         signOut: "Sign out",
@@ -1030,7 +1133,7 @@
       },
       search: {
         title: "HS / CN Code Search",
-        hint: "Describe the goods in plain language. Results are ranked by similarity against the EU Combined Nomenclature sample data.",
+        hint: "Describe the goods in plain language. Results come from the 13,733-code EU Combined Nomenclature, each shown with its place in the tariff hierarchy.",
         label: "Product description",
         placeholder: "e.g. cotton t-shirt",
         button: "Search",
@@ -1051,7 +1154,7 @@
       },
       classify: {
         title: "Code Classification",
-        hint: "Describe the goods and get ranked code suggestions with a confidence score. Unlike the search above, this weighs how <em>rare</em> each word is across the nomenclature, and shows which of your terms drove each suggestion.",
+        hint: "Describe the goods and get ranked code suggestions with a confidence score. Same engine as the search above, plus the words that drove each suggestion and a review sign-off.",
         label: "Product description",
         placeholder: "e.g. knitted cotton shirt",
         button: "Classify",
@@ -1222,7 +1325,11 @@
     },
     tr: {
       tagline: "AB dış ticaret uyum araç seti — arama, sınıflandırma, yaptırım taraması ve vergi",
-      apiReference: "API referansı →",
+      hero: {
+        eyebrow: "Gümrük uyum çalışma alanı",
+        title: "Eşya sınıra ulaşmadan sınıflandırın, tarayın ve hesaplayın.",
+        subtitle: "AB Kombine Nomenklatürü üzerinde GTİP/KN sınıflandırması, yaptırım listesi taraması, gümrük vergisi hesaplama ve sevkiyat riski tek yerde.",
+      },
       auth: {
         signIn: "Oturum aç",
         signOut: "Çıkış yap",
@@ -1249,7 +1356,7 @@
       },
       search: {
         title: "HS / CN Kodu Arama",
-        hint: "Eşyayı sade bir dille tarif edin. Sonuçlar, AB Kombine Nomanklatürü örnek verisiyle benzerliğe göre sıralanır.",
+        hint: "Eşyayı sade bir dille tarif edin. Sonuçlar 13.733 kodluk AB Kombine Nomenklatüründen gelir; her biri tarife hiyerarşisindeki yeriyle gösterilir.",
         label: "Ürün açıklaması",
         placeholder: "örn. pamuklu tişört",
         button: "Ara",
@@ -1270,7 +1377,7 @@
       },
       classify: {
         title: "Kod Sınıflandırma",
-        hint: "Eşyayı tarif edin ve güven skoruyla sıralanmış kod önerileri alın. Yukarıdaki aramanın aksine, her kelimenin nomanklatür genelinde ne kadar <em>nadir</em> olduğunu tartar ve hangi terimlerinizin sonucu getirdiğini gösterir.",
+        hint: "Eşyayı tarif edin ve güven skoruyla sıralanmış kod önerileri alın. Yukarıdaki aramayla aynı motor; ek olarak her öneriyi belirleyen kelimeleri ve inceleme onayını gösterir.",
         label: "Ürün açıklaması",
         placeholder: "örn. örgü pamuklu gömlek",
         button: "Sınıflandır",
@@ -1442,7 +1549,11 @@
     },
     de: {
       tagline: "EU-Compliance-Toolkit für den Außenhandel — Suche, Einreihung, Sanktionsprüfung & Zoll",
-      apiReference: "API-Referenz →",
+      hero: {
+        eyebrow: "Arbeitsbereich Zoll-Compliance",
+        title: "Einreihen, prüfen und berechnen, bevor die Ware die Grenze erreicht.",
+        subtitle: "Einreihung in die Kombinierte Nomenklatur der EU, Sanktionslistenprüfung, Zollberechnung und Sendungsrisiko an einem Ort.",
+      },
       auth: {
         signIn: "Anmelden",
         signOut: "Abmelden",
@@ -1469,7 +1580,7 @@
       },
       search: {
         title: "KN-/HS-Code-Suche",
-        hint: "Beschreiben Sie die Ware in einfachen Worten. Die Treffer werden nach Ähnlichkeit zu den EU-KN-Beispieldaten sortiert.",
+        hint: "Beschreiben Sie die Ware in einfachen Worten. Die Treffer stammen aus der Kombinierten Nomenklatur der EU (13.733 Codes), jeweils mit ihrer Stellung in der Tarifhierarchie.",
         label: "Warenbeschreibung",
         placeholder: "z. B. Baumwoll-T-Shirt",
         button: "Suchen",
@@ -1490,7 +1601,7 @@
       },
       classify: {
         title: "Code-Einreihung",
-        hint: "Beschreiben Sie die Ware und erhalten Sie sortierte Codevorschläge mit Konfidenzwert. Anders als die Suche oben gewichtet dies, wie <em>selten</em> jedes Wort im Datenbestand ist, und zeigt, welche Begriffe den Treffer bewirkt haben.",
+        hint: "Beschreiben Sie die Ware und erhalten Sie sortierte Codevorschläge mit Konfidenzwert. Dieselbe Suchmaschine wie oben, zusätzlich mit den ausschlaggebenden Begriffen und einer Prüffreigabe.",
         label: "Warenbeschreibung",
         placeholder: "z. B. gestricktes Baumwollhemd",
         button: "Einreihen",
@@ -1755,12 +1866,8 @@
   }
 
   authToggle.addEventListener("click", async () => {
-    if (!currentUser) {
-      window.location.href = "/login";
-      return;
-    }
-    await fetch("/auth/logout", { method: "POST" });
-    setCurrentUser(null);
+    if (currentUser) await fetch("/auth/logout", { method: "POST" });
+    window.location.href = "/login";
   });
 
   async function loadCurrentUser() {
@@ -1770,6 +1877,12 @@
       currentUser = response.ok ? payload.user : null;
     } catch (err) {
       currentUser = null;
+    }
+    // The whole app requires sign-in; the server already redirects "/", this
+    // covers a session that expired while the page was open.
+    if (!currentUser) {
+      window.location.href = "/login";
+      return;
     }
     renderAuthChip();
   }

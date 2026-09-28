@@ -18,9 +18,17 @@ from src.customsiq.api import _IP_HITS, MAX_NAME_QUERY, MAX_TEXT_QUERY, app
 from src.customsiq.config import settings
 from src.customsiq.database import get_connection, seed
 from src.customsiq.exceptions import AuthenticationError
-from tests.helpers import PASSWORD, signed_in_client, unique_username
+from tests.helpers import (
+    PASSWORD,
+    code_sent_to,
+    signed_in_client,
+    signed_in_test_client,
+    unique_email,
+    unique_username,
+)
 
-client = TestClient(app)
+# Every API route requires a session; anonymous behaviour is tested explicitly.
+client = signed_in_test_client()
 
 
 def anonymous() -> TestClient:
@@ -141,10 +149,18 @@ class TestFinding2And6AuthRateLimit:
 class TestFinding3SelfRegistrationRole:
     """One anonymous POST used to buy permanent audit-trail write access."""
 
-    def test_a_fresh_registration_is_a_viewer(self) -> None:
-        response = anonymous().post(
+    def test_a_fresh_registration_is_a_viewer(self, outbox: list) -> None:
+        """Registration now takes two requests (sign-up, then the e-mailed code)."""
+        fresh = anonymous()
+        email = unique_email("fresh")
+        fresh.post(
             "/auth/register",
-            json={"username": unique_username("fresh"), "password": PASSWORD},
+            json={"username": unique_username("fresh"), "email": email, "password": PASSWORD},
+            headers=_from_ip("198.51.100.1"),
+        )
+        response = fresh.post(
+            "/auth/verify",
+            json={"email": email, "code": code_sent_to(outbox, email)},
             headers=_from_ip("198.51.100.1"),
         )
         assert response.status_code == 200
@@ -239,24 +255,21 @@ class TestFinding5AuditDisclosure:
             )
         return reference
 
-    def test_anonymous_sees_the_decision_but_not_the_reviewer(self) -> None:
-        """Phase 7's public per-result trail survives; only identity is withheld."""
-        reference = self._recorded_reference()
-        rows = (
-            anonymous()
-            .get(
-                "/review/history",
-                params={"subject_reference": reference},
-                headers=_from_ip("198.51.100.30"),
-            )
-            .json()
-        )
+    def test_anonymous_callers_now_get_nothing_at_all(self) -> None:
+        """Used to be `test_anonymous_sees_the_decision_but_not_the_reviewer`.
 
-        assert rows, "the public four-eyes trail must still be visible"
-        assert rows[0]["decision"] == "approved"
-        assert rows[0]["reviewed_at"]
-        assert rows[0]["reviewer_name"] is None
-        assert rows[0]["comment"] is None
+        The public per-result trail (decision visible, reviewer and comment
+        withheld) is gone: every route now requires sign-in, so an anonymous
+        caller gets a 401 and none of the row.
+        """
+        reference = self._recorded_reference()
+        response = anonymous().get(
+            "/review/history",
+            params={"subject_reference": reference},
+            headers=_from_ip("198.51.100.30"),
+        )
+        assert response.status_code == 401
+        assert "sensitive free text" not in response.text
 
     def test_a_permitted_caller_still_sees_identity(self) -> None:
         reference = self._recorded_reference()
@@ -294,7 +307,11 @@ class TestFinding7RegistrationEnumeration:
         codes = [
             fresh.post(
                 "/auth/register",
-                json={"username": unique_username("enum"), "password": PASSWORD},
+                json={
+                    "username": unique_username("enum"),
+                    "email": unique_email("enum"),
+                    "password": PASSWORD,
+                },
                 headers=_from_ip(ip),
             ).status_code
             for _ in range(limit + 2)
@@ -311,7 +328,7 @@ class TestFinding7RegistrationEnumeration:
         _IP_HITS.clear()
         taken = anonymous().post(
             "/auth/register",
-            json={"username": "demo_admin", "password": PASSWORD},
+            json={"username": "demo_admin", "email": unique_email("taken"), "password": PASSWORD},
             headers=_from_ip("198.51.100.41"),
         )
         assert taken.status_code == 400

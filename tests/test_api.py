@@ -3,12 +3,11 @@
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 
-from src.customsiq.api import app
-from tests.helpers import signed_in_client
+from tests.helpers import signed_in_client, signed_in_test_client
 
-client = TestClient(app)
+# Every API route requires a session; anonymous behaviour is tested explicitly.
+client = signed_in_test_client()
 
 
 def test_root_serves_the_web_frontend() -> None:
@@ -24,11 +23,19 @@ def test_health_endpoint_returns_service_info() -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "running"
+    assert response.json()["docs"] == "", "must not point at the disabled API docs"
 
 
-def test_api_docs_are_not_shadowed_by_the_root_route() -> None:
-    """Serving a page at '/' must not swallow the API docs."""
-    assert client.get("/docs").status_code == 200
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_api_docs_are_not_served(path: str) -> None:
+    """The interactive docs and the schema are off, even for a signed-in user.
+
+    This used to assert /docs was 200 (that "/" did not shadow it). The API
+    reference is now deliberately unpublished: every route requires sign-in and
+    a public schema would still map them all. CUSTOMSIQ_ENABLE_API_DOCS turns it
+    back on for local development.
+    """
+    assert client.get(path).status_code == 404
 
 
 def test_search_endpoint_happy_path() -> None:

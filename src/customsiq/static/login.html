@@ -4,248 +4,330 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in — CustomsIQ</title>
+<meta name="description" content="CustomsIQ — EU customs classification, sanctions screening and duty calculation. Sign in to continue.">
 <link rel="icon" type="image/png" href="/static/favicon.png">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <style>
 :root {
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --surface-2: #f1f3f6;
-  --border: #dee1e7;
-  --text: #161a22;
-  --text-dim: #5b6472;
-  --primary: #1d3557;
-  --primary-dim: #14273f;
-  --primary-soft: #e9edf3;
+  --navy: #0b2545;
+  --navy-2: #13315c;
+  --gold: #c9a227;
+  --gold-soft: #f4e6b5;
+  --ink: #0f1b2d;
+  --ink-dim: #4d5b70;
+  --glass: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.55);
+  --line: #d7dde6;
+  --field: #ffffff;
   --red: #b3261e;
+  --red-soft: #fdecea;
+  --green: #1e7d4f;
+  --green-soft: #e6f4ec;
 }
 
 * { box-sizing: border-box; }
 
+html, body { height: 100%; }
+
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: 15px;
   line-height: 1.5;
+  /* The scene is the page: no solid backdrop around the card. */
+  background: #081a31 url("/static/harbor-scene.svg") center / cover no-repeat fixed;
 }
+
+/* A soft vignette keeps the card and header legible over any part of the scene. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(5, 18, 38, 0.55) 0%, rgba(5, 18, 38, 0.05) 30%, rgba(5, 18, 38, 0.15) 70%, rgba(5, 18, 38, 0.6) 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+header, main, footer { position: relative; z-index: 1; }
 
 /* ---------- header ---------- */
 header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 20px 24px;
+  border-top: 4px solid var(--gold);
 }
-
 .header-inner {
   max-width: 1180px;
   margin: 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px 16px;
-}
-
-h1 {
-  margin: 0;
-  font-size: 21px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-  color: var(--primary-dim);
-}
-
-h1 .accent { color: var(--primary); font-weight: 700; }
-
-h1 a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.header-links {
-  margin-left: auto;
-  font-size: 13.5px;
+  padding: 16px 20px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
 }
-
-.header-links a {
-  color: var(--text-dim);
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #fff;
   text-decoration: none;
-  border-bottom: 1px solid transparent;
+  min-width: 0;
+}
+.brand svg { flex: none; }
+.brand-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  line-height: 1.1;
+}
+.brand-name .accent { color: var(--gold); }
+.brand-sub {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
 }
 
-.header-links a:hover,
-.header-links a:focus-visible { color: var(--primary); border-bottom-color: var(--primary); }
-
-/* ---------- language switcher ---------- */
 .lang-switch {
+  display: inline-flex;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(8, 26, 49, 0.35);
+  backdrop-filter: blur(6px);
+}
+.lang-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  padding: 6px 13px;
+  cursor: pointer;
+}
+.lang-btn:hover:not(.active) { background: rgba(255, 255, 255, 0.14); }
+.lang-btn.active { background: var(--gold); color: var(--navy); }
+.lang-btn:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+
+/* ---------- card ---------- */
+main {
+  flex: 1;
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px 40px;
+}
+
+.card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(3, 12, 28, 0.45);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
   overflow: hidden;
 }
 
-.lang-btn {
-  padding: 5px 10px;
-  background: var(--surface);
-  color: var(--text-dim);
-  border: none;
-  border-right: 1px solid var(--border);
-  font-size: 12px;
+.card-head {
+  padding: 22px 26px 6px;
+}
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--navy-2);
+}
+.eyebrow::before {
+  content: "";
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--gold);
+}
+.card h1 {
+  margin: 6px 0 4px;
+  font-size: 23px;
+  line-height: 1.25;
+  color: var(--navy);
+  overflow-wrap: anywhere;
+}
+.card .lead {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.card-body { padding: 16px 26px 24px; }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: rgba(11, 37, 69, 0.08);
+  margin-bottom: 18px;
+}
+.tab {
+  flex: 1 1 0;
+  min-width: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 9px 8px;
+  cursor: pointer;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.tab.active { background: #fff; color: var(--navy); box-shadow: 0 1px 3px rgba(11, 37, 69, 0.18); }
+.tab:focus-visible { outline: 2px solid var(--navy-2); outline-offset: 1px; }
+
+.field { margin-bottom: 14px; }
+.field label {
+  display: block;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.3px;
+  color: var(--navy-2);
+  margin-bottom: 5px;
+}
+.field input {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--field);
+  color: var(--ink);
+}
+.field input:focus { outline: none; border-color: var(--navy-2); box-shadow: 0 0 0 3px rgba(19, 49, 92, 0.18); }
+.field input.code {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 12px;
+  text-align: center;
+  padding: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn {
+  width: 100%;
+  appearance: none;
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.25;
+  padding: 12px 16px;
   cursor: pointer;
-  font-family: inherit;
+  overflow-wrap: anywhere;
 }
-
-.lang-btn:last-child { border-right: none; }
-.lang-btn:hover:not(.active) { background: var(--primary-soft); color: var(--text); }
-.lang-btn.active { background: var(--primary); color: #ffffff; }
-.lang-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-
-/* ---------- layout ---------- */
-main {
-  max-width: 420px;
-  margin: 48px auto;
-  padding: 0 24px;
+.btn-primary { background: var(--navy); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--navy-2); }
+.btn-link {
+  width: auto;
+  background: transparent;
+  color: var(--navy-2);
+  padding: 6px 4px;
+  font-size: 13.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
-.panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-}
-
-.panel-head {
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
+.divider {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.panel-head h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
+  gap: 12px;
+  margin: 18px 0 14px;
+  color: var(--ink-dim);
+  font-size: 12.5px;
   text-transform: uppercase;
-  color: var(--primary-dim);
+  letter-spacing: 1px;
 }
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 
-.panel-head .rule {
-  width: 3px;
-  height: 17px;
-  background: var(--primary);
-  border-radius: 2px;
-}
+#google-button { display: flex; justify-content: center; min-height: 44px; }
 
-.panel-body { padding: 18px; }
-
-.hint {
+.verify-note {
   margin: 0 0 14px;
-  color: var(--text-dim);
-  font-size: 13px;
-}
-
-/* ---------- form ---------- */
-form { display: flex; gap: 8px; flex-wrap: wrap; }
-
-label {
-  display: block;
-  font-size: 12px;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-bottom: 6px;
-}
-
-.field { flex: 1 1 220px; }
-
-input[type="text"],
-input[type="password"] {
-  width: 100%;
-  padding: 10px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text);
-  font-size: 14.5px;
-  font-family: inherit;
-}
-
-input[type="text"]:focus,
-input[type="password"]:focus {
-  outline: 2px solid var(--primary);
-  outline-offset: -1px;
-  border-color: var(--primary);
-}
-
-button {
-  align-self: flex-end;
-  padding: 10px 20px;
-  background: var(--primary);
-  color: #ffffff;
-  border: 1px solid var(--primary);
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-button:hover:not(:disabled) { background: var(--primary-dim); border-color: var(--primary-dim); }
-button:focus-visible { outline: 2px solid var(--primary-dim); outline-offset: 2px; }
-button:disabled { opacity: 0.55; cursor: default; }
-
-.auth-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
-
-.auth-tabs button {
-  padding: 5px 12px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-dim);
-  font-size: 12.5px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  align-self: auto;
-}
-
-.auth-tabs button.active {
-  background: var(--primary-soft);
-  border-color: var(--primary);
-  color: var(--primary);
-}
-
-/* ---------- states ---------- */
-.state {
   padding: 12px 14px;
-  border-radius: 4px;
+  border-radius: 9px;
+  background: var(--gold-soft);
+  color: var(--ink);
   font-size: 14px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text-dim);
-  margin-top: 12px;
+  overflow-wrap: anywhere;
+}
+.verify-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-top: 8px;
 }
 
-.state.error {
-  border-left: 3px solid var(--red);
-  background: #fbeceb;
-  color: #8c2018;
+.state {
+  margin-top: 14px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }
+.state.error { background: var(--red-soft); color: var(--red); }
+.state.ok { background: var(--green-soft); color: var(--green); }
 
-footer {
-  max-width: 420px;
-  margin: 0 auto;
-  padding: 8px 24px 40px;
-  color: var(--text-dim);
+.secure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 26px;
+  border-top: 1px solid rgba(11, 37, 69, 0.08);
+  background: rgba(11, 37, 69, 0.04);
+  color: var(--ink-dim);
   font-size: 12.5px;
+}
+.secure svg { flex: none; }
+
+[hidden] { display: none !important; }
+
+/* ---------- footer ---------- */
+footer {
+  padding: 0 20px 22px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12.5px;
+}
+footer p { max-width: 640px; margin: 0 auto; }
+
+@media (max-width: 480px) {
+  .brand-sub { display: none; }
+  .card-head { padding: 18px 18px 4px; }
+  .card-body { padding: 14px 18px 20px; }
+  .secure { padding: 12px 18px; }
+  .card h1 { font-size: 21px; }
 }
 </style>
 </head>
@@ -253,47 +335,93 @@ footer {
 
 <header>
   <div class="header-inner">
-    <h1><a href="/">Customs<span class="accent">IQ</span></a></h1>
-    <span class="header-links">
-      <span class="lang-switch" role="group" aria-label="Language">
-        <button type="button" class="lang-btn" data-lang="en">EN</button>
-        <button type="button" class="lang-btn" data-lang="tr">TR</button>
-        <button type="button" class="lang-btn" data-lang="de">DE</button>
+    <a class="brand" href="/login" aria-label="CustomsIQ">
+      <svg width="40" height="44" viewBox="0 0 40 44" aria-hidden="true">
+        <path d="M20 2 L37 8 V22 C37 32 29.5 39.5 20 42 C10.5 39.5 3 32 3 22 V8 Z" fill="#0b2545" stroke="#c9a227" stroke-width="2.5"/>
+        <rect x="10" y="17" width="20" height="12" rx="1.5" fill="#c9a227"/>
+        <path d="M14 19 V27 M18 19 V27 M22 19 V27 M26 19 V27" stroke="#0b2545" stroke-width="1.6"/>
+        <path d="M11 13 H29" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <span>
+        <span class="brand-name">Customs<span class="accent">IQ</span></span>
+        <span class="brand-sub" data-i18n="brandSub"></span>
       </span>
-      <a href="/" data-i18n="backToApp"></a>
+    </a>
+    <span class="lang-switch" role="group" aria-label="Language">
+      <button type="button" class="lang-btn" data-lang="en">EN</button>
+      <button type="button" class="lang-btn" data-lang="tr">TR</button>
+      <button type="button" class="lang-btn" data-lang="de">DE</button>
     </span>
   </div>
 </header>
 
 <main>
-  <section class="panel">
-    <div class="panel-head">
-      <span class="rule"></span>
-      <h2 data-i18n="auth.title"></h2>
+  <section class="card" aria-labelledby="card-title">
+    <div class="card-head">
+      <span class="eyebrow" data-i18n="auth.eyebrow"></span>
+      <h1 id="card-title" data-i18n="auth.title"></h1>
+      <p class="lead" id="card-lead" data-i18n="auth.hint"></p>
     </div>
-    <div class="panel-body">
-      <p class="hint" data-i18n="auth.hint"></p>
 
-      <div class="auth-tabs" role="group">
-        <button type="button" class="auth-tab active" data-mode="login" data-i18n="auth.loginTab"></button>
-        <button type="button" class="auth-tab" data-mode="register" data-i18n="auth.registerTab"></button>
+    <div class="card-body">
+      <!-- Step 1: sign in or create an account -->
+      <div id="step-credentials">
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab active" role="tab" data-mode="login" data-i18n="auth.loginTab"></button>
+          <button type="button" class="tab" role="tab" data-mode="register" data-i18n="auth.registerTab"></button>
+        </div>
+
+        <form id="auth-form" novalidate>
+          <div class="field">
+            <label for="auth-username-input" id="auth-username-label" data-i18n="auth.usernameOrEmail"></label>
+            <input type="text" id="auth-username-input" autocomplete="username" autocapitalize="none"
+                   spellcheck="false" data-i18n-placeholder="auth.usernameOrEmailPlaceholder">
+          </div>
+          <div class="field" id="email-field" hidden>
+            <label for="auth-email-input" data-i18n="auth.email"></label>
+            <input type="email" id="auth-email-input" autocomplete="email" autocapitalize="none"
+                   spellcheck="false" data-i18n-placeholder="auth.emailPlaceholder">
+          </div>
+          <div class="field">
+            <label for="auth-password-input" data-i18n="auth.password"></label>
+            <input type="password" id="auth-password-input" autocomplete="current-password"
+                   data-i18n-placeholder="auth.passwordPlaceholder">
+          </div>
+          <button type="submit" class="btn btn-primary" id="auth-submit" data-i18n="auth.loginTab"></button>
+        </form>
+
+        <div id="google-block" hidden>
+          <div class="divider"><span data-i18n="auth.or"></span></div>
+          <div id="google-button"></div>
+        </div>
       </div>
 
-      <form id="auth-form">
-        <div class="field">
-          <label for="auth-username-input" data-i18n="auth.username"></label>
-          <input type="text" id="auth-username-input" autocomplete="username"
-                 data-i18n-placeholder="auth.usernamePlaceholder">
+      <!-- Step 2: the e-mailed code -->
+      <div id="step-verify" hidden>
+        <p class="verify-note" id="verify-note"></p>
+        <form id="verify-form" novalidate>
+          <div class="field">
+            <label for="verify-code-input" data-i18n="auth.code"></label>
+            <input type="text" id="verify-code-input" class="code" inputmode="numeric"
+                   autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="••••••">
+          </div>
+          <button type="submit" class="btn btn-primary" id="verify-submit" data-i18n="auth.verify"></button>
+        </form>
+        <div class="verify-actions">
+          <button type="button" class="btn btn-link" id="verify-back" data-i18n="auth.back"></button>
+          <button type="button" class="btn btn-link" id="verify-resend" data-i18n="auth.resend"></button>
         </div>
-        <div class="field">
-          <label for="auth-password-input" data-i18n="auth.password"></label>
-          <input type="password" id="auth-password-input" autocomplete="current-password"
-                 data-i18n-placeholder="auth.passwordPlaceholder">
-        </div>
-        <button type="submit" id="auth-submit" data-i18n="auth.loginTab"></button>
-      </form>
+      </div>
 
-      <div class="results" id="auth-results" aria-live="polite"></div>
+      <div id="auth-results" aria-live="polite"></div>
+    </div>
+
+    <div class="secure">
+      <svg width="14" height="16" viewBox="0 0 14 16" aria-hidden="true">
+        <rect x="1" y="7" width="12" height="8" rx="1.5" fill="#4d5b70"/>
+        <path d="M4 7 V5 a3 3 0 0 1 6 0 V7" stroke="#4d5b70" stroke-width="1.8" fill="none"/>
+      </svg>
+      <span data-i18n="auth.secure"></span>
     </div>
   </section>
 </main>
@@ -305,78 +433,165 @@ footer {
 <script>
   const STRINGS = {
     en: {
-      backToApp: "← Back to app",
+      brandSub: "EU customs & trade compliance",
       auth: {
-        title: "Sign in",
-        hint: "Review sign-offs are recorded against your account, so the audit trail names a real reviewer rather than whatever was typed into a box.",
+        eyebrow: "Secure access",
+        title: "Sign in to CustomsIQ",
+        registerTitle: "Create your account",
+        verifyTitle: "Check your e-mail",
+        hint: "Classification, sanctions screening and duty calculation for EU imports. An account is required.",
+        registerHint: "We will e-mail you a six-digit code to confirm the address before the account is created.",
         loginTab: "Sign in",
         registerTab: "Create account",
+        usernameOrEmail: "Username or e-mail",
+        usernameOrEmailPlaceholder: "you@company.com",
         username: "Username",
-        usernamePlaceholder: "your username",
+        usernamePlaceholder: "letters, digits, . _ -",
+        email: "E-mail",
+        emailPlaceholder: "you@company.com",
         password: "Password",
         passwordPlaceholder: "at least 8 characters",
-        signedIn: (name) => `Signed in as ${name}.`,
-        registered: (name) => `Account created. Signed in as ${name}.`,
-        failed: "Sign-in failed.",
-        demoWarning: "Public demo credentials on mock data. Never reuse a real password here; accounts reset whenever the free instance restarts. Demo credentials are available on request.",
+        or: "or",
+        code: "Verification code",
+        verify: "Verify and continue",
+        back: "← Change details",
+        resend: "Send a new code",
+        resendIn: (s) => `New code in ${s}s`,
+        codeSentTo: (email) => `We sent a six-digit code to ${email}. It expires in 10 minutes.`,
+        codeResent: "A new code is on its way.",
+        badLogin: "Wrong username/e-mail or password.",
+        badCode: "That code is not correct.",
+        restart: "This code can no longer be used. Please start again.",
+        tooSoon: (s) => `Please wait ${s} seconds before asking for a new code.`,
+        tooMany: "Too many attempts. Please wait a minute and try again.",
+        mailOff: "E-mail verification is not available right now. Please try again later.",
+        taken: "That username is already taken.",
+        emailExists: "An account with this e-mail already exists. Please sign in.",
+        badEmail: "Please enter a valid e-mail address.",
+        weakPassword: "The password must be at least 8 characters.",
+        badUsername: "The username may only contain letters, digits, '.', '_' and '-' (max. 32).",
+        googleFailed: "Google sign-in could not be completed.",
+        failed: "Something went wrong. Please try again.",
+        secure: "Encrypted connection · Session cookie only, no tracking",
+        demoWarning: "Demonstration system on mock and public reference data. Not for real customs declarations.",
       },
       common: {
-        enterValue: "Please enter a value first.",
-        couldNotReach: "Could not reach the API. Check your connection and try again.",
+        enterValue: "Please fill in every field.",
+        couldNotReach: "Could not reach the server. Check your connection and try again.",
       },
     },
     tr: {
-      backToApp: "← Uygulamaya dön",
+      brandSub: "AB gümrük ve ticaret uyumu",
       auth: {
-        title: "Oturum aç",
-        hint: "İnceleme onayları hesabınıza kaydedilir; böylece denetim izi bir kutuya yazılan metni değil, gerçek bir inceleyiciyi gösterir.",
-        loginTab: "Oturum aç",
+        eyebrow: "Güvenli erişim",
+        title: "CustomsIQ'ya giriş yapın",
+        registerTitle: "Hesabınızı oluşturun",
+        verifyTitle: "E-postanızı kontrol edin",
+        hint: "AB ithalatı için sınıflandırma, yaptırım taraması ve vergi hesaplama. Hesap gereklidir.",
+        registerHint: "Hesap oluşturulmadan önce adresinizi doğrulamak için size 6 haneli bir kod göndereceğiz.",
+        loginTab: "Giriş yap",
         registerTab: "Hesap oluştur",
+        usernameOrEmail: "Kullanıcı adı veya e-posta",
+        usernameOrEmailPlaceholder: "siz@sirket.com",
         username: "Kullanıcı adı",
-        usernamePlaceholder: "kullanıcı adınız",
+        usernamePlaceholder: "harf, rakam, . _ -",
+        email: "E-posta",
+        emailPlaceholder: "siz@sirket.com",
         password: "Parola",
         passwordPlaceholder: "en az 8 karakter",
-        signedIn: (name) => `${name} olarak oturum açıldı.`,
-        registered: (name) => `Hesap oluşturuldu. ${name} olarak oturum açıldı.`,
-        failed: "Oturum açılamadı.",
-        demoWarning: "Kurgusal veri üzerinde herkese açık demo bilgileri. Buraya asla gerçek bir parola girmeyin; ücretsiz sunucu her yeniden başladığında hesaplar sıfırlanır. Demo bilgileri istek üzerine paylaşılır.",
+        or: "veya",
+        code: "Doğrulama kodu",
+        verify: "Doğrula ve devam et",
+        back: "← Bilgileri değiştir",
+        resend: "Yeni kod gönder",
+        resendIn: (s) => `${s} sn sonra yeni kod`,
+        codeSentTo: (email) => `${email} adresine 6 haneli bir kod gönderdik. Kod 10 dakika geçerlidir.`,
+        codeResent: "Yeni kod gönderildi.",
+        badLogin: "Kullanıcı adı/e-posta veya parola hatalı.",
+        badCode: "Kod hatalı.",
+        restart: "Bu kod artık kullanılamaz. Lütfen baştan başlayın.",
+        tooSoon: (s) => `Yeni kod istemeden önce lütfen ${s} saniye bekleyin.`,
+        tooMany: "Çok fazla deneme yapıldı. Lütfen bir dakika bekleyip tekrar deneyin.",
+        mailOff: "E-posta doğrulaması şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin.",
+        taken: "Bu kullanıcı adı zaten alınmış.",
+        emailExists: "Bu e-posta ile bir hesap zaten var. Lütfen giriş yapın.",
+        badEmail: "Lütfen geçerli bir e-posta adresi girin.",
+        weakPassword: "Parola en az 8 karakter olmalıdır.",
+        badUsername: "Kullanıcı adı yalnızca harf, rakam, '.', '_' ve '-' içerebilir (en fazla 32).",
+        googleFailed: "Google ile giriş tamamlanamadı.",
+        failed: "Bir sorun oluştu. Lütfen tekrar deneyin.",
+        secure: "Şifreli bağlantı · Yalnızca oturum çerezi, izleme yok",
+        demoWarning: "Kurgusal ve kamuya açık referans veriler üzerinde çalışan bir gösterim sistemidir. Gerçek gümrük beyannameleri için kullanılamaz.",
       },
       common: {
-        enterValue: "Lütfen önce bir değer girin.",
-        couldNotReach: "API'ye ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.",
+        enterValue: "Lütfen tüm alanları doldurun.",
+        couldNotReach: "Sunucuya ulaşılamadı. Bağlantınızı kontrol edip tekrar deneyin.",
       },
     },
     de: {
-      backToApp: "← Zurück zur App",
+      brandSub: "EU-Zoll & Außenhandels-Compliance",
       auth: {
-        title: "Anmelden",
-        hint: "Freigaben werden Ihrem Konto zugeordnet, damit das Prüfprotokoll eine echte Person nennt und nicht das, was jemand ins Feld getippt hat.",
+        eyebrow: "Sicherer Zugang",
+        title: "Bei CustomsIQ anmelden",
+        registerTitle: "Konto erstellen",
+        verifyTitle: "Prüfen Sie Ihr E-Mail-Postfach",
+        hint: "Einreihung, Sanktionslistenprüfung und Zollberechnung für EU-Einfuhren. Ein Konto ist erforderlich.",
+        registerHint: "Bevor das Konto angelegt wird, senden wir Ihnen einen sechsstelligen Code zur Bestätigung Ihrer Adresse.",
         loginTab: "Anmelden",
         registerTab: "Konto erstellen",
+        usernameOrEmail: "Benutzername oder E-Mail",
+        usernameOrEmailPlaceholder: "sie@unternehmen.de",
         username: "Benutzername",
-        usernamePlaceholder: "Ihr Benutzername",
+        usernamePlaceholder: "Buchstaben, Ziffern, . _ -",
+        email: "E-Mail",
+        emailPlaceholder: "sie@unternehmen.de",
         password: "Passwort",
         passwordPlaceholder: "mindestens 8 Zeichen",
-        signedIn: (name) => `Angemeldet als ${name}.`,
-        registered: (name) => `Konto erstellt. Angemeldet als ${name}.`,
-        failed: "Anmeldung fehlgeschlagen.",
-        demoWarning: "Öffentliche Demo-Zugangsdaten auf fiktiven Daten. Verwenden Sie hier nie ein echtes Passwort; bei jedem Neustart der kostenlosen Instanz werden die Konten zurückgesetzt. Demo-Zugangsdaten sind auf Anfrage erhältlich.",
+        or: "oder",
+        code: "Bestätigungscode",
+        verify: "Bestätigen und fortfahren",
+        back: "← Angaben ändern",
+        resend: "Neuen Code senden",
+        resendIn: (s) => `Neuer Code in ${s} s`,
+        codeSentTo: (email) => `Wir haben einen sechsstelligen Code an ${email} gesendet. Er ist 10 Minuten gültig.`,
+        codeResent: "Ein neuer Code ist unterwegs.",
+        badLogin: "Benutzername/E-Mail oder Passwort ist falsch.",
+        badCode: "Dieser Code ist nicht korrekt.",
+        restart: "Dieser Code ist nicht mehr gültig. Bitte beginnen Sie von vorn.",
+        tooSoon: (s) => `Bitte warten Sie ${s} Sekunden, bevor Sie einen neuen Code anfordern.`,
+        tooMany: "Zu viele Versuche. Bitte warten Sie eine Minute und versuchen Sie es erneut.",
+        mailOff: "Die E-Mail-Bestätigung ist derzeit nicht verfügbar. Bitte versuchen Sie es später erneut.",
+        taken: "Dieser Benutzername ist bereits vergeben.",
+        emailExists: "Für diese E-Mail-Adresse besteht bereits ein Konto. Bitte melden Sie sich an.",
+        badEmail: "Bitte geben Sie eine gültige E-Mail-Adresse ein.",
+        weakPassword: "Das Passwort muss mindestens 8 Zeichen lang sein.",
+        badUsername: "Der Benutzername darf nur Buchstaben, Ziffern, '.', '_' und '-' enthalten (max. 32).",
+        googleFailed: "Die Anmeldung mit Google konnte nicht abgeschlossen werden.",
+        failed: "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.",
+        secure: "Verschlüsselte Verbindung · Nur Sitzungs-Cookie, kein Tracking",
+        demoWarning: "Demonstrationssystem mit fiktiven und öffentlichen Referenzdaten. Nicht für echte Zollanmeldungen.",
       },
       common: {
-        enterValue: "Bitte zuerst einen Wert eingeben.",
-        couldNotReach: "Die API konnte nicht erreicht werden. Verbindung prüfen und erneut versuchen.",
+        enterValue: "Bitte füllen Sie alle Felder aus.",
+        couldNotReach: "Der Server ist nicht erreichbar. Verbindung prüfen und erneut versuchen.",
       },
     },
   };
 
   function detectLang() {
-    const stored = localStorage.getItem("customsiq_lang");
+    let stored = null;
+    try { stored = localStorage.getItem("customsiq_lang"); } catch (err) { /* private mode */ }
     if (stored && STRINGS[stored]) return stored;
     const browser = (navigator.language || "en").slice(0, 2);
     return STRINGS[browser] ? browser : "en";
   }
 
   let lang = detectLang();
+  let authMode = "login";
+  let step = "credentials";
+  let pendingEmail = "";
+  let resendTimer = null;
+  let googleClientId = null;
 
   function t(key) {
     const parts = key.split(".");
@@ -389,10 +604,37 @@ footer {
     return value;
   }
 
+  const $ = (id) => document.getElementById(id);
+  const results = $("auth-results");
+  const usernameInput = $("auth-username-input");
+  const emailInput = $("auth-email-input");
+  const passwordInput = $("auth-password-input");
+  const codeInput = $("verify-code-input");
+
+  const escapeHtml = (value) =>
+    String(value).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[ch]));
+
+  function setState(cls, message) {
+    results.innerHTML = message ? `<div class="state ${cls}">${escapeHtml(message)}</div>` : "";
+  }
+
+  function renderHeading() {
+    const title = step === "verify" ? "auth.verifyTitle"
+      : authMode === "register" ? "auth.registerTitle" : "auth.title";
+    $("card-title").textContent = t(title);
+    $("card-lead").textContent = step === "verify" ? ""
+      : t(authMode === "register" ? "auth.registerHint" : "auth.hint");
+    $("card-lead").hidden = step === "verify";
+    if (step === "verify") $("verify-note").textContent = t("auth.codeSentTo")(pendingEmail);
+  }
+
   function applyStaticTranslations() {
     document.documentElement.lang = lang;
     document.querySelectorAll("[data-i18n]").forEach((el) => {
-      el.textContent = t(el.dataset.i18n);
+      const value = t(el.dataset.i18n);
+      if (typeof value === "string") el.textContent = value;
     });
     document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
       el.placeholder = t(el.dataset.i18nPlaceholder);
@@ -401,84 +643,264 @@ footer {
       btn.classList.toggle("active", btn.dataset.lang === lang);
     });
     setAuthMode(authMode);
+    renderHeading();
+    renderGoogleButton();
+  }
+
+  function setAuthMode(mode) {
+    authMode = mode;
+    const register = mode === "register";
+    document.querySelectorAll(".tab").forEach((tab) => {
+      const active = tab.dataset.mode === mode;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    $("email-field").hidden = !register;
+    $("auth-username-label").textContent = t(register ? "auth.username" : "auth.usernameOrEmail");
+    usernameInput.placeholder = t(register ? "auth.usernamePlaceholder" : "auth.usernameOrEmailPlaceholder");
+    $("auth-submit").textContent = t(register ? "auth.registerTab" : "auth.loginTab");
+    passwordInput.autocomplete = register ? "new-password" : "current-password";
+    renderHeading();
+  }
+
+  function showStep(next) {
+    step = next;
+    $("step-credentials").hidden = next !== "credentials";
+    $("step-verify").hidden = next !== "verify";
+    renderHeading();
+    if (next === "verify") {
+      codeInput.value = "";
+      codeInput.focus();
+    }
+  }
+
+  // The server's error text is English; map it to the visitor's language.
+  function explain(status, detail, fallback) {
+    const text = String(detail || "").toLowerCase();
+    if (status === 429 && text.includes("wait")) {
+      const seconds = (text.match(/(\d+)/) || [])[1] || "60";
+      return t("auth.tooSoon")(seconds);
+    }
+    if (status === 429) return t("auth.tooMany");
+    if (status === 503 || status === 502) return t("auth.mailOff");
+    if (text.includes("already taken")) return t("auth.taken");
+    if (text.includes("already exists")) return t("auth.emailExists");
+    if (text.includes("e-mail")) return t("auth.badEmail");
+    if (text.includes("password must")) return t("auth.weakPassword");
+    if (text.includes("username")) return t("auth.badUsername");
+    if (text.includes("expired") || text.includes("too many") || text.includes("start again")) return t("auth.restart");
+    if (text.includes("not correct")) return t("auth.badCode");
+    return fallback;
+  }
+
+  async function post(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    let payload = {};
+    try { payload = await response.json(); } catch (err) { /* empty body */ }
+    return { response, payload };
+  }
+
+  function startResendCountdown(seconds) {
+    const button = $("verify-resend");
+    clearInterval(resendTimer);
+    let left = seconds;
+    const tick = () => {
+      if (left <= 0) {
+        clearInterval(resendTimer);
+        button.disabled = false;
+        button.textContent = t("auth.resend");
+        return;
+      }
+      button.disabled = true;
+      button.textContent = t("auth.resendIn")(left);
+      left -= 1;
+    };
+    tick();
+    resendTimer = setInterval(tick, 1000);
+  }
+
+  function goToVerify(email) {
+    pendingEmail = email;
+    setState("", "");
+    showStep("verify");
+    startResendCountdown(60);
   }
 
   document.querySelectorAll(".lang-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       lang = btn.dataset.lang;
-      localStorage.setItem("customsiq_lang", lang);
+      try { localStorage.setItem("customsiq_lang", lang); } catch (err) { /* private mode */ }
       applyStaticTranslations();
     });
   });
 
-  const escapeHtml = (value) =>
-    String(value).replace(/[&<>"']/g, (ch) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    }[ch]));
-
-  function setState(box, cls, message) {
-    box.innerHTML = `<div class="state ${cls}">${escapeHtml(message)}</div>`;
-  }
-
-  let authMode = "login";
-  const authResults = document.getElementById("auth-results");
-  const authUsernameInput = document.getElementById("auth-username-input");
-  const authPasswordInput = document.getElementById("auth-password-input");
-
-  function setAuthMode(mode) {
-    authMode = mode;
-    document.querySelectorAll(".auth-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.mode === mode);
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      setState("", "");
+      setAuthMode(tab.dataset.mode);
     });
-    const label = mode === "login" ? t("auth.loginTab") : t("auth.registerTab");
-    document.getElementById("auth-submit").textContent = label;
-    authPasswordInput.autocomplete = mode === "login" ? "current-password" : "new-password";
-  }
-
-  document.querySelectorAll(".auth-tab").forEach((tab) => {
-    tab.addEventListener("click", () => setAuthMode(tab.dataset.mode));
   });
 
-  document.getElementById("auth-form").addEventListener("submit", async (event) => {
+  $("auth-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const username = authUsernameInput.value.trim();
-    const password = authPasswordInput.value;
-    if (!username || !password) {
-      setState(authResults, "error", t("common.enterValue"));
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value;
+    const email = emailInput.value.trim();
+    if (!username || !password || (authMode === "register" && !email)) {
+      setState("error", t("common.enterValue"));
       return;
     }
-    const submitBtn = document.getElementById("auth-submit");
-    submitBtn.disabled = true;
+    const submit = $("auth-submit");
+    submit.disabled = true;
     try {
-      const response = await fetch(authMode === "login" ? "/auth/login" : "/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-      const payload = await response.json();
+      if (authMode === "login") {
+        const { response, payload } = await post("/auth/login", { username, password });
+        if (!response.ok) {
+          setState("error", response.status === 401 ? t("auth.badLogin") : explain(response.status, payload.detail, t("auth.failed")));
+          return;
+        }
+        window.location.href = "/";
+        return;
+      }
+      const { response, payload } = await post("/auth/register", { username, email, password, language: lang });
       if (!response.ok) {
-        setState(authResults, "error", payload.detail || t("auth.failed"));
+        setState("error", explain(response.status, payload.detail, t("auth.failed")));
+        return;
+      }
+      goToVerify(payload.email);
+    } catch (err) {
+      setState("error", t("common.couldNotReach"));
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  codeInput.addEventListener("input", () => {
+    codeInput.value = codeInput.value.replace(/\D/g, "").slice(0, 6);
+  });
+
+  $("verify-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const code = codeInput.value.trim();
+    if (code.length !== 6) {
+      setState("error", t("auth.badCode"));
+      return;
+    }
+    const submit = $("verify-submit");
+    submit.disabled = true;
+    try {
+      const { response, payload } = await post("/auth/verify", { email: pendingEmail, code });
+      if (!response.ok) {
+        const message = explain(response.status, payload.detail, t("auth.badCode"));
+        setState("error", message);
+        if (message === t("auth.restart")) setTimeout(() => showStep("credentials"), 1800);
         return;
       }
       window.location.href = "/";
     } catch (err) {
-      setState(authResults, "error", t("common.couldNotReach"));
+      setState("error", t("common.couldNotReach"));
     } finally {
-      submitBtn.disabled = false;
+      submit.disabled = false;
     }
   });
 
+  $("verify-resend").addEventListener("click", async () => {
+    try {
+      const { response, payload } = await post("/auth/resend", { email: pendingEmail });
+      if (!response.ok) {
+        const retry = Number(response.headers.get("Retry-After"));
+        if (response.status === 429 && retry) startResendCountdown(retry);
+        setState("error", explain(response.status, payload.detail, t("auth.failed")));
+        return;
+      }
+      setState("ok", t("auth.codeResent"));
+      startResendCountdown(60);
+    } catch (err) {
+      setState("error", t("common.couldNotReach"));
+    }
+  });
+
+  $("verify-back").addEventListener("click", () => {
+    clearInterval(resendTimer);
+    setState("", "");
+    showStep("credentials");
+  });
+
+  // ---------- Sign in with Google ----------
+  async function onGoogleCredential(result) {
+    try {
+      const { response, payload } = await post("/auth/google", { credential: result.credential, language: lang });
+      if (!response.ok) {
+        setState("error", explain(response.status, payload.detail, t("auth.googleFailed")));
+        return;
+      }
+      if (payload.status === "signed_in") {
+        window.location.href = "/";
+        return;
+      }
+      goToVerify(payload.email);
+    } catch (err) {
+      setState("error", t("common.couldNotReach"));
+    }
+  }
+
+  function renderGoogleButton() {
+    if (!googleClientId || !window.google || !google.accounts || !google.accounts.id) return;
+    const holder = $("google-button");
+    holder.innerHTML = "";
+    const width = Math.min(Math.max(holder.clientWidth || 360, 200), 400);
+    google.accounts.id.renderButton(holder, {
+      theme: "outline",
+      size: "large",
+      shape: "rectangular",
+      text: "continue_with",
+      logo_alignment: "left",
+      width,
+      locale: lang,
+    });
+  }
+
+  async function setUpGoogle() {
+    try {
+      const response = await fetch("/auth/config");
+      if (!response.ok) return;
+      googleClientId = (await response.json()).google_client_id;
+    } catch (err) {
+      return;
+    }
+    if (!googleClientId) return;
+    $("google-block").hidden = false;
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: onGoogleCredential,
+        ux_mode: "popup",
+        context: "signin",
+      });
+      renderGoogleButton();
+    };
+    script.onerror = () => { $("google-block").hidden = true; };
+    document.head.appendChild(script);
+  }
+
   applyStaticTranslations();
+  setUpGoogle();
 
   (async () => {
     try {
       const response = await fetch("/auth/me");
       const payload = await response.json();
-      if (response.ok && payload.user) {
-        window.location.href = "/";
-      }
+      if (response.ok && payload.user) window.location.href = "/";
     } catch (err) {
-      // Stay on the login page if the check fails.
+      // Stay on the sign-in page if the check fails.
     }
   })();
 </script>

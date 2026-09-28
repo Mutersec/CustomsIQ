@@ -36,3 +36,23 @@ def _reset_ip_rate_limits():
     _IP_HITS.clear()
     yield
     _IP_HITS.clear()
+
+
+@pytest.fixture(autouse=True)
+def outbox(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Capture verification e-mails instead of sending them.
+
+    Configures a fake Brevo key so the mailer takes its real code path (build
+    the payload, call the transport) and swaps only the HTTP call for a list.
+    Each captured item is the decoded JSON payload Brevo would have received.
+    """
+    import json
+
+    from src.customsiq import mailer
+
+    sent: list = []
+    monkeypatch.setattr(settings, "brevo_api_key", "test-key")
+    monkeypatch.setattr(
+        mailer, "transport", lambda url, headers, payload: sent.append(json.loads(payload))
+    )
+    return sent
