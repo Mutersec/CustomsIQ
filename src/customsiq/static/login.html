@@ -328,6 +328,262 @@ footer p { max-width: 640px; margin: 0 auto; }
   .secure { padding: 12px 18px; }
   .card h1 { font-size: 21px; }
 }
+/* =====================================================================
+   Visual layer: split showcase, motion and depth. Presentation only; the
+   sign-in form, its ids and its flow are untouched. All motion is dropped
+   under prefers-reduced-motion.
+   ===================================================================== */
+:root { --gold-2: #e8c766; --sky: #5b8def; --ease: cubic-bezier(0.22, 1, 0.36, 1); }
+
+body {
+  font-family: "Inter", "SF Pro Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: #081a31;
+  overflow-x: hidden;
+}
+/* the scene drifts slowly behind everything (Ken Burns) */
+.scene {
+  position: fixed;
+  inset: -5%;
+  z-index: -2;
+  background: url("/static/harbor-scene.svg") center / cover no-repeat;
+  animation: kenburns 30s ease-in-out infinite alternate;
+}
+body::before {
+  background:
+    linear-gradient(90deg, rgba(5, 18, 38, 0.92) 0%, rgba(5, 18, 38, 0.7) 45%, rgba(5, 18, 38, 0.25) 100%),
+    linear-gradient(180deg, rgba(5, 18, 38, 0.5) 0%, transparent 30%, transparent 70%, rgba(5, 18, 38, 0.7) 100%);
+}
+.glow {
+  position: fixed;
+  z-index: 0;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  opacity: 0.5;
+}
+.glow.g1 { width: 560px; height: 560px; left: -180px; top: -200px; background: #1f4f8f; animation: drift 20s ease-in-out infinite alternate; }
+.glow.g2 { width: 460px; height: 460px; right: -120px; bottom: -200px; background: rgba(201, 162, 39, 0.5); animation: drift 24s ease-in-out infinite alternate-reverse; }
+.grid-lines {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: radial-gradient(ellipse at 25% 45%, #000 15%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse at 25% 45%, #000 15%, transparent 70%);
+  animation: gridpan 32s linear infinite;
+}
+
+header { animation: fade 0.8s var(--ease) both; }
+.brand-name { font-size: 22px; letter-spacing: -0.2px; }
+.brand-name .accent {
+  background: linear-gradient(100deg, var(--gold), var(--gold-2), var(--gold));
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: sheen 6s linear infinite;
+}
+.lang-btn { transition: background 0.25s var(--ease), color 0.25s var(--ease); }
+
+/* ---- split layout ---- */
+main {
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+  gap: 64px;
+  padding: 32px 20px 48px;
+  justify-content: space-between;
+}
+.showcase { flex: 1 1 520px; max-width: 580px; color: #ffffff; min-width: 0; }
+.showcase > * { animation: rise 0.9s var(--ease) both; }
+.showcase > :nth-child(2) { animation-delay: 0.08s; }
+.showcase > :nth-child(3) { animation-delay: 0.16s; }
+.showcase > :nth-child(4) { animation-delay: 0.24s; }
+.showcase > :nth-child(5) { animation-delay: 0.32s; }
+.show-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 12px;
+  border-radius: 999px;
+  background: rgba(201, 162, 39, 0.12);
+  border: 1px solid rgba(201, 162, 39, 0.35);
+  color: var(--gold-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+.show-eyebrow::before {
+  content: "";
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--gold-2);
+  animation: ping 2.2s ease-out infinite;
+}
+.show-title {
+  margin: 20px 0 14px;
+  font-size: clamp(30px, 4.2vw, 50px);
+  line-height: 1.08;
+  font-weight: 800;
+  letter-spacing: -1px;
+  overflow-wrap: anywhere;
+  background: linear-gradient(100deg, #ffffff 0%, #ffffff 40%, var(--gold-2) 50%, #ffffff 60%, #ffffff 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: rise 0.9s var(--ease) 0.08s both, sheen 7s linear 1.2s infinite;
+}
+.show-sub { margin: 0 0 28px; font-size: 16.5px; line-height: 1.6; color: rgba(255, 255, 255, 0.78); max-width: 520px; }
+.features { list-style: none; margin: 0 0 30px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.features li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  transition: transform 0.3s var(--ease), background 0.3s var(--ease), border-color 0.3s var(--ease);
+}
+.features li:hover { transform: translateY(-2px); background: rgba(255, 255, 255, 0.1); border-color: rgba(232, 199, 102, 0.4); }
+.features .ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px; height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(232, 199, 102, 0.28), rgba(91, 141, 239, 0.22));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--gold-2);
+}
+.previews { display: flex; flex-wrap: wrap; gap: 10px; }
+.preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink);
+  font-size: 13px;
+  box-shadow: 0 14px 30px -12px rgba(0, 0, 0, 0.55);
+  animation: float 6s ease-in-out infinite;
+}
+.preview:nth-child(2) { animation-delay: -2s; }
+.preview:nth-child(3) { animation-delay: -4s; }
+.preview b { font-family: "SF Mono", Menlo, Consolas, monospace; color: var(--navy); font-size: 12.5px; }
+.preview .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot, var(--sky)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dot, var(--sky)) 25%, transparent); }
+
+/* ---- the sign-in card ---- */
+.card {
+  position: relative;
+  flex: 0 1 440px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  animation: pop 0.9s var(--ease) 0.15s both;
+  overflow: visible;
+}
+/* a thin light that travels around the card's edge */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  padding: 1.5px;
+  border-radius: 23px;
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  background: conic-gradient(from var(--angle, 0deg), transparent 0 70%, rgba(232, 199, 102, 0.9) 80%, rgba(91, 141, 239, 0.9) 90%, transparent 100%);
+  animation: orbit 6s linear infinite;
+}
+.card-head { padding: 28px 30px 6px; }
+.card h1 { font-size: 26px; letter-spacing: -0.4px; font-weight: 800; }
+.card-body { padding: 18px 30px 26px; }
+.secure { padding: 14px 30px; border-radius: 0 0 22px 22px; }
+.tabs { border-radius: 12px; }
+.tab { transition: background 0.25s var(--ease), color 0.25s var(--ease), box-shadow 0.25s var(--ease); border-radius: 9px; }
+.tab:hover:not(.active) { color: var(--navy); }
+.field input {
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fbfcfe;
+  transition: border-color 0.25s var(--ease), box-shadow 0.25s var(--ease), background 0.25s var(--ease);
+}
+.field input:hover { border-color: #b9c4d6; }
+.field input:focus { background: #ffffff; border-color: var(--sky); box-shadow: 0 0 0 4px rgba(91, 141, 239, 0.18); }
+.btn { border-radius: 12px; transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease); }
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+  padding: 13px 16px;
+  background: linear-gradient(135deg, #13315c, #0b2545 60%, #081a31);
+  box-shadow: 0 12px 26px -10px rgba(11, 37, 69, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.btn-primary::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: -60%;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  transform: skewX(-20deg);
+  animation: shine 3.5s var(--ease) 1.5s infinite;
+}
+.btn-primary:hover:not(:disabled) { background: linear-gradient(135deg, #1a3f74, #0f2d55 60%, #0b2545); transform: translateY(-1px); box-shadow: 0 18px 32px -12px rgba(11, 37, 69, 0.75); }
+.btn-primary:active:not(:disabled) { transform: scale(0.985); }
+.state { animation: rise 0.4s var(--ease) both; }
+#step-verify:not([hidden]), #step-credentials:not([hidden]) { animation: fade 0.45s var(--ease) both; }
+
+footer { animation: fade 1s var(--ease) 0.5s both; color: rgba(255, 255, 255, 0.7); }
+
+@media (max-width: 960px) {
+  main { flex-direction: column; gap: 36px; padding-top: 16px; }
+  .showcase { flex: none; max-width: 640px; text-align: center; }
+  .show-sub { margin-left: auto; margin-right: auto; }
+  .features { text-align: left; }
+  .previews { justify-content: center; }
+  .card { flex: none; width: 100%; max-width: 440px; }
+}
+@media (max-width: 560px) {
+  .features, .previews { display: none; }
+  .show-title { font-size: 28px; margin-top: 14px; }
+  .show-sub { margin-bottom: 0; font-size: 15px; }
+  .card-head { padding: 20px 20px 4px; }
+  .card-body { padding: 14px 20px 22px; }
+  .secure { padding: 12px 20px; }
+}
+
+@property --angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+@keyframes orbit { to { --angle: 360deg; } }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes sheen { from { background-position: 200% 0; } to { background-position: -50% 0; } }
+@keyframes shine { 0% { left: -60%; } 40%, 100% { left: 130%; } }
+@keyframes kenburns { from { transform: scale(1); } to { transform: scale(1.08) translate(-1.5%, -1%); } }
+@keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(90px, 60px) scale(1.15); } }
+@keyframes gridpan { from { background-position: 0 0, 0 0; } to { background-position: 52px 52px, 52px 52px; } }
+@keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(232, 199, 102, 0.7); } 100% { box-shadow: 0 0 0 10px rgba(232, 199, 102, 0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 </style>
 </head>
 <body>
@@ -348,7 +604,29 @@ footer p { max-width: 640px; margin: 0 auto; }
   </div>
 </header>
 
+<div class="scene" aria-hidden="true"></div>
+<div class="glow g1" aria-hidden="true"></div>
+<div class="glow g2" aria-hidden="true"></div>
+<div class="grid-lines" aria-hidden="true"></div>
+
 <main>
+  <section class="showcase">
+    <span class="show-eyebrow" data-i18n="show.eyebrow"></span>
+    <h2 class="show-title" data-i18n="show.title"></h2>
+    <p class="show-sub" data-i18n="show.subtitle"></p>
+    <ul class="features">
+        <li><span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 0 1 5.9 12.1l4.3 4.3-1.4 1.4-4.3-4.3A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></svg></span><span data-i18n="show.f1"></span></li>
+        <li><span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5l8-3zm-1 13.4l5.7-5.7-1.4-1.4-4.3 4.3-2.3-2.3-1.4 1.4 3.7 3.7z"/></svg></span><span data-i18n="show.f2"></span></li>
+        <li><span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1 3v4h10V5H7zm0 7v2h2v-2H7zm4 0v2h2v-2h-2zm4 0v6h2v-6h-2zm-8 4v2h2v-2H7zm4 0v2h2v-2h-2z"/></svg></span><span data-i18n="show.f3"></span></li>
+        <li><span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4a10 10 0 0 1 10 10c0 1.9-.5 3.6-1.4 5.1l-1.7-1A8 8 0 1 0 5.1 18l-1.7 1A10 10 0 0 1 12 4zm4.2 4.4l1.4 1.4-4.2 4.3a2 2 0 1 1-1.4-1.4l4.2-4.3z"/></svg></span><span data-i18n="show.f4"></span></li>
+    </ul>
+    <div class="previews" aria-hidden="true">
+      <span class="preview"><span class="dot"></span><b>6109 10 00 00</b><span data-i18n="show.p1"></span></span>
+      <span class="preview" style="--dot:#1e7d4f"><span class="dot"></span><span data-i18n="show.p2"></span></span>
+      <span class="preview" style="--dot:#c9a227"><span class="dot"></span><span data-i18n="show.p3"></span></span>
+    </div>
+  </section>
+
   <section class="card" aria-labelledby="card-title">
     <div class="card-head">
       <span class="eyebrow" data-i18n="auth.eyebrow"></span>
@@ -427,6 +705,18 @@ footer p { max-width: 640px; margin: 0 auto; }
   const STRINGS = {
     en: {
       brandSub: "EU customs & trade compliance",
+      show: {
+        eyebrow: "EU trade compliance platform",
+        title: "Every shipment, cleared with confidence.",
+        subtitle: "Classify goods on the EU Combined Nomenclature, screen parties against sanctions lists, calculate duty and score shipment risk, all in one workspace.",
+        f1: "HS / CN classification",
+        f2: "Sanctions screening",
+        f3: "Duty calculation",
+        f4: "Shipment risk score",
+        p1: "Cotton T-shirts",
+        p2: "Screening: no match",
+        p3: "Risk: low",
+      },
       auth: {
         eyebrow: "Secure access",
         title: "Sign in to CustomsIQ",
@@ -475,6 +765,18 @@ footer p { max-width: 640px; margin: 0 auto; }
     },
     tr: {
       brandSub: "AB gümrük ve ticaret uyumu",
+      show: {
+        eyebrow: "AB ticaret uyum platformu",
+        title: "Her sevkiyat, güvenle gümrükten geçsin.",
+        subtitle: "Eşyayı AB Kombine Nomenklatürü üzerinde sınıflandırın, tarafları yaptırım listelerinde tarayın, gümrük vergisini hesaplayın ve sevkiyat riskini puanlayın; hepsi tek çalışma alanında.",
+        f1: "GTİP / KN sınıflandırma",
+        f2: "Yaptırım taraması",
+        f3: "Gümrük vergisi hesaplama",
+        f4: "Sevkiyat risk puanı",
+        p1: "Pamuklu tişört",
+        p2: "Tarama: eşleşme yok",
+        p3: "Risk: düşük",
+      },
       auth: {
         eyebrow: "Güvenli erişim",
         title: "CustomsIQ'ya giriş yapın",
@@ -523,6 +825,18 @@ footer p { max-width: 640px; margin: 0 auto; }
     },
     de: {
       brandSub: "EU-Zoll & Außenhandels-Compliance",
+      show: {
+        eyebrow: "EU-Plattform für Handels-Compliance",
+        title: "Jede Sendung, sicher verzollt.",
+        subtitle: "Waren in die Kombinierte Nomenklatur der EU einreihen, Parteien gegen Sanktionslisten prüfen, Zoll berechnen und das Sendungsrisiko bewerten, alles in einem Arbeitsbereich.",
+        f1: "HS/KN-Einreihung",
+        f2: "Sanktionslistenprüfung",
+        f3: "Zollberechnung",
+        f4: "Sendungsrisiko-Score",
+        p1: "T-Shirts aus Baumwolle",
+        p2: "Prüfung: kein Treffer",
+        p3: "Risiko: niedrig",
+      },
       auth: {
         eyebrow: "Sicherer Zugang",
         title: "Bei CustomsIQ anmelden",

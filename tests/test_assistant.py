@@ -346,7 +346,7 @@ class TestThePage:
         html = INDEX.read_text(encoding="utf-8")
         assert 'id="ask-panel"' in html and 'id="support-fab"' in html
         # The question card sits right under the dashboard.
-        assert html.index('id="ask-panel"') < html.index('data-i18n="search.title"')
+        assert html.index('id="ask-panel"') < html.index('id="search-panel"')
         # The script looks both widgets up once when it runs, so their markup
         # must come before it; placed after, the lookup returned null and the
         # exception stopped the rest of the page script.
