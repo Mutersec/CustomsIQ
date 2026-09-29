@@ -2231,7 +2231,7 @@ kullandığı "bir kez işle, sonucu commit et" yaklaşımının aynısı.
 | | |
 |---|---|
 | Kaynak | AB Kombine Nomanklatürü 2026, resmî Eurostat/DG TAXUD dışa aktarımı, [CIRCABC](https://circabc.europa.eu/) üzerinden, İngilizce/Almanca/Fransızca |
-| Gömülü yaprak kod | **13.733** — her gerçekten beyan edilebilir kod, CN-8 ve TARIC-10 birleşik (metodoloji aşağıda) |
+| Gömülü yaprak kod | **13.733** CN-8 ve TARIC-10 kodu. **Eksiksiz değil:** 1.229 HS pozisyonundan yalnızca 870'ini kapsıyor; kalan 359 pozisyonun 2.897 alt pozisyonu HS 2022 tamamlayıcısından (`data/hs2022_supplement.csv`, 6 haneli, kamu malı WCO listesi) geliyor. Ayrıntılar İngilizce README'de: "🧩 The HS 2022 supplement". |
 | Paket boyutu | Depoya commit edilen 3,1 MB CSV |
 | Her soğuk başlangıca eklenen | **~90 ms** (CSV ayrıştırma + `hs_codes`'a upsert + `hs_code_translations`'a upsert, ölçülmüş) |
 | Bu ölçekte `classify()` maliyeti | Soğukken ~150 ms, bağlantı başına önbellek ısındığında **~20 ms** — aşağıya bakın |

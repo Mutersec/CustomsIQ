@@ -721,6 +721,43 @@ def load_bundled_cn_nomenclature(conn: sqlite3.Connection, path: Optional[Path] 
     return count
 
 
+def load_bundled_hs_supplement(conn: sqlite3.Connection, path: Optional[Path] = None) -> int:
+    """Load the HS-6 subheadings the EU CN bundle does not cover.
+
+    The CN bundle turned out to miss 359 of the 1,229 HS headings (4014, 8541,
+    ...). `data/hs2022_supplement.csv` fills every uncovered HS-6 subheading
+    from the public-domain WCO HS 2022 nomenclature; it is built offline by
+    `scripts/build_hs_supplement.py` and committed. Its codes are six digits
+    on purpose (a real HS code, not an invented CN-8), English only, and each
+    carries its heading's text as context, so the classifier reads it exactly
+    like a dependent CN leaf.
+
+    Call after `load_bundled_cn_nomenclature`. Idempotent for the same reason.
+
+    Args:
+        conn: An open database connection.
+        path: Override for the supplement's location.
+
+    Returns:
+        The number of HS-6 codes loaded.
+    """
+    if path is None:
+        path = Path(__file__).resolve().parent.parent.parent / "data" / "hs2022_supplement.csv"
+
+    records = []
+    contexts: list[tuple] = []
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            records.append(HSCode(row["hs_code"], row["description_en"], row["category"]))
+            if row["context_en"]:
+                contexts.append((row["hs_code"], "en", row["context_en"]))
+
+    count = upsert_hs_codes(conn, records)
+    upsert_contexts(conn, contexts)
+    logger.info("loaded %d HS-6 supplement codes from %s", count, path)
+    return count
+
+
 def fetch_all(conn: sqlite3.Connection) -> list[HSCode]:
     """Return every HS code record in the database.
 

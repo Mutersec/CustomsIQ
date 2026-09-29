@@ -44,6 +44,7 @@ from src.customsiq.database import (
     get_by_code,
     get_connection,
     load_bundled_cn_nomenclature,
+    load_bundled_hs_supplement,
     load_bundled_sanctions,
     seed,
     update_user_role,
@@ -90,6 +91,10 @@ seed(_conn)
 # access and survives every cold start; upsert_hs_codes is idempotent, so
 # re-running this on every restart is safe and cheap (~90 ms).
 load_bundled_cn_nomenclature(_conn)
+# The CN bundle misses 359 whole HS headings (4014, 8541, ...); the HS-6
+# supplement fills every uncovered subheading from the public-domain WCO HS
+# 2022 list, so a search never finds nothing merely because a heading is absent.
+load_bundled_hs_supplement(_conn)
 # Same arrangement for the sanctions list: the real OFAC SDN subset goes on top
 # of the 18 invented fixture rows seed() just wrote, not instead of them. Those
 # 18 are what the READMEs' worked examples and the pinned tests are built on;

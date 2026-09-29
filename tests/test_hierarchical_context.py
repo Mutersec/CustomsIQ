@@ -45,6 +45,7 @@ from src.customsiq.database import (
     fetch_all_contexts,
     get_connection,
     load_bundled_cn_nomenclature,
+    load_bundled_hs_supplement,
     seed,
 )
 from src.customsiq.search import search
@@ -272,12 +273,19 @@ def bundle() -> sqlite3.Connection:
     conn = get_connection(":memory:")
     seed(conn)
     load_bundled_cn_nomenclature(conn)
+    load_bundled_hs_supplement(conn)
     return conn
 
 
 class TestContextIsLoaded:
     def test_every_language_is_stored(self, bundle: sqlite3.Connection) -> None:
-        for language in ("en", "de", "fr"):
+        """7,095 CN leaves carry context in all three languages.
+
+        English also holds the 2,897 HS-6 supplement rows (each carries its
+        heading's text), so it now counts 9,992; the supplement has no DE/FR.
+        """
+        assert len(fetch_all_contexts(bundle, "en")) == 7095 + 2897
+        for language in ("de", "fr"):
             assert len(fetch_all_contexts(bundle, language)) == 7095
 
     def test_english_is_a_real_row_here_unlike_in_translations(
@@ -350,11 +358,18 @@ class TestSearchNowReadsTheContext:
         rather than an unrelated row at 40-55%."""
         assert search(bundle, query, limit=1) == []
 
-    def test_leather_jacket_now_reaches_leather_articles(self, bundle: sqlite3.Connection) -> None:
-        top = search(bundle, "leather jacket", limit=1)[0]
-        assert top.hs_code.code == "42050090"
-        assert top.score == pytest.approx(0.5423, abs=1e-4)
-        assert top.hierarchy_path == "Other articles of leather or of composition leather > Other"
+    def test_leather_jacket_reaches_leather_articles(self, bundle: sqlite3.Connection) -> None:
+        """Re-pinned when the HS-6 supplement was added (was 42050090 at 0.5423).
+
+        The supplement adds HS-6 leather rows (heading 4115) that now outrank
+        it; 42050090 is still in the top three. Neither is the ideal answer
+        (leather apparel is 4203 10), a limit of word matching on "jacket",
+        which the tariff calls "articles of apparel".
+        """
+        results = search(bundle, "leather jacket", limit=3)
+        assert results[0].hs_code.code == "411520"
+        assert results[0].score == pytest.approx(0.5936, abs=1e-4)
+        assert "42050090" in [r.hs_code.code for r in results]
 
     def test_leeches_reach_the_live_animal_basket(self, bundle: sqlite3.Connection) -> None:
         """Via the curated alias — no CN row contains the word "leech"."""

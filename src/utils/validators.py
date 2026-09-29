@@ -1,5 +1,6 @@
 """Validation utilities for trade compliance"""
 
+HS_CODE_LENGTH = 6
 CN_CODE_LENGTH = 8
 TARIC_CODE_LENGTH = 10
 
@@ -19,6 +20,26 @@ def validate_cn_code(cn_code: str) -> bool:
     if not isinstance(cn_code, str):
         return False
     return len(cn_code) in (CN_CODE_LENGTH, TARIC_CODE_LENGTH) and cn_code.isdigit()
+
+
+def validate_hs_code(code: str) -> bool:
+    """
+    Validate any code the catalogue can hold: HS-6, CN-8 or TARIC-10.
+
+    HS-6 codes come from the HS 2022 supplement that fills headings the EU CN
+    bundle lacks (see scripts/build_hs_supplement.py). Kept separate from
+    `validate_cn_code` on purpose: invoice extraction must not start treating
+    any six-digit number on a document (a postcode, a date) as a tariff code.
+
+    Args:
+        code: HS, CN or TARIC code to validate
+
+    Returns:
+        True if valid format, False otherwise
+    """
+    if not isinstance(code, str):
+        return False
+    return len(code) in (HS_CODE_LENGTH, CN_CODE_LENGTH, TARIC_CODE_LENGTH) and code.isdigit()
 
 
 def validate_country_code(country_code: str) -> bool:

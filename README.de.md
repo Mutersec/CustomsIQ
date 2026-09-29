@@ -2223,6 +2223,12 @@ einfaches lokales `pytest` braucht weder PostgreSQL noch den Treiber).
 
 ## 🌍 Die echte EU-Kombinierte Nomenklatur 2026
 
+> **Nachtrag: HS-2022-Ergänzung.** Das KN-Bundle ist nicht vollständig: Es deckt nur 870 der
+> 1.229 HS-Positionen ab. Die fehlenden 359 Positionen (2.897 Unterpositionen) füllt
+> `data/hs2022_supplement.csv` aus der gemeinfreien WCO-HS-2022-Liste. Diese Codes sind
+> sechsstellig und nur englisch; in der Oberfläche sind sie als „HS-6“ gekennzeichnet.
+> Details in der englischen README unter „🧩 The HS 2022 supplement“.
+
 Jede frühere Phase betrieb die Such-/Einreihungs-Endpunkte gegen 20 erfundene Codes — genug, um
 die Algorithmen zu zeigen, unbrauchbar, um ein echtes Produkt tatsächlich zu finden. Diese Phase
 schließt diese Lücke **dauerhaft**, nicht mit einem Live-Importschritt: die offizielle

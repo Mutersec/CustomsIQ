@@ -2345,6 +2345,77 @@ points at a real server (CI sets it; a plain local `pytest` needs no Postgres an
 
 ## 🌍 The real EU Combined Nomenclature 2026
 
+### 🧩 The HS 2022 supplement: filling 359 missing headings
+
+**What was wrong.** This section used to call the CN bundle "every genuinely declarable code".
+It isn't. A search for `condom` found nothing, which led to measuring the bundle against the full
+Harmonized System:
+
+| | In HS 2022 | Missing from the EU CN bundle |
+|---|---|---|
+| Headings (4 digits) | 1,229 | **359** |
+| Subheadings (6 digits) | 5,613 | **2,897 (52%)** |
+
+- Whole headings were absent, such as 4014 (condoms), 8541 (semiconductors and photovoltaic
+  panels) and 9021 (orthopaedic appliances and pacemakers).
+- Machinery (ch. 84, 312 subheadings) and organic chemicals (ch. 29, 241) were hit hardest.
+- Somewhere in building the bundle, data was lost. Finding out where needs the EU source files
+  (CIRCABC), which could not be downloaded from the environment this was built in.
+
+**What fills it.** The international Harmonized System itself, one level up:
+- **Source:** `data/hs2022_source.csv` is the WCO HS 2022 nomenclature, as published by the
+  [`datasets/harmonized-system`](https://github.com/datasets/harmonized-system) project with
+  data from UN Comtrade. The licence is **ODC-PDDL-1.0 (public domain)**, and the file is
+  committed unchanged.
+- **Build:** `scripts/build_hs_supplement.py` writes `data/hs2022_supplement.csv`, with one row
+  for every HS-6 subheading that no bundled CN code starts with (2,897 rows across 906
+  headings). Each row carries its heading's text as context, so results show a hierarchy
+  path like any dependent CN leaf. A test checks that the committed file is exactly what the
+  builder produces.
+- **Loading:** `database.load_bundled_hs_supplement` loads it on startup, right after the CN
+  bundle. Together they cover **every** HS 2022 subheading, and a test enforces that.
+
+**What it deliberately is not:**
+- **Not invented EU codes.** Supplement codes stay **six digits** (`401410`, not
+  `40141000`). Padding to eight would invent CN codes. The UI tags these results
+  "HS-6 · EU 8-digit detail not in this data", because a customs declaration needs 8/10 digits.
+- **English only.** The source has no German or French text.
+- **Not a vocabulary fix.** It fills missing *codes*, not missing *words*. Colloquial product
+  names that appear in no tariff text (`dildo`, for example: the tariff classifies such goods
+  by material under generic headings) still return nothing.
+
+**What changed around it:**
+- `validate_hs_code` accepts 6/8/10 digits, so typing `4014.10` looks the code up directly, and
+  duty and risk treat a six-digit code as "no rate on record" rather than invalid input.
+  Invoice extraction keeps the strict 8/10-digit rule, so a postcode on a document is never
+  read as a tariff code.
+- Aliases: `condom`/`prezervatif`/`kondom` now point at latex condoms, `401410`. There are
+  also `solar panel` → `854143` (the tariff says "photovoltaic") and `dishwasher` → `842211`
+  (the tariff says "dish washing machines"). The alias rule was refined: at least the key's
+  *distinctive* word must be absent from the target text.
+- **All six original production queries now reach the right heading**, including
+  `solar panel`, the one that used to fail.
+
+**Pinned values that moved, by name:**
+
+| Test | Before | After |
+|---|---|---|
+| `test_hierarchical_context.py::…::test_leather_jacket_now_reaches_leather_articles` | top `42050090` at 0.5423 | renamed `test_leather_jacket_reaches_leather_articles`: top `411520` (HS-6, leather) at 0.5936; `42050090` still in the top 3 |
+| `test_hierarchical_context.py::TestContextIsLoaded::test_every_language_is_stored` | 7,095 contexts in EN/DE/FR | EN 9,992 (7,095 + 2,897 supplement rows), DE/FR 7,095 |
+| `test_unified_search.py::…::test_solar_panel_cannot_reach_8541_because_the_bundle_lacks_it` | pinned the failure | `test_solar_panel_now_reaches_photovoltaic_panels`: `854143` in the top 5 |
+| `test_unified_search.py::…::test_heading_4014_is_still_missing_from_the_bundle` | 4014 absent | `test_heading_4014_now_comes_from_the_supplement` |
+| `test_unified_search.py::…::test_condom_searches_reach_the_sheath_contraceptive_code` | → `3926909760` | `…_reach_the_latex_condom_code`: → `401410` |
+| `test_unified_search.py::…::test_every_key_shares_no_word_with_its_target` | no shared word | `test_every_key_has_a_word_its_target_lacks` |
+
+Every other pinned score is unchanged; `classify()`'s real-corpus pins survived the 2,897
+extra documents. The CN bundle's own counts (13,733 rows, 7,095 contexts per language) are
+untouched, because that file was not changed.
+
+**The permanent fix** is still to rebuild the CN bundle from the full CIRCABC EN/DE/FR files.
+That gives real CN-8/TARIC-10 codes with German and French text for these headings, and the
+supplement then shrinks on its own, since it only fills what the bundle doesn't cover.
+
+
 Every earlier phase ran the classification/search endpoints against 20 invented codes — good
 enough to demonstrate the algorithms, useless for actually finding a real product. This phase
 closes that gap **permanently**, not with a live import step: the official EU Combined
@@ -2359,7 +2430,7 @@ approach `tests/fixtures/sample_invoice.pdf` already uses for the invoice-extrac
 | | |
 |---|---|
 | Source | EU Combined Nomenclature 2026, official Eurostat/DG TAXUD export via [CIRCABC](https://circabc.europa.eu/), English/German/French |
-| Leaf codes bundled | **13,733** — every genuinely declarable code, CN-8 and TARIC-10 combined (see the methodology below) |
+| Leaf codes bundled | **13,733** CN-8 and TARIC-10 codes (see the methodology below). **Not complete:** they cover only 870 of the 1,229 HS headings. See [🧩 The HS 2022 supplement](#-the-hs-2022-supplement-filling-359-missing-headings) |
 | Bundle size | 3.1 MB CSV, committed to the repo |
 | Added to every cold start | **~90 ms** (CSV parse + upsert into `hs_codes` + upsert into `hs_code_translations`, measured) |
 | `classify()` cost at this scale | ~150 ms cold, **~20 ms** once its per-connection cache is warm — see below |
