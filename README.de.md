@@ -833,6 +833,31 @@ also kostenlos und ohne API-Schlüssel.
   Codes nennt die Antwort den Warenwert und dass kein Satz vorliegt.
 - Bei einem Ursprung in der EU ist der Handel innergemeinschaftlich und zollfrei.
 
+**Was die Chats können und was nicht.** Beide bleiben regelbasiert und nutzen
+nur `classify`, `calculate_duty` und `screen_entity`:
+
+- **Smalltalk.** "hallo", "Hilfe", "danke", "hi", "help" und "merhaba" bekommen
+  eine kurze Antwort mit den Fähigkeiten des Bots. Diese Nachrichten erreichen
+  `classify` nie.
+- **Zuerst die Ware.** Die Reihenfolge ist immer Ware, dann Herkunft, dann Preis.
+  Füllwörter ("Zoll", "der Preis ist", "etwas") gelten nicht als Ware.
+- **Keine Endlosschleife.** Ist eine Antwort nicht lesbar, sagt der Bot, was er
+  nicht verstanden hat, und gibt ein Beispiel. Dieselbe Frage kommt nie wortgleich
+  noch einmal.
+- **Hinweis statt Antwort.** Treffer unter der Schwelle 0,3 werden als zu
+  prüfender Hinweis gezeigt.
+- **Beträge.** "1,2 Mio.", "1.2 million", "1,2 milyon", "1.200.000", "$1.2M" und
+  "10k" werden verstanden. Das letzte Trennzeichen ist das Dezimalzeichen.
+- **Keine Währungsumrechnung.** Der Zoll wird auf den angegebenen Betrag in dessen
+  Währung berechnet, und die Antwort sagt das.
+- **Bestimmungsland.** "aus China nach Luxemburg" liest beide Länder. Bei einem
+  EU-Bestimmungsland gilt der gemeinsame EU-Zolltarif.
+- **Ehrliche Daten.** Die Codes stammen aus der echten KN 2026. Die Zollsätze sind
+  Demodaten, und jede Schätzung sagt das.
+- **Kein Passwort-Reset.** Die Hilfe-Blase sagt das offen, empfiehlt die Anmeldung
+  mit Google und verweist auf support@customsiq.org, wo ein Mensch antwortet.
+- **Nicht enthalten:** freie Unterhaltung, Währungsumrechnung und Nicht-EU-Tarife.
+
 ### 🔑 Das Verwaltungspanel des Inhabers und das Aktivitätsprotokoll
 
 **Was es ist.** `/admin` ist ein privates Panel nur für den Inhaber der Website, mit vier

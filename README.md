@@ -832,7 +832,8 @@ model, so they cost nothing to run and need no API key.
   the cost", and answers with the goods value, the duty and the total.
 - **The help bubble** sits at the bottom right. It answers questions about using
   the site (search, sign-up, passwords, roles, privacy) from a fixed list of
-  answers and falls back to support@customsiq.org.
+  answers and falls back to support@customsiq.org. It also answers "hi" and
+  "help" in EN/TR/DE.
 
 **How the question card works** (`assistant.py`). The message is taken apart
 with word lists and patterns in EN/TR/DE:
@@ -858,6 +859,34 @@ The figures come from the existing `classify` and `calculate_duty`:
 It is `POST /assistant`: signed-in only, rate-limited, messages capped at 300
 characters, and logged as the `assistant` action in the owner's activity log.
 Covered by `tests/test_assistant.py`.
+
+**What the chats do and do not do.** Both stay rule-based and only compose
+`classify`, `calculate_duty` and `screen_entity`:
+
+- **Small talk.** "hi", "help", "merhaba", "yardım", "hallo", "Hilfe" and "thanks"
+  get a short reply listing what the bot can do. They never reach `classify`, so
+  "hi" no longer returns Hi-Lok bolts.
+- **Goods first.** The order is always goods, then origin, then price. Filler
+  words ("customs", "pay", "its price is") are never taken as goods: a product
+  needs a glossary hit or at least one real word of 3+ letters.
+- **No dead loops.** If a reply can't be read, the bot says what it didn't
+  understand and gives an example. It never asks the identical question twice.
+- **Leads, not answers.** A match below the page's low-confidence threshold (0.3)
+  is shown as a lead to verify, not as "the closest codes".
+- **Amounts.** "1.2 million", "1,2 milyon", "1.2 Mio.", "1.200.000", "$1.2M" and
+  "10k" are all understood. The last separator is the decimal point. Currency
+  words are recognised in all three languages.
+- **No currency conversion.** Duty is computed on the amount as given, in that
+  currency, and the reply says so.
+- **Destinations.** "from China to Luxembourg" reads both countries. An EU
+  destination means the common EU tariff applies.
+- **Honest data.** Codes come from the real EU Combined Nomenclature 2026, but the
+  duty rates are demo data, and every estimate says so.
+- **No password reset.** CustomsIQ has none. The help bubble says so, suggests
+  Google sign-in, and points to support@customsiq.org, where a person handles it.
+- **Not included:** free conversation, currency conversion and non-EU tariffs.
+- **Safety.** Replies are rendered with `textContent`. A tampered `context` is
+  cleaned rather than causing a 500.
 
 ### 🔑 The owner's admin panel and the activity log
 

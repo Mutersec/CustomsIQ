@@ -5,6 +5,7 @@ facts are pulled out with word lists and patterns, and the figures come from
 the same `classify` and `calculate_duty` the rest of the app uses.
 """
 
+import json
 import re
 import sqlite3
 from decimal import Decimal
@@ -16,7 +17,15 @@ from fastapi.testclient import TestClient
 from src.customsiq import assistant
 from src.customsiq.api import _conn, app
 from src.customsiq.assistant_glossary import COUNTRY_LABELS, COUNTRY_NAMES, PRODUCTS_TR
-from src.customsiq.assistant_texts import FAQ, SUGGESTIONS, SUPPORT_SUGGESTIONS, TEXT
+from src.customsiq.assistant_texts import (
+    FAQ,
+    SMALLTALK,
+    SUGGESTIONS,
+    SUPPORT_FALLBACK,
+    SUPPORT_SMALLTALK,
+    SUPPORT_SUGGESTIONS,
+    TEXT,
+)
 from src.customsiq.cn_classifier import classify
 from src.customsiq.database import (
     fetch_activity,
@@ -361,3 +370,432 @@ class TestThePage:
             assert len(blocks) == 3, section
             keys = [set(re.findall(r"^\s+(\w+):", block, re.M)) for block in blocks]
             assert keys[0] == keys[1] == keys[2], section
+
+
+# ---------------------------------------------------------------------------
+# The seven reported chat failures, one class each
+# ---------------------------------------------------------------------------
+
+
+def _no_classify(*_args: object, **_kwargs: object) -> list:
+    raise AssertionError("small talk must never reach classify()")
+
+
+class TestFailure1GreetingsNeverReachClassify:
+    """ "hi" used to answer "closest codes for hi: Hi-Lok bolts"."""
+
+    @pytest.mark.parametrize(
+        ("message", "lang", "key"),
+        [
+            ("hi", "en", "hello"),
+            ("Hello!", "en", "hello"),
+            ("hi there", "en", "hello"),
+            ("merhaba", "tr", "hello"),
+            ("Selam", "tr", "hello"),
+            ("İyi günler", "tr", "hello"),
+            ("hallo", "de", "hello"),
+            ("Guten Tag!", "de", "hello"),
+            ("help", "en", "capabilities"),
+            ("what can you do?", "en", "capabilities"),
+            ("yardım", "tr", "capabilities"),
+            ("Ne yapabilirsin?", "tr", "capabilities"),
+            ("Hilfe", "de", "capabilities"),
+            ("Hallo, was kannst du?", "de", "capabilities"),
+            ("thanks!", "en", "thanks"),
+            ("teşekkürler", "tr", "thanks"),
+            ("danke schön", "de", "thanks"),
+        ],
+    )
+    def test_small_talk_gets_a_friendly_reply_in_the_ui_language(
+        self,
+        conn: sqlite3.Connection,
+        monkeypatch: pytest.MonkeyPatch,
+        message: str,
+        lang: str,
+        key: str,
+    ) -> None:
+        monkeypatch.setattr(assistant, "classify", _no_classify)
+        reply = assistant.answer(conn, message, {}, lang)
+        assert reply["reply"] == TEXT[lang][key]
+        assert reply["result"] is None
+        assert reply["suggestions"] == SUGGESTIONS[lang]
+
+    @pytest.mark.parametrize("lang", ["en", "tr", "de"])
+    def test_the_greeting_lists_what_the_bot_can_do(self, lang: str) -> None:
+        words = {"en": ("duty", "CN code", "sanctions"), "tr": ("vergi", "GTİP", "yaptırım")}
+        words["de"] = ("Zoll", "KN-Nummer", "Sanktionsliste")
+        assert all(w in TEXT[lang]["hello"] for w in words[lang])
+
+    def test_a_greeting_mid_question_keeps_the_question(self, conn: sqlite3.Connection) -> None:
+        first = assistant.answer(conn, "laptops from China, calculate the cost", {}, "en")
+        second = assistant.answer(conn, "thanks", first["context"], "en")
+        assert second["context"]["product"] == "laptops"
+        assert second["context"]["awaiting"] == "price"
+
+    def test_a_greeting_in_front_of_a_shipment_is_not_small_talk(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        reply = assistant.answer(conn, "hi, 500 t-shirts from China, 4 EUR each", {}, "en")
+        assert reply["result"]["total"] == "2240.00"
+        assert assistant.smalltalk_kind("hi, 500 t-shirts from China") is None
+
+    def test_hi_lok_bolts_are_still_found_when_asked_for(self, conn: sqlite3.Connection) -> None:
+        reply = assistant.answer(conn, "Which code is a Hi-Lok bolt?", {}, "en")
+        assert reply["result"]["kind"] == "classify"
+
+    def test_the_api_answers_hi_with_the_greeting(self) -> None:
+        client = signed_in_test_client()
+        body = client.post("/assistant", json={"message": "hi", "language": "en"}).json()
+        assert body["reply"] == TEXT["en"]["hello"]
+        assert body["result"] is None
+
+
+class TestFailure2HelpWidgetSmallTalk:
+    """ "help" and "hi" in the help widget used to get the "didn't find an answer" fallback."""
+
+    @pytest.mark.parametrize(
+        ("message", "lang", "kind"),
+        [
+            ("hi", "en", "greeting"),
+            ("help", "en", "help"),
+            ("merhaba", "tr", "greeting"),
+            ("yardım", "tr", "help"),
+            ("hallo", "de", "greeting"),
+            ("Hilfe", "de", "help"),
+            ("thank you", "en", "thanks"),
+        ],
+    )
+    def test_small_talk_is_answered(self, message: str, lang: str, kind: str) -> None:
+        reply = assistant.support_answer(message, lang)
+        assert reply["matched"] is True
+        assert reply["reply"] == SUPPORT_SMALLTALK[kind][lang]
+        assert reply["reply"] != SUPPORT_FALLBACK[lang]
+        assert reply["suggestions"] == SUPPORT_SUGGESTIONS[lang]
+
+    def test_every_small_talk_reply_exists_in_all_three_languages(self) -> None:
+        for answers in SUPPORT_SMALLTALK.values():
+            assert set(answers) == {"en", "tr", "de"}
+        assert set(SUPPORT_SMALLTALK) == set(SMALLTALK)
+
+    def test_through_the_api(self) -> None:
+        client = signed_in_test_client()
+        body = client.post(
+            "/assistant", json={"message": "help", "mode": "support", "language": "de"}
+        ).json()
+        assert body["reply"] == SUPPORT_SMALLTALK["help"]["de"]
+
+
+class TestFailure3Amounts:
+    """ "Its price is 1.2 million dollars." used to be ignored and the question repeated."""
+
+    @pytest.mark.parametrize(
+        ("typed", "amount", "currency"),
+        [
+            ("1.2 million dollars", "1200000", "USD"),
+            ("1,2 milyon dolar", "1200000", "USD"),
+            ("1.2 Mio. Dollar", "1200000", "USD"),
+            ("1.200.000 EUR", "1200000", "EUR"),
+            ("1,200,000 euro", "1200000", "EUR"),
+            ("$1.2M", "1200000", "USD"),
+            ("10k EUR", "10000", "EUR"),
+            ("250 bin TL", "250000", "TRY"),
+            ("3 Mrd. Euro", "3000000000", "EUR"),
+            ("£2.5m", "2500000", "GBP"),
+            ("500 lira", "500", "TRY"),
+            ("700 pounds", "700", "GBP"),
+            ("1.5 billion USD", "1500000000", "USD"),
+        ],
+    )
+    def test_amount_formats_and_currency_words(
+        self, typed: str, amount: str, currency: str
+    ) -> None:
+        price = assistant.parse(f"laptops {typed}")["price"]
+        assert (price["amount"], price["currency"]) == (amount, currency)
+
+    def test_the_last_separator_is_the_decimal_point(self) -> None:
+        assert assistant.parse("1,2 Mio. EUR")["price"]["amount"] == "1200000"
+        assert assistant.parse("1.25 million EUR")["price"]["amount"] == "1250000"
+
+    def test_a_million_is_not_a_count_of_pieces(self) -> None:
+        assert "quantity" not in assistant.parse("laptops 10 million")
+
+    @pytest.mark.parametrize(
+        ("first", "reply", "lang", "value_text", "currency_note"),
+        [
+            (
+                "laptops from China, calculate the cost",
+                "Its price is 1.2 million dollars.",
+                "en",
+                "1,200,000.00 USD",
+                "in USD. CustomsIQ does not convert currencies.",
+            ),
+            (
+                "Çin'den laptop, maliyeti hesapla",
+                "Fiyatı 1,2 milyon dolar.",
+                "tr",
+                "1.200.000,00 USD",
+                "USD cinsinden hesaplandı. CustomsIQ döviz çevirisi yapmaz.",
+            ),
+            (
+                "Laptops aus China, Kosten berechnen",
+                "Der Preis ist 1,2 Mio. Dollar.",
+                "de",
+                "1.200.000,00 USD",
+                "in USD berechnet. CustomsIQ rechnet keine Währungen um.",
+            ),
+        ],
+    )
+    def test_the_reported_conversation_completes(
+        self,
+        conn: sqlite3.Connection,
+        first: str,
+        reply: str,
+        lang: str,
+        value_text: str,
+        currency_note: str,
+    ) -> None:
+        asked = assistant.answer(conn, first, {}, lang)
+        assert asked["context"]["awaiting"] == "price"
+        done = assistant.answer(conn, reply, asked["context"], lang)
+        assert done["result"]["kind"] == "cost"
+        assert done["result"]["customs_value"] == "1200000.00"
+        assert done["result"]["currency"] == "USD"
+        assert done["result"]["code"].startswith("8471")
+        assert value_text in done["reply"] and currency_note in done["reply"]
+
+    @pytest.mark.parametrize("lang", ["en", "tr", "de"])
+    def test_an_amount_without_a_currency_is_taken_as_given(
+        self, conn: sqlite3.Connection, lang: str
+    ) -> None:
+        asked = assistant.answer(conn, "laptops from China, calculate the cost", {}, lang)
+        done = assistant.answer(conn, "10k", asked["context"], lang)
+        assert done["result"]["customs_value"] == "10000.00"
+        assert done["result"]["currency_assumed"] is True
+        assert TEXT[lang]["currency_assumed"] in done["reply"]
+
+    @pytest.mark.parametrize("lang", ["en", "tr", "de"])
+    def test_an_unreadable_price_is_never_asked_again_verbatim(
+        self, conn: sqlite3.Connection, lang: str
+    ) -> None:
+        asked = assistant.answer(conn, "laptops from China, calculate the cost", {}, lang)
+        again = assistant.answer(conn, "not sure yet", asked["context"], lang)
+        assert again["reply"] != asked["reply"]
+        assert "not sure yet" in again["reply"]
+        assert again["context"]["product"] == "laptops"
+        third = assistant.answer(conn, "dunno", again["context"], lang)
+        assert third["reply"] not in (asked["reply"], again["reply"])
+        assert TEXT[lang]["start_over"] in third["reply"]
+
+
+class TestFailure4GoodsAreAskedFirst:
+    """The bot used to take filler ("customs", "pay") as goods and skip to origin/price."""
+
+    @pytest.mark.parametrize(
+        ("message", "lang"),
+        [
+            ("I want to calculate customs duty", "en"),
+            ("how much duty will I pay?", "en"),
+            ("I want to import something from China", "en"),
+            ("Gümrük vergisi ne kadar tutar?", "tr"),
+            ("Çin'den bir şey getireceğim, vergisi ne kadar?", "tr"),
+            ("Wie viel Zoll muss ich zahlen?", "de"),
+            ("Ich importiere etwas aus China, was kostet der Zoll?", "de"),
+        ],
+    )
+    def test_the_goods_are_asked_for_before_anything_else(
+        self, conn: sqlite3.Connection, message: str, lang: str
+    ) -> None:
+        reply = assistant.answer(conn, message, {}, lang)
+        assert reply["context"]["awaiting"] == "product"
+        assert reply["reply"] == TEXT[lang]["ask_product"]
+        assert "product" not in reply["context"]
+
+    def test_goods_then_origin_then_price(self, conn: sqlite3.Connection) -> None:
+        step = assistant.answer(conn, "calculate the cost", {}, "en")
+        assert step["context"]["awaiting"] == "product"
+        step = assistant.answer(conn, "laptops", step["context"], "en")
+        assert step["context"]["awaiting"] == "origin"
+        step = assistant.answer(conn, "from China", step["context"], "en")
+        assert step["context"]["awaiting"] == "price"
+        step = assistant.answer(conn, "5000 EUR", step["context"], "en")
+        assert step["result"]["customs_value"] == "5000.00"
+
+    def test_english_i_is_not_read_as_turkish_dotless_i(self) -> None:
+        facts = assistant.parse("Its price is 1.2 million dollars.")
+        assert "product" not in facts
+
+    @pytest.mark.parametrize(
+        ("message", "lang", "note"),
+        [
+            ("bolts from China to Luxembourg, 5000 EUR total", "en", "Luxembourg is an EU"),
+            ("Çin'den Lüksemburg'a cıvata, toplam 5000 euro", "tr", "Lüksemburg bir AB üyesi"),
+            ("Schrauben aus China nach Luxemburg, insgesamt 5000 EUR", "de", "Luxemburg ist EU"),
+        ],
+    )
+    def test_origin_and_an_eu_destination(
+        self, conn: sqlite3.Connection, message: str, lang: str, note: str
+    ) -> None:
+        reply = assistant.answer(conn, message, {}, lang)
+        assert reply["result"]["origin"] == "CN"
+        assert reply["result"]["destination"] == "LU"
+        assert note in reply["reply"]
+
+    @pytest.mark.parametrize("lang", ["en", "tr", "de"])
+    def test_an_unknown_country_is_explained_not_re_asked(
+        self, conn: sqlite3.Connection, lang: str
+    ) -> None:
+        asked = assistant.answer(conn, "laptops, 1000 EUR, calculate", {}, lang)
+        assert asked["context"]["awaiting"] == "origin"
+        again = assistant.answer(conn, "from Narnia", asked["context"], lang)
+        assert again["reply"] != asked["reply"] and "from Narnia" in again["reply"]
+        assert again["context"]["product"] == "laptops"
+
+
+class TestFailure5HonestCopy:
+    """The intro claimed "it uses the EU tariff data"; the rates are demo data."""
+
+    def test_the_overclaim_is_gone_in_every_language(self) -> None:
+        html = INDEX.read_text(encoding="utf-8")
+        for phrase in ("uses the EU tariff data", "AB tarife verisini kullanır", "EU-Tarifdaten"):
+            assert phrase not in html
+
+    def test_the_hint_says_rates_are_demo_data_in_every_language(self) -> None:
+        html = INDEX.read_text(encoding="utf-8")
+        hints = re.findall(r"\n      ask: \{\n\s+title: .*\n\s+hint: \"(.*)\",", html)
+        assert len(hints) == 3
+        assert "demo data" in hints[0] and "Combined Nomenclature" in hints[0]
+        assert "demo verisidir" in hints[1] and "Kombine Nomenklatürü" in hints[1]
+        assert "Demodaten" in hints[2] and "Kombinierten Nomenklatur" in hints[2]
+
+    @pytest.mark.parametrize(
+        ("lang", "phrase"),
+        [("en", "demo data"), ("tr", "demo verisidir"), ("de", "Demodaten")],
+    )
+    def test_every_estimate_says_the_rates_are_demo_data(
+        self, conn: sqlite3.Connection, lang: str, phrase: str
+    ) -> None:
+        message = {
+            "en": "500 t-shirts from China, 4 EUR each",
+            "tr": "Çin'den 500 adet tişört, tanesi 4 euro",
+            "de": "500 T-Shirts aus China, 4 EUR pro Stück",
+        }[lang]
+        assert phrase in assistant.answer(conn, message, {}, lang)["reply"]
+
+    def test_the_faq_no_longer_calls_the_rates_the_eu_tariff(self) -> None:
+        answers = " ".join(a["en"] for _, a in FAQ)
+        assert "The duty uses the EU tariff" not in answers
+        assert "demo data" in answers
+
+
+class TestFailure6PasswordAndSupport:
+    """No reset flow exists (audit finding #8): the chat must not promise one."""
+
+    @pytest.mark.parametrize(
+        ("message", "lang"),
+        [("Forgot my password?", "en"), ("Şifremi unuttum?", "tr"), ("Passwort vergessen?", "de")],
+    )
+    def test_the_password_chip_gets_an_honest_answer(self, message: str, lang: str) -> None:
+        assert message in SUPPORT_SUGGESTIONS[lang]
+        reply = assistant.support_answer(message, lang)["reply"]
+        assert "support@customsiq.org" in reply and "Google" in reply
+        for promise in ("not self-service yet", "henüz", "noch nicht", "reset link"):
+            assert promise not in reply
+
+    def test_no_reset_route_exists(self) -> None:
+        paths = {route.path for route in app.routes}  # type: ignore[attr-defined]
+        assert not any("reset" in path or "forgot" in path for path in paths)
+
+    def test_the_page_chips_match_the_server_chips(self) -> None:
+        html = INDEX.read_text(encoding="utf-8")
+        for lang in ("en", "tr", "de"):
+            assert json.dumps(SUPPORT_SUGGESTIONS[lang], ensure_ascii=False) in html
+            assert json.dumps(SUGGESTIONS[lang], ensure_ascii=False) in html
+
+
+class TestFailure7Security:
+    """Echoed text stays text, the input is capped, and a tampered context is harmless."""
+
+    @pytest.mark.parametrize(
+        "context",
+        [
+            {"product": "x", "product_query": "x", "origin": "CN", "price": {"amount": "abc"}},
+            {
+                "product": "laptops",
+                "product_query": "laptops",
+                "origin": "CN",
+                "price": {"amount": "1e999999", "currency": "EUR", "basis": "total", "unit": None},
+            },
+            {"price": "x", "awaiting": "<script>", "tries": "9", "origin": "ZZ"},
+            {"quantity": "NaN", "unit": "t", "code": "12'; drop"},
+        ],
+    )
+    def test_a_tampered_context_is_a_normal_reply_not_a_500(self, context: dict) -> None:
+        client = signed_in_test_client()
+        response = client.post(
+            "/assistant", json={"message": "10", "language": "en", "context": context}
+        )
+        assert response.status_code == 200
+        assert "Traceback" not in response.text
+
+    def test_a_script_tag_is_echoed_as_plain_text_only(self, conn: sqlite3.Connection) -> None:
+        asked = assistant.answer(conn, "laptops from China, calculate the cost", {}, "en")
+        probe = "<script>alert('x')</script>"
+        again = assistant.answer(conn, probe, asked["context"], "en")
+        assert again["result"] is None
+        # Echoed verbatim as data; the page decides how to render it (as text).
+        assert probe in again["reply"]
+        html = INDEX.read_text(encoding="utf-8")
+        chat = html[html.index("function createChat(") : html.index("const assistants = [")]
+        # Replies, user text and chips are written with textContent; the only
+        # innerHTML is the one that empties the chip row.
+        assert re.findall(r"innerHTML\s*=", chat) == ["innerHTML ="]
+        assert 'suggest.innerHTML = "";' in chat
+        assert "el.textContent = text;" in chat and "btn.textContent = text;" in chat
+
+    def test_both_inputs_are_capped_like_the_server(self) -> None:
+        html = INDEX.read_text(encoding="utf-8")
+        for field in ("ask-input", "support-input"):
+            tag = re.search(rf'<input[^>]*id="{field}"[^>]*>', html)
+            assert tag and f'maxlength="{assistant.MAX_MESSAGE}"' in tag.group(0)
+
+    def test_support_mode_is_capped_rate_limited_and_signed_in_only(self) -> None:
+        client = signed_in_test_client()
+        long = client.post("/assistant", json={"message": "x" * 301, "mode": "support"})
+        assert long.status_code == 422
+        anonymous = TestClient(app).post("/assistant", json={"message": "hi", "mode": "support"})
+        assert anonymous.status_code == 401
+        route = next(r for r in app.routes if getattr(r, "path", None) == "/assistant")
+        names = {d.call.__name__ for d in route.dependant.dependencies}  # type: ignore[attr-defined]
+        assert "_check_search_rate_limit" in names
+
+
+class TestLowConfidenceLeads:
+    def test_the_threshold_matches_the_page(self) -> None:
+        html = INDEX.read_text(encoding="utf-8")
+        match = re.search(r"const LOW_CONFIDENCE_THRESHOLD = ([\d.]+);", html)
+        assert match and float(match.group(1)) == assistant.LOW_CONFIDENCE
+
+    @pytest.mark.parametrize(
+        ("lang", "phrase"),
+        [("en", "best lead"), ("tr", "En iyi ipucu"), ("de", "beste Hinweis")],
+    )
+    def test_a_weak_match_is_a_lead_not_the_closest_codes(
+        self, conn: sqlite3.Connection, lang: str, phrase: str
+    ) -> None:
+        reply = assistant.answer(conn, "Which code is a zzyzx flurble bolt?", {}, lang)
+        assert reply["result"]["low_confidence"] is True
+        assert phrase in reply["reply"]
+        closest = {"en": "closest codes", "tr": "en yakın kodlar", "de": "passendsten Codes"}
+        assert closest[lang] not in reply["reply"]
+
+    def test_a_strong_match_keeps_the_closest_codes_wording(self, conn: sqlite3.Connection) -> None:
+        reply = assistant.answer(conn, "Which code is a laptop?", {}, "en")
+        assert reply["result"]["low_confidence"] is False
+        assert reply["reply"].startswith('The closest codes for "laptop"')
+
+    @pytest.mark.parametrize(
+        "message",
+        ["hi", "ok", "is", "it", "a b", "its price is", "customs"],
+    )
+    def test_chatter_is_not_a_product_query(self, message: str) -> None:
+        assert "product" not in assistant.parse(message)

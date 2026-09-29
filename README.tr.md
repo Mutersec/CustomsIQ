@@ -877,6 +877,31 @@ kullanmaz; çalıştırmak ücretsizdir, API anahtarı gerekmez.
 - Varış ülkesi AB dışındaysa (ör. Türkiye) o ülkenin vergilerinin sistemde olmadığı
   belirtilir.
 
+**Sohbetlerin yaptıkları ve yapmadıkları.** İkisi de kurallı kalır ve yalnızca
+`classify`, `calculate_duty` ve `screen_entity` fonksiyonlarını kullanır:
+
+- **Selamlaşma.** "merhaba", "yardım", "hi", "help", "hallo", "teşekkürler" gibi
+  mesajlara botun neler yapabildiğini anlatan kısa bir cevap gelir. Bu mesajlar
+  `classify`'a hiç ulaşmaz.
+- **Önce ürün.** Sıra her zaman ürün, sonra menşe, sonra fiyattır. Dolgu
+  kelimeleri ("gümrük", "fiyatı", "bir şey") ürün sayılmaz.
+- **Kısır döngü yok.** Cevap okunamazsa bot neyi anlamadığını söyler ve örnek
+  verir; aynı soruyu aynen tekrarlamaz.
+- **Kesin sonuç değil, ipucu.** Düşük güvenli eşleşme (0,3 altı) doğrulanması
+  gereken bir ipucu olarak gösterilir.
+- **Tutarlar.** "1,2 milyon", "1.2 million", "1.2 Mio.", "1.200.000", "$1.2M" ve
+  "10k" anlaşılır. Son ayraç ondalık ayraçtır.
+- **Döviz çevirisi yok.** Vergi, verilen tutar üzerinden o para biriminde
+  hesaplanır ve cevap bunu belirtir.
+- **Varış ülkesi.** "Çin'den Lüksemburg'a" gibi ifadelerde iki ülke de okunur.
+  Varış ülkesi AB üyesiyse ortak AB tarifesinin uygulandığı söylenir.
+- **Dürüst veri.** Kodlar gerçek AB Kombine Nomenklatürü 2026'dan gelir. Vergi
+  oranları ise demo verisidir ve her tahminde bu belirtilir.
+- **Parola sıfırlama yok.** Yardım balonu bunu açıkça söyler, Google ile girişi
+  önerir ve talepleri bir kişinin incelediği support@customsiq.org adresine
+  yönlendirir.
+- **Yapmadıkları:** serbest sohbet, döviz çevirisi ve AB dışı tarifeler.
+
 ### 🔑 Site sahibinin yönetim paneli ve etkinlik kaydı
 
 **Nedir.** `/admin`, yalnızca site sahibinin açabildiği bir paneldir. Dört sekmesi var:

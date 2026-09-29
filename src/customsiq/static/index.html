@@ -1256,7 +1256,7 @@
       },
       ask: {
         title: "Ask a question",
-        hint: "Describe a shipment in your own words and get a cost estimate, a code or a screening result. Rule-based and free: it uses the EU tariff data in this system and never guesses a rate.",
+        hint: "Describe a shipment in your own words and get a cost estimate, a code lead or a screening result. Rule-based (no AI) and free. Codes come from the real EU Combined Nomenclature 2026; the duty rates are demo data (see the note at the bottom), so figures are illustrative. It never guesses a rate and never converts currencies.",
         label: "Your question",
         placeholder: "e.g. 10 t of apples from Turkey, 1000 EUR per tonne",
         send: "Send",
@@ -1272,7 +1272,7 @@
         close: "Close",
         placeholder: "Ask about using the site…",
         greeting: "Hi! How can I help? Pick a topic or type your question.",
-        topics: ["How do I search for a code?", "I forgot my password", "How is duty calculated?", "What does HS-6 mean?"],
+        topics: ["How do I search for a code?", "Forgot my password?", "How is duty calculated?", "What does HS-6 mean?"],
       },
       dashboard: {
         title: "Dashboard",
@@ -1501,7 +1501,7 @@
       },
       ask: {
         title: "Soru sor",
-        hint: "Sevkiyatı kendi cümlelerinizle yazın; maliyet tahmini, GTİP kodu ya da tarama sonucu alın. Kurallı ve ücretsizdir: bu sistemdeki AB tarife verisini kullanır, oran uydurmaz.",
+        hint: "Sevkiyatı kendi cümlelerinizle yazın; maliyet tahmini, GTİP kodu ipucu ya da tarama sonucu alın. Kurallı (yapay zekâ yok) ve ücretsizdir. Kodlar gerçek AB Kombine Nomenklatürü 2026'dan gelir; vergi oranları demo verisidir (alttaki nota bakın), bu yüzden rakamlar örnek niteliğindedir. Oran uydurmaz, döviz çevirmez.",
         label: "Sorunuz",
         placeholder: "ör. Türkiye'den 10 ton elma, tonu 1000 euro",
         send: "Gönder",
@@ -1517,7 +1517,7 @@
         close: "Kapat",
         placeholder: "Siteyi kullanmakla ilgili sorun…",
         greeting: "Merhaba! Nasıl yardımcı olabilirim? Bir konu seçin ya da sorunuzu yazın.",
-        topics: ["Kod araması nasıl yapılır?", "Şifremi unuttum", "Vergi nasıl hesaplanır?", "HS-6 ne demek?"],
+        topics: ["Kod araması nasıl yapılır?", "Şifremi unuttum?", "Vergi nasıl hesaplanır?", "HS-6 ne demek?"],
       },
       dashboard: {
         title: "Gösterge Paneli",
@@ -1747,7 +1747,7 @@
       },
       ask: {
         title: "Frage stellen",
-        hint: "Beschreiben Sie eine Sendung in eigenen Worten und erhalten Sie eine Kostenschätzung, einen Code oder ein Prüfergebnis. Regelbasiert und kostenlos: Es nutzt die EU-Tarifdaten dieses Systems und rät nie einen Satz.",
+        hint: "Beschreiben Sie eine Sendung in eigenen Worten und erhalten Sie eine Kostenschätzung, einen Code-Hinweis oder ein Prüfergebnis. Regelbasiert (keine KI) und kostenlos. Die Codes stammen aus der echten Kombinierten Nomenklatur 2026 der EU; die Zollsätze sind Demodaten (siehe Hinweis unten), die Zahlen also nur veranschaulichend. Es rät nie einen Satz und rechnet keine Währungen um.",
         label: "Ihre Frage",
         placeholder: "z. B. 10 t Äpfel aus der Türkei, 1000 EUR pro Tonne",
         send: "Senden",
@@ -1763,7 +1763,7 @@
         close: "Schließen",
         placeholder: "Fragen zur Nutzung der Website…",
         greeting: "Hallo! Wie kann ich helfen? Wählen Sie ein Thema oder stellen Sie Ihre Frage.",
-        topics: ["Wie suche ich einen Code?", "Passwort vergessen", "Wie wird der Zoll berechnet?", "Was bedeutet HS-6?"],
+        topics: ["Wie suche ich einen Code?", "Passwort vergessen?", "Wie wird der Zoll berechnet?", "Was bedeutet HS-6?"],
       },
       dashboard: {
         title: "Dashboard",
@@ -2883,13 +2883,15 @@
     });
 
     // A fresh greeting in the current language, until the conversation starts.
+    // Chips on show are swapped for the new language's too: the server's chips
+    // are the same examples/topics, so a language switch never leaves stale ones.
     function relabel() {
       if (greeted && log.children.length === 1) {
         greeted.textContent = t(greetingKey);
       } else if (!greeted) {
         greeted = add("bot", t(greetingKey));
       }
-      if (log.children.length === 1) showSuggestions(t(examplesKey));
+      if (log.children.length === 1 || suggest.children.length) showSuggestions(t(examplesKey));
     }
 
     relabel();

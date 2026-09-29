@@ -26,8 +26,11 @@ from src.customsiq.assistant_glossary import (
 )
 from src.customsiq.assistant_texts import (
     FAQ,
+    SMALLTALK,
+    SMALLTALK_FILLER,
     SUGGESTIONS,
     SUPPORT_FALLBACK,
+    SUPPORT_SMALLTALK,
     SUPPORT_SUGGESTIONS,
     TEXT,
 )
@@ -38,6 +41,11 @@ from src.customsiq.tariff_calculator import calculate_duty
 
 LANGUAGES = ("en", "tr", "de")
 MAX_MESSAGE = 300
+#: Below this top score a classification is a lead, not an answer. The same
+#: value as LOW_CONFIDENCE_THRESHOLD in static/index.html (a test pins the two).
+LOW_CONFIDENCE = 0.3
+#: Amounts above this are refused rather than computed on.
+_MAX_AMOUNT = Decimal("1e15")
 
 _LETTER = "a-zçğıöşüäß"
 _CENTS = Decimal("0.01")
@@ -47,6 +55,16 @@ def normalize(text: str) -> str:
     """Lower-case with Turkish rules (İ -> i, I -> ı) and one kind of apostrophe."""
     text = text.replace("İ", "i").replace("I", "ı").lower()
     return re.sub(r"[’‘`´]", "'", text)
+
+
+def _fold(text: str) -> str:
+    """Undo the Turkish dotless i, for word-list checks only.
+
+    `normalize` must turn "I" into "ı" for Turkish, which also turns English
+    "I" and "Its" into "ı" and "ıts"; comparing folded forms lets those still
+    match the stop-word list.
+    """
+    return text.replace("ı", "i")
 
 
 # ---------------------------------------------------------------------------
@@ -105,18 +123,49 @@ _UNIT_WORDS = "|".join(sorted(_UNIT_OF, key=len, reverse=True))
 
 _CURRENCIES = {
     "EUR": ("€", "eur", "euro", "euros", "avro"),
-    "USD": ("$", "usd", "dolar", "dollar", "dollars"),
-    "GBP": ("£", "gbp", "sterlin", "pound", "pounds", "pfund"),
-    "TRY": ("₺", "tl", "try", "lira"),
+    "USD": ("us$", "$", "usd", "dolar", "doları", "dollar", "dollars", "us-dollar"),
+    "GBP": ("£", "gbp", "sterlin", "pound", "pounds", "pfund", "sterling"),
+    "TRY": ("₺", "tl", "try", "lira", "liras", "türk lirası"),
 }
 _CURRENCY_OF = {word: code for code, words in _CURRENCIES.items() for word in words}
 _CURRENCY_WORDS = "|".join(re.escape(w) for w in sorted(_CURRENCY_OF, key=len, reverse=True))
 
+#: "1.2 million", "1,2 milyon", "1.2 Mio.", "$1.2M", "10k": a word or letter
+#: straight after the number that multiplies it.
+_MULTIPLIERS = {
+    Decimal(1000): ("k", "bin", "tausend", "tsd", "thousand"),
+    Decimal(1000000): (
+        "m",
+        "mn",
+        "mio",
+        "million",
+        "millions",
+        "milyon",
+        "millionen",
+    ),
+    Decimal(1000000000): (
+        "bn",
+        "billion",
+        "billions",
+        "milyar",
+        "mrd",
+        "milliarde",
+        "milliarden",
+    ),
+}
+_MULTIPLIER_OF = {word: factor for factor, words in _MULTIPLIERS.items() for word in words}
+_MULTIPLIER_WORDS = "|".join(sorted(_MULTIPLIER_OF, key=len, reverse=True))
+_MULT = rf"(?:\s*({_MULTIPLIER_WORDS})(?![{_LETTER}])\.?)?"
+
 _QUANTITY = re.compile(rf"(?<![\d.,])({_NUMBER})\s*({_UNIT_WORDS})(?![{_LETTER}-])")
 #: "500 t-shirts": a count straight before a word is a number of pieces.
-_COUNT = re.compile(rf"(?<![\d.,])(\d+)\s+(?=[{_LETTER}])")
-_MONEY_AFTER = re.compile(rf"(?<![\d.,])({_NUMBER})\s*({_CURRENCY_WORDS})(?![{_LETTER}])")
-_MONEY_BEFORE = re.compile(rf"({_CURRENCY_WORDS})\s*({_NUMBER})")
+_COUNT = re.compile(
+    rf"(?<![\d.,])(\d+)\s+(?!(?:{_MULTIPLIER_WORDS})(?![{_LETTER}]))(?=[{_LETTER}])"
+)
+_MONEY_AFTER = re.compile(rf"(?<![\d.,])({_NUMBER}){_MULT}\s*({_CURRENCY_WORDS})(?![{_LETTER}])")
+_MONEY_BEFORE = re.compile(rf"(?<![{_LETTER}])({_CURRENCY_WORDS})\s*({_NUMBER}){_MULT}")
+#: An amount with no currency, e.g. the reply "1.2 million" to "What is the price?".
+_AMOUNT = re.compile(rf"(?<![\d.,])({_NUMBER}){_MULT}")
 
 #: Words right next to a price that say it is per unit, and of which unit.
 _PER_UNIT = {
@@ -282,8 +331,35 @@ _STOPWORDS = set(
     ich wir sie es der die das ein eine einen von aus nach mit und für pro je zu im
     importieren import kaufe kaufen berechne berechnen kosten preis gesamt insgesamt
     zoll wie viel welche nummer bitte
+    its it's is are was be been being will would going gonna do does did have has had get
+    so this that these those some something anything stuff thing things goods product
+    products item items merchandise shipment shipments customs pay
+    paying paid charge charges fee fees about around approximately roughly value worth
+    amount sum money million millions billion thousand dollar dollars euro euros pound
+    pounds lira usd eur gbp try tl there here now then also just only really
+    fiyatı fiyatını bedeli değeri değerinde tutarında toplamı yaklaşık civarı
+    şey bir şey birşey ürün ürünü ürünler mal malı mallar eşya yük milyon milyar dolar
+    euro lira sterlin olan olacak oldu var yok çok daha
+    ist sind war wird werden hat haben etwas ware waren produkt produkte güter sendung
+    ungefähr etwa rund wert betrag summe millionen milliarde milliarden tausend mio mrd
+    dollar euro pfund lira kostet kosten zahle zahlen gebühr
+    muss müssen soll sollte kann möchte würde importiere exportiere bezahlen wieviel
+    must should shall may might export exporting lazım gerek ediyorum edeceğim
     """.split()
 )
+_STOPWORDS_FOLDED = {_fold(w) for w in _STOPWORDS}
+#: Greeting, thanks and help words are never goods either ("hi, apples from Chile").
+_SMALLTALK_WORDS = {
+    _fold(normalize(phrase))
+    for phrases in SMALLTALK.values()
+    for phrase in phrases
+    if " " not in phrase
+} | {_fold(normalize(w)) for w in SMALLTALK_FILLER}
+
+
+def _is_filler(word: str) -> bool:
+    folded = _fold(word)
+    return folded in _STOPWORDS_FOLDED or folded in _SMALLTALK_WORDS
 
 
 def _find_countries(text: str) -> tuple[Optional[str], Optional[str], list[tuple[int, int]]]:
@@ -322,18 +398,39 @@ def _find_countries(text: str) -> tuple[Optional[str], Optional[str], list[tuple
     return origin, destination, taken
 
 
+def _amount(number: str, multiplier: Optional[str]) -> Optional[Decimal]:
+    """A number as typed, times its multiplier ("1,2" + "milyon" -> 1200000).
+
+    The number itself is read by `parse_number` (the last separator is the
+    decimal point), so "1.2 million" and "1,2 milyon" are the same amount.
+    """
+    amount = parse_number(number)
+    if amount is None:
+        return None
+    if multiplier:
+        amount *= _MULTIPLIER_OF[multiplier.rstrip(".")]
+        amount = amount.quantize(Decimal(1)) if amount == amount.to_integral() else amount
+    if not amount.is_finite() or amount < 0 or amount > _MAX_AMOUNT:
+        return None
+    return amount
+
+
 def _find_price(text: str) -> tuple[Optional[dict], list[tuple[int, int]]]:
     """Return the first money amount with its basis ("unit" per t/kg/piece, or "total")."""
     candidates = []
     for match in _MONEY_AFTER.finditer(text):
-        candidates.append((match.start(), match.end(), match.group(1), match.group(2)))
+        candidates.append(
+            (match.start(), match.end(), match.group(1), match.group(2), match.group(3))
+        )
     for match in _MONEY_BEFORE.finditer(text):
-        candidates.append((match.start(), match.end(), match.group(2), match.group(1)))
+        candidates.append(
+            (match.start(), match.end(), match.group(2), match.group(3), match.group(1))
+        )
     if not candidates:
         return None, []
     candidates.sort()
-    start, end, number, currency_word = candidates[0]
-    amount = parse_number(number)
+    start, end, number, multiplier, currency_word = candidates[0]
+    amount = _amount(number, multiplier)
     if amount is None:
         return None, []
     window = text[max(0, start - 22) : min(len(text), end + 16)]
@@ -375,10 +472,16 @@ def _blank(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
-def _product_terms(text: str) -> tuple[Optional[str], Optional[str]]:
-    """Return (the product as typed, the English term to classify) from leftover text."""
-    words = [w for w in re.findall(rf"[{_LETTER}0-9-]+", text) if w not in _STOPWORDS]
-    words = [w for w in words if not w.isdigit() and len(w) > 1]
+def _product_terms(text: str, lang: str = "en") -> tuple[Optional[str], Optional[str]]:
+    """Return (the product as typed, the English term to classify) from leftover text.
+
+    The guard against classifying chatter: leftover words count as goods only
+    when a glossary entry matches, or at least one word of three or more letters
+    survives the stop-word and small-talk lists. "hi", "its price is" and
+    "customs" therefore never reach `classify`.
+    """
+    words = [w for w in re.findall(rf"[{_LETTER}0-9-]+", text) if not _is_filler(w.strip("-"))]
+    words = [w for w in words if not w.isdigit() and len(w.strip("-")) > 1]
     if not words:
         return None, None
     joined = " ".join(words)
@@ -396,10 +499,13 @@ def _product_terms(text: str) -> tuple[Optional[str], Optional[str]]:
                 for key in glossary:
                     if len(key) >= 3 and word.startswith(key) and len(word) - len(key) <= 4:
                         return word, glossary[key]
-    return joined, joined
+    if not any(len(re.sub(rf"[^{_LETTER}]", "", w)) >= 3 for w in words):
+        return None, None
+    # The catalogue is English: an English "I" read as Turkish "ı" is folded back.
+    return (joined if lang == "tr" else _fold(joined)), _fold(joined)
 
 
-def parse(message: str) -> dict:
+def parse(message: str, lang: str = "en") -> dict:
     """Take a message apart into the facts a cost question needs.
 
     Returns a dict with any of: product, product_query, code, origin,
@@ -447,7 +553,7 @@ def parse(message: str) -> dict:
     for words in _INTENT_WORDS.values():
         for word in words:
             leftover = leftover.replace(word.strip(), " ")
-    product, product_query = _product_terms(leftover)
+    product, product_query = _product_terms(leftover, lang)
     if product and not code:
         facts["product"] = product
         facts["product_query"] = product_query
@@ -521,67 +627,195 @@ def _classify(conn: sqlite3.Connection, query: str, lang: str) -> list:
     return [r for r in results if r.score >= 0.75 * results[0].score] if results else []
 
 
+_SLOTS = ("product", "origin", "price", "quantity")
+
+
+def _public(merged: dict) -> dict:
+    """The facts the page sends back, without the per-request helper keys."""
+    return {k: v for k, v in merged.items() if not k.startswith("_")}
+
+
+def _valid_amount(raw: Any) -> bool:
+    if not isinstance(raw, str) or len(raw) > 40:
+        return False
+    try:
+        value = Decimal(raw)
+    except ArithmeticError:
+        return False
+    return value.is_finite() and Decimal(0) <= value <= _MAX_AMOUNT
+
+
+def _clean_context(context: Any) -> dict:
+    """Keep only well-formed facts from the context the page sent back.
+
+    The context round-trips through the browser, so it is untrusted input: a
+    hand-edited one must not reach `Decimal()` or `calculate_duty` and turn into
+    a 500. Anything unexpected is dropped, and the assistant simply asks again.
+    """
+    if not isinstance(context, dict):
+        return {}
+    clean: dict[str, Any] = {}
+    for key in ("product", "product_query"):
+        value = context.get(key)
+        if isinstance(value, str) and 0 < len(value) <= 120:
+            clean[key] = value
+    code = context.get("code")
+    if isinstance(code, str) and re.fullmatch(r"\d{6}|\d{8}|\d{10}", code):
+        clean["code"] = code
+    for key in ("origin", "destination"):
+        value = context.get(key)
+        if isinstance(value, str) and value in COUNTRY_NAMES:
+            clean[key] = value
+    if _valid_amount(context.get("quantity")) and context.get("unit") in _UNITS:
+        clean["quantity"], clean["unit"] = context["quantity"], context["unit"]
+    price = context.get("price")
+    if isinstance(price, dict):
+        basis, unit = price.get("basis"), price.get("unit")
+        if (
+            _valid_amount(price.get("amount"))
+            and price.get("currency") in _CURRENCIES
+            and ((basis == "total" and unit is None) or (basis == "unit" and unit in _UNITS))
+        ):
+            clean["price"] = {
+                "amount": price["amount"],
+                "currency": price["currency"],
+                "basis": basis,
+                "unit": unit,
+                "assumed_total": price.get("assumed_total") is True,
+            }
+            if price.get("currency_assumed") is True:
+                clean["price"]["currency_assumed"] = True
+    if context.get("awaiting") in _SLOTS:
+        clean["awaiting"] = context["awaiting"]
+    tries = context.get("tries")
+    if isinstance(tries, int) and not isinstance(tries, bool) and 0 <= tries <= 20:
+        clean["tries"] = tries
+    return clean
+
+
 def _merge(context: dict, facts: dict) -> dict:
     """Combine the facts gathered so far with this message's.
 
     A message that names goods together with a price, quantity or origin is a
     new question, not a follow-up: it starts from scratch, so nothing from the
-    previous one (a destination, a price) leaks into it.
+    previous one (a destination, a price) leaks into it. The exception is a
+    message that answers the question just asked ("Its price is 1.2 million
+    dollars"): it is a follow-up. While an origin, price or quantity is awaited,
+    the goods already named are kept, so a stray word in the reply ("not sure
+    yet") can never replace them.
     """
+    awaiting = context.get("awaiting")
+    answers_awaited = awaiting in ("origin", "price", "quantity") and bool(facts.get(awaiting))
     goods = facts.get("product") or facts.get("code")
-    fresh = goods and any(facts.get(k) for k in ("price", "quantity", "origin"))
-    merged = {} if fresh else {k: v for k, v in (context or {}).items() if k != "intents"}
-    awaiting = merged.pop("awaiting", None)
+    fresh = (
+        goods and any(facts.get(k) for k in ("price", "quantity", "origin")) and not answers_awaited
+    )
+    merged = {} if fresh else {k: v for k, v in context.items() if k not in ("awaiting", "tries")}
+    keep_goods = (
+        not fresh
+        and awaiting in ("origin", "price", "quantity")
+        and (merged.get("product") or merged.get("code"))
+    )
     for key, value in facts.items():
-        if key != "intents" and value:
-            merged[key] = value
-    return {**merged, "_awaiting": awaiting}
+        if key == "intents" or not value:
+            continue
+        if keep_goods and key in ("product", "product_query", "code"):
+            continue
+        merged[key] = value
+    return {
+        **merged,
+        "_awaiting": None if fresh else awaiting,
+        "_tries": 0 if fresh else context.get("tries", 0),
+    }
 
 
-def _fill_bare_answer(merged: dict, message: str) -> None:
-    """A reply like "10" or "1000" to the question just asked."""
+def _fill_bare_answer(merged: dict, message: str, facts: dict) -> None:
+    """A reply like "10", "1000" or "about 1.2 million" to the question just asked.
+
+    With no currency named, the amount is taken as given and the reply says no
+    currency was stated; nothing is converted.
+    """
     awaiting = merged.get("_awaiting")
-    bare = re.fullmatch(rf"\s*({_NUMBER})\s*", normalize(message))
-    if not awaiting or not bare:
+    if not awaiting:
         return
-    amount = parse_number(bare.group(1))
-    if amount is None:
-        return
-    if awaiting == "quantity" and not merged.get("quantity"):
-        merged["quantity"] = str(amount)
-        merged["unit"] = (merged.get("price") or {}).get("unit") or "t"
-    elif awaiting == "price" and not merged.get("price"):
-        merged["price"] = {
-            "amount": str(amount),
-            "currency": "EUR",
-            "basis": "unit" if merged.get("unit") else "total",
-            "unit": merged.get("unit"),
-            "assumed_total": False,
-        }
+    text = normalize(message)
+    bare = re.fullmatch(rf"\s*({_NUMBER})\s*", text)
+    if awaiting == "quantity" and bare and not merged.get("quantity"):
+        amount = parse_number(bare.group(1))
+        if amount is not None:
+            merged["quantity"] = str(amount)
+            merged["unit"] = (merged.get("price") or {}).get("unit") or "t"
+    elif awaiting == "price" and not merged.get("price") and not facts.get("quantity"):
+        if bare:
+            amount = _amount(bare.group(1), None)
+            basis_unit, assumed_total = merged.get("unit"), False
+        else:
+            match = _AMOUNT.search(text) if not facts.get("code") else None
+            amount = _amount(match.group(1), match.group(2)) if match else None
+            basis_unit, assumed_total = None, True
+        if amount is not None:
+            merged["price"] = {
+                "amount": str(amount),
+                "currency": "EUR",
+                "basis": "unit" if basis_unit else "total",
+                "unit": basis_unit,
+                "assumed_total": assumed_total,
+                "currency_assumed": True,
+            }
+
+
+def _echo(message: str) -> str:
+    """The user's words, shortened, for "I couldn't read ... in "..."" replies.
+
+    Plain text: the page renders every reply with textContent, never as HTML.
+    """
+    text = " ".join(message.split())
+    return text if len(text) <= 60 else text[:59] + "…"
 
 
 def _ask(lang: str, merged: dict, slot: str) -> dict:
-    context = {k: v for k, v in merged.items() if not k.startswith("_")}
+    """Ask for a missing fact; never the same question twice in a row.
+
+    When the fact asked for last time is still missing, the reply says what was
+    not understood and gives an example instead of repeating the question.
+    """
+    context = _public(merged)
+    if merged.get("_awaiting") == slot:
+        tries = int(merged.get("_tries") or 0) + 1
+        reply = _t(lang, f"retry_{slot}", text=_echo(merged.get("_message", "")))
+        if tries >= 2:
+            reply += " " + _t(lang, "start_over")
+    else:
+        tries = 0
+        reply = _t(lang, f"ask_{slot}")
     context["awaiting"] = slot
-    return {"reply": _t(lang, f"ask_{slot}"), "context": context, "result": None}
+    context["tries"] = tries
+    return {"reply": reply, "context": context, "result": None}
 
 
 def _cost(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
-    """Answer a cost question, or ask for the first missing fact."""
+    """Answer a cost question, or ask for the first missing fact.
+
+    The order is fixed: goods first, then origin, then price (and a quantity
+    only when the price is per unit).
+    """
     code = merged.get("code")
     candidates: list[dict] = []
+    low_confidence = False
     if not code:
         if not merged.get("product_query"):
             return _ask(lang, merged, "product")
         results = _classify(conn, merged["product_query"], lang)
         if not results:
             reply = _t(lang, "unknown_product", product=merged.get("product"))
-            context = {k: v for k, v in merged.items() if not k.startswith("_")}
+            context = _public(merged)
             context.pop("product", None)
             context.pop("product_query", None)
             context["awaiting"] = "product"
+            context["tries"] = 0
             return {"reply": reply, "context": context, "result": None}
         code = results[0].hs_code.code
+        low_confidence = results[0].score < LOW_CONFIDENCE
         candidates = [
             {"code": r.hs_code.code, "description": r.hierarchy_path, "score": r.score}
             for r in results
@@ -603,11 +837,7 @@ def _cost(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
             reply = _t(
                 lang, "unit_mismatch", price_unit=units[price["unit"]], unit=units[merged["unit"]]
             )
-            return {
-                "reply": reply,
-                "context": {k: v for k, v in merged.items() if not k.startswith("_")},
-                "result": None,
-            }
+            return {"reply": reply, "context": _public(merged), "result": None}
         value = (quantity * amount).quantize(_CENTS, ROUND_HALF_UP)
     else:
         value = amount.quantize(_CENTS, ROUND_HALF_UP)
@@ -619,8 +849,12 @@ def _cost(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
     intra_eu = origin in EU_MEMBERS
     if intra_eu:
         notes.append(_t(lang, "intra_eu", origin=country_name(origin, lang)))
+    elif destination in EU_MEMBERS:
+        notes.append(_t(lang, "eu_destination", destination=country_name(destination, lang)))
     if destination and destination not in EU_MEMBERS:
         notes.append(_t(lang, "non_eu_destination", destination=country_name(destination, lang)))
+    if low_confidence:
+        notes.append(_t(lang, "low_confidence_code", code=code))
     if price.get("assumed_total"):
         notes.append(_t(lang, "assumed_total", amount=money(amount, currency, lang)))
     if intra_eu:
@@ -640,6 +874,10 @@ def _cost(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
             break
         if duty is None:
             notes.append(_t(lang, "no_rate", code=code))
+    if price.get("currency_assumed"):
+        notes.append(_t(lang, "currency_assumed"))
+    else:
+        notes.append(_t(lang, "currency_as_given", currency=currency))
     notes.append(_t(lang, "disclaimer"))
 
     product = merged.get("product") or code
@@ -652,20 +890,21 @@ def _cost(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
             else f"{_t(lang, 'duty')} ({rate:g}%): {money(duty, currency, lang)}"
         )
         lines.append(f"{_t(lang, 'total')}: {money(total or value, currency, lang)}")
-    context = {k: v for k, v in merged.items() if not k.startswith("_")}
     return {
         "reply": "\n".join(lines + notes),
-        "context": context,
+        "context": _public(merged),
         "result": {
             "kind": "cost",
             "code": code,
             "candidates": candidates,
+            "low_confidence": low_confidence,
             "origin": origin,
             "destination": destination,
             "intra_eu": intra_eu,
             "quantity": merged.get("quantity"),
             "unit": merged.get("unit"),
             "currency": currency,
+            "currency_assumed": bool(price.get("currency_assumed")),
             "customs_value": str(value),
             "rate_percent": rate,
             "rate_type": rate_type,
@@ -677,9 +916,10 @@ def _cost(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
 
 
 def _classify_answer(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
+    """Candidate codes for the goods; a weak best match is offered as a lead only."""
     query = merged.get("product_query")
     product = merged.get("product")
-    context = {k: v for k, v in merged.items() if not k.startswith("_")}
+    context = _public(merged)
     results = _classify(conn, query, lang) if query else []
     if not results:
         reply = _t(lang, "unknown_product", product=product) if product else _t(lang, "help")
@@ -687,13 +927,70 @@ def _classify_answer(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
     candidates = [
         {"code": r.hs_code.code, "description": r.hierarchy_path, "score": r.score} for r in results
     ]
-    lines = [_t(lang, "classify_intro", product=product)]
-    lines += [f"{c['code']} — {c['description']}" for c in candidates]
+    low_confidence = results[0].score < LOW_CONFIDENCE
+    if low_confidence:
+        best = candidates[0]
+        lines = [
+            _t(
+                lang,
+                "classify_lead",
+                product=product,
+                code=best["code"],
+                description=best["description"],
+            )
+        ]
+        if len(candidates) > 1:
+            lines.append(_t(lang, "other_leads"))
+            lines += [f"{c['code']} — {c['description']}" for c in candidates[1:]]
+    else:
+        lines = [_t(lang, "classify_intro", product=product)]
+        lines += [f"{c['code']} — {c['description']}" for c in candidates]
     return {
         "reply": "\n".join(lines),
         "context": context,
-        "result": {"kind": "classify", "code": candidates[0]["code"], "candidates": candidates},
+        "result": {
+            "kind": "classify",
+            "code": candidates[0]["code"],
+            "candidates": candidates,
+            "low_confidence": low_confidence,
+        },
     }
+
+
+#: Every small-talk phrase, longest first, matched on the folded message.
+_SMALLTALK_PATTERNS = sorted(
+    (
+        (kind, re.compile(rf"(?<![{_LETTER}0-9]){re.escape(_fold(normalize(p)))}(?![{_LETTER}])"))
+        for kind, phrases in SMALLTALK.items()
+        for p in phrases
+    ),
+    key=lambda pair: len(pair[1].pattern),
+    reverse=True,
+)
+_FILLER_FOLDED = {_fold(normalize(w)) for w in SMALLTALK_FILLER}
+
+
+def smalltalk_kind(message: str) -> Optional[str]:
+    """ "greeting", "thanks" or "help" when the whole message is small talk, else None.
+
+    "hi", "merhaba!", "Hallo, was kannst du?" qualify; "hi, 10 t apples" does
+    not, because words other than greetings and filler remain. A small-talk
+    message is answered before any parsing, so it can never reach `classify`.
+    """
+    text = _fold(normalize(message))
+    found: list[str] = []
+    for kind, pattern in _SMALLTALK_PATTERNS:
+        if pattern.search(text):
+            found.append(kind)
+            text = pattern.sub(" ", text)
+    if not found:
+        return None
+    if any(w not in _FILLER_FOLDED for w in re.findall(rf"[{_LETTER}0-9]+", text)):
+        return None
+    return next(kind for kind in ("help", "thanks", "greeting") if kind in found)
+
+
+_SMALLTALK_REPLY = {"greeting": "hello", "help": "capabilities", "thanks": "thanks"}
 
 
 _SCREEN_STRIP = re.compile(
@@ -740,9 +1037,7 @@ def _screen_answer(conn: sqlite3.Connection, message: str, lang: str) -> dict:
     }
 
 
-def answer(
-    conn: sqlite3.Connection, message: str, context: Optional[dict] = None, lang: str = "en"
-) -> dict:
+def answer(conn: sqlite3.Connection, message: str, context: Any = None, lang: str = "en") -> dict:
     """Reply to one message of the "ask" assistant.
 
     Returns `{"reply", "context", "result", "suggestions"}`. `context` is what the
@@ -750,18 +1045,31 @@ def answer(
     the earlier question.
     """
     lang = lang if lang in LANGUAGES else "en"
-    facts = parse(message)
+    context = _clean_context(context)
+    kind = smalltalk_kind(message)
+    if kind:
+        # "hi", "help", "danke": a friendly reply listing what the bot does. The
+        # question in progress, if any, is kept.
+        return {
+            "reply": _t(lang, _SMALLTALK_REPLY[kind]),
+            "context": context,
+            "result": None,
+            "suggestions": SUGGESTIONS[lang],
+        }
+    facts = parse(message, lang)
     intents = facts.get("intents", [])
     if "screen" in intents:
         reply = _screen_answer(conn, message, lang)
     else:
-        merged = _merge(context or {}, facts)
-        _fill_bare_answer(merged, message)
+        merged = _merge(context, facts)
+        merged["_message"] = message
+        _fill_bare_answer(merged, message, facts)
         wants_cost = (
             "cost" in intents
             or bool(merged.get("price"))
             or bool(merged.get("quantity"))
-            or merged.get("_awaiting") in ("origin", "price", "quantity")
+            or bool(facts.get("origin"))
+            or merged.get("_awaiting") in _SLOTS
         )
         support = support_answer(message, lang)
         has_goods_facts = any(facts.get(k) for k in ("code", "price", "quantity", "origin"))
@@ -775,10 +1083,7 @@ def answer(
         ):
             # "şifremi unuttum" typed into the question card: a help-desk question.
             reply = {"reply": support["reply"], "context": {}, "result": None}
-        elif "cost" in intents or (
-            wants_cost
-            and (merged.get("product_query") or merged.get("code") or merged.get("price"))
-        ):
+        elif wants_cost:
             reply = _cost(conn, merged, lang)
         elif merged.get("product_query") or merged.get("code"):
             if merged.get("code") and not merged.get("product_query"):
@@ -799,6 +1104,15 @@ def answer(
 def support_answer(message: str, lang: str = "en") -> dict:
     """Answer a help-desk question from the FAQ, or fall back to the contact address."""
     lang = lang if lang in LANGUAGES else "en"
+    kind = smalltalk_kind(message)
+    if kind:
+        return {
+            "reply": SUPPORT_SMALLTALK[kind][lang],
+            "matched": True,
+            "suggestions": SUPPORT_SUGGESTIONS[lang],
+            "context": {},
+            "result": None,
+        }
     text = f" {normalize(message)} "
     best, best_score = None, 0
     for keywords, answers in FAQ:
