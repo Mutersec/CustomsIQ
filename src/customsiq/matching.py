@@ -9,7 +9,7 @@ from difflib import SequenceMatcher
 from typing import Optional
 
 from src.customsiq.exceptions import InvalidQueryError
-from src.utils.validators import validate_cn_code
+from src.utils.validators import validate_hs_code
 
 MAX_QUERY_LENGTH = 500
 
@@ -40,14 +40,14 @@ def similarity(a: str, b: str) -> float:
 
 
 def as_code(query: str) -> Optional[str]:
-    """Return the normalized code if `query` looks like a CN/TARIC code, else None.
+    """Return the normalized code if `query` looks like an HS-6/CN-8/TARIC-10 code, else None.
 
     Mirrors document_extraction._normalize_hs_code's separator-stripping
     convention (spaces, dots, dashes), applied to the whole query since here
     the field is expected to BE a code, not a code embedded in a sentence.
     """
     candidate = re.sub(r"[\s.\-]", "", query)
-    return candidate if validate_cn_code(candidate) else None
+    return candidate if validate_hs_code(candidate) else None
 
 
 def _normalize(name: str) -> str:

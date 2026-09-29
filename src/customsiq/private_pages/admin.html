@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>CustomsIQ Admin</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<style>
+  :root {
+    --bg: #eef2f7;
+    --surface: #ffffff;
+    --surface-2: #f4f6fa;
+    --border: #d9e0ea;
+    --text: #0f1b2d;
+    --text-dim: #52607a;
+    --primary: #0b2545;
+    --primary-soft: #e6ecf4;
+    --gold: #c9a227;
+    --navy-deep: #081a31;
+    --red: #b3261e;
+    --green: #1e7a3d;
+    --amber: #b45309;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14.5px;
+    line-height: 1.5;
+  }
+
+  .mono { font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; }
+
+  header {
+    background: var(--navy-deep);
+    padding: 14px 24px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    box-shadow: 0 2px 12px rgba(3, 12, 28, 0.35);
+  }
+
+  .header-inner {
+    max-width: 1180px;
+    margin: 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+  }
+
+  h1 { margin: 0; font-size: 21px; font-weight: 700; color: #ffffff; }
+  h1 a { color: inherit; text-decoration: none; }
+  h1 .accent { color: var(--gold); }
+
+  .badge-owner {
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--gold);
+    color: var(--primary);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .header-right a { color: rgba(255, 255, 255, 0.85); text-decoration: none; font-size: 13.5px; }
+  .header-right a:hover { color: #ffffff; text-decoration: underline; }
+
+  .lang-switch { display: flex; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px; overflow: hidden; }
+  .lang-btn {
+    padding: 5px 11px;
+    background: transparent;
+    color: #ffffff;
+    border: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.2);
+    font: 600 12px inherit;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .lang-btn:last-child { border-right: none; }
+  .lang-btn.active { background: var(--gold); color: var(--primary); }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+  .tab {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-dim);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .tab.active { background: var(--primary); border-color: var(--primary); color: #ffffff; }
+
+  .panel[hidden] { display: none; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(11, 37, 69, 0.06);
+  }
+  .card h2 { margin: 0 0 12px; font-size: 16px; color: var(--primary); }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .stat .value { font-size: 26px; font-weight: 700; color: var(--primary); line-height: 1.2; }
+  .stat .label { color: var(--text-dim); font-size: 12.5px; }
+  .stat .sub { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+
+  dl.status { display: grid; grid-template-columns: minmax(140px, max-content) 1fr; gap: 8px 18px; margin: 0; }
+  dl.status dt { color: var(--text-dim); }
+  dl.status dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .ok { color: var(--green); }
+  .off { color: var(--red); }
+
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.detail { min-width: 180px; max-width: 420px; overflow-wrap: anywhere; }
+  tr:last-child td { border-bottom: none; }
+  .nowrap { white-space: nowrap; }
+
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .chip.zero { background: #fdecea; color: var(--red); }
+  .chip.gold { background: #f7efd2; color: #7a5d00; }
+
+  .linkish { background: none; border: none; padding: 0; color: var(--primary); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 12px; }
+  .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); font-weight: 600; }
+  input[type="text"], select {
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    font: inherit;
+    font-weight: 400;
+    color: var(--text);
+    min-width: 0;
+  }
+  .filters .check { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 8px; }
+  button.primary, button.ghost, button.danger {
+    padding: 7px 14px;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--primary);
+  }
+  button.primary { background: var(--primary); color: #ffffff; }
+  button.ghost { background: var(--surface); color: var(--primary); }
+  button.danger { background: var(--surface); color: var(--red); border-color: var(--red); padding: 4px 10px; font-size: 12.5px; }
+  button:disabled { opacity: 0.45; cursor: default; }
+
+  .pager { display: flex; align-items: center; gap: 10px; justify-content: flex-end; margin-top: 12px; color: var(--text-dim); font-size: 13px; flex-wrap: wrap; }
+  .empty { color: var(--text-dim); padding: 18px 4px; text-align: center; }
+  .note { color: var(--text-dim); font-size: 13px; margin: 0 0 12px; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--navy-deep); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 13.5px; max-width: calc(100% - 32px); }
+  .toast[hidden] { display: none; }
+
+  @media (max-width: 600px) {
+    header { padding: 12px 16px; }
+    .filters label { flex: 1 1 140px; }
+    .filters input[type="text"], .filters select { width: 100%; }
+    .stat .value { font-size: 22px; }
+    .card { padding: 14px; }
+
+    /* Tables become one card per row: the detail column (what was searched)
+       is the point of the panel and must not sit off-screen. */
+    table.stack thead { display: none; }
+    table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+    table.stack tr { border-bottom: 1px solid var(--border); padding: 8px 0; }
+    table.stack tr:last-child { border-bottom: none; }
+    table.stack td { border: none; padding: 3px 0; display: flex; gap: 10px; align-items: baseline; text-align: left; max-width: none; min-width: 0; }
+    table.stack td::before { content: attr(data-label); flex: 0 0 38%; color: var(--text-dim); font-size: 12px; font-weight: 600; }
+    table.stack td:not([data-label])::before { content: none; }
+    table.stack td.empty { justify-content: center; }
+    table.stack td.num { text-align: left; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <h1><a href="/">Customs<span class="accent">IQ</span></a></h1>
+    <span class="badge-owner" data-i18n="badge"></span>
+    <span class="header-right">
+      <a href="/" data-i18n="back"></a>
+      <span class="lang-switch" role="group" aria-label="Language">
+        <button type="button" class="lang-btn" data-lang="en">EN</button>
+        <button type="button" class="lang-btn" data-lang="tr">TR</button>
+        <button type="button" class="lang-btn" data-lang="de">DE</button>
+      </span>
+    </span>
+  </div>
+</header>
+
+<main>
+  <nav class="tabs" role="tablist">
+    <button type="button" class="tab active" data-tab="overview" data-i18n="tabs.overview"></button>
+    <button type="button" class="tab" data-tab="users" data-i18n="tabs.users"></button>
+    <button type="button" class="tab" data-tab="activity" data-i18n="tabs.activity"></button>
+    <button type="button" class="tab" data-tab="unmatched" data-i18n="tabs.unmatched"></button>
+  </nav>
+
+  <section class="panel" id="panel-overview">
+    <div class="stats" id="overview-stats"></div>
+    <div class="card">
+      <h2 data-i18n="system.title"></h2>
+      <dl class="status" id="system-status"></dl>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-users" hidden>
+    <div class="card">
+      <h2 data-i18n="users.title"></h2>
+      <p class="note" data-i18n="users.note"></p>
+      <div class="table-wrap">
+        <table class="stack">
+          <thead>
+            <tr>
+              <th data-i18n="users.username"></th>
+              <th data-i18n="users.email"></th>
+              <th data-i18n="users.method"></th>
+              <th data-i18n="users.role"></th>
+              <th data-i18n="users.created"></th>
+              <th data-i18n="users.lastActivity"></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="users-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-activity" hidden>
+    <div class="card">
+      <h2 data-i18n="activity.title"></h2>
+      <form class="filters" id="activity-filters">
+        <label><span data-i18n="activity.user"></span><input type="text" id="f-user" autocomplete="off"></label>
+        <label><span data-i18n="activity.action"></span><select id="f-action"></select></label>
+        <label><span data-i18n="activity.text"></span><input type="text" id="f-text" autocomplete="off"></label>
+        <label class="check"><input type="checkbox" id="f-zero"><span data-i18n="activity.zeroOnly"></span></label>
+        <button type="submit" class="primary" data-i18n="activity.apply"></button>
+        <button type="button" class="ghost" id="f-clear" data-i18n="activity.clear"></button>
+      </form>
+      <div class="table-wrap">
+        <table class="stack">
+          <thead>
+            <tr>
+              <th data-i18n="activity.when"></th>
+              <th data-i18n="activity.user"></th>
+              <th data-i18n="activity.action"></th>
+              <th data-i18n="activity.detail"></th>
+              <th data-i18n="activity.results"></th>
+              <th data-i18n="activity.topCode"></th>
+            </tr>
+          </thead>
+          <tbody id="activity-body"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span id="activity-range"></span>
+        <button type="button" class="ghost" id="page-prev" data-i18n="activity.prev"></button>
+        <button type="button" class="ghost" id="page-next" data-i18n="activity.next"></button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-unmatched" hidden>
+    <div class="card">
+      <h2 data-i18n="unmatched.title"></h2>
+      <p class="note" data-i18n="unmatched.note"></p>
+      <div class="table-wrap">
+        <table class="stack">
+          <thead>
+            <tr>
+              <th data-i18n="unmatched.query"></th>
+              <th data-i18n="unmatched.count"></th>
+              <th data-i18n="unmatched.last"></th>
+            </tr>
+          </thead>
+          <tbody id="unmatched-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(() => {
+  const STRINGS = {
+    en: {
+      badge: "Owner",
+      back: "← Back to the app",
+      tabs: { overview: "Overview", users: "Users", activity: "Activity", unmatched: "No-result searches" },
+      stats: {
+        users: "Users", usersSub: "{today} today · {week} this week",
+        pending: "Pending sign-ups", pendingSub: "code not entered yet",
+        sessions: "Active sessions", sessionsSub: "signed in right now or recently",
+        searches: "Searches (24 h)", searchesSub: "{week} in the last 7 days",
+        actions: "All actions (24 h)", actionsSub: "{week} in the last 7 days",
+      },
+      system: {
+        title: "System status", version: "Version", database: "Database", mail: "E-mail (Brevo)",
+        google: "Google sign-in", demo: "Demo accounts", cn: "EU CN codes", hs6: "HS-6 supplement codes",
+        sanctions: "Sanctioned entities", activityRows: "Activity rows kept", retention: "Retention",
+        on: "Configured", off: "Not configured", demoOn: "Enabled (passwords are public, turn off in production)",
+        demoOff: "Disabled", days: "{n} days", sqliteWarn: "SQLite (reset on every deploy on Render's free plan)",
+      },
+      users: {
+        title: "Users", note: "Deleting an account also removes its sessions and e-mail. Its review decisions and activity stay as the audit trail.",
+        username: "Username", email: "E-mail", method: "Sign-up", role: "Role", created: "Created",
+        lastActivity: "Last activity", delete: "Delete", you: "you", never: "—",
+        confirmDelete: "Delete the account \"{name}\"? This cannot be undone.",
+        deleted: "Deleted {name}.", roleChanged: "{name} is now {role}.",
+      },
+      methods: { google: "Google", email: "E-mail code", demo: "Demo", password: "Password" },
+      roles: { viewer: "Viewer", analyst: "Analyst", compliance_officer: "Compliance officer", admin: "Admin" },
+      activity: {
+        title: "Activity", user: "User", action: "Action", text: "Contains", zeroOnly: "No results only",
+        apply: "Filter", clear: "Clear", when: "When", detail: "Detail", results: "Results", topCode: "Top code",
+        all: "All actions", prev: "← Newer", next: "Older →", range: "{from}–{to} of {total}", none: "No activity yet.",
+      },
+      actions: {
+        search: "Search", classify: "Classify", screen: "Screening", duty: "Duty", risk: "Risk",
+        invoice: "Invoice upload", review: "Review", login: "Sign-in", google: "Google sign-in",
+        signup: "Sign-up", logout: "Sign-out",
+      },
+      unmatched: {
+        title: "Searches with no results", note: "The most frequent first. These are the words the catalogue or its synonyms are missing.",
+        query: "Query", count: "Times", last: "Last searched", none: "No search has come back empty yet.",
+      },
+      error: "Something went wrong: {msg}",
+    },
+    tr: {
+      badge: "Site sahibi",
+      back: "← Uygulamaya dön",
+      tabs: { overview: "Genel bakış", users: "Kullanıcılar", activity: "Etkinlik", unmatched: "Sonuçsuz aramalar" },
+      stats: {
+        users: "Kullanıcı", usersSub: "bugün {today} · bu hafta {week}",
+        pending: "Bekleyen kayıt", pendingSub: "kodu henüz girilmedi",
+        sessions: "Aktif oturum", sessionsSub: "şu an ya da yakın zamanda girişli",
+        searches: "Arama (24 sa)", searchesSub: "son 7 günde {week}",
+        actions: "Tüm işlemler (24 sa)", actionsSub: "son 7 günde {week}",
+      },
+      system: {
+        title: "Sistem durumu", version: "Sürüm", database: "Veritabanı", mail: "E-posta (Brevo)",
+        google: "Google ile giriş", demo: "Demo hesaplar", cn: "AB CN kodu", hs6: "HS-6 tamamlayıcı kod",
+        sanctions: "Yaptırım listesi kaydı", activityRows: "Tutulan etkinlik kaydı", retention: "Saklama süresi",
+        on: "Ayarlı", off: "Ayarlı değil", demoOn: "Açık (şifreleri herkese açık, canlıda kapatın)",
+        demoOff: "Kapalı", days: "{n} gün", sqliteWarn: "SQLite (Render ücretsiz planında her deploy'da sıfırlanır)",
+      },
+      users: {
+        title: "Kullanıcılar", note: "Hesap silinince oturumları ve e-postası da silinir. İnceleme kararları ve etkinlik geçmişi denetim izi olarak kalır.",
+        username: "Kullanıcı adı", email: "E-posta", method: "Kayıt", role: "Rol", created: "Kayıt tarihi",
+        lastActivity: "Son etkinlik", delete: "Sil", you: "siz", never: "—",
+        confirmDelete: "\"{name}\" hesabı silinsin mi? Bu geri alınamaz.",
+        deleted: "{name} silindi.", roleChanged: "{name} artık {role}.",
+      },
+      methods: { google: "Google", email: "E-posta kodu", demo: "Demo", password: "Parola" },
+      roles: { viewer: "Görüntüleyici", analyst: "Analist", compliance_officer: "Uyum sorumlusu", admin: "Yönetici" },
+      activity: {
+        title: "Etkinlik", user: "Kullanıcı", action: "İşlem", text: "İçeren", zeroOnly: "Sadece sonuçsuzlar",
+        apply: "Filtrele", clear: "Temizle", when: "Zaman", detail: "Ayrıntı", results: "Sonuç", topCode: "İlk kod",
+        all: "Tüm işlemler", prev: "← Yeniler", next: "Eskiler →", range: "{total} kayıttan {from}–{to}", none: "Henüz etkinlik yok.",
+      },
+      actions: {
+        search: "Arama", classify: "Sınıflandırma", screen: "Tarama", duty: "Gümrük vergisi", risk: "Risk",
+        invoice: "Fatura yükleme", review: "İnceleme", login: "Giriş", google: "Google ile giriş",
+        signup: "Kayıt", logout: "Çıkış",
+      },
+      unmatched: {
+        title: "Sonuç vermeyen aramalar", note: "En sık arananlar önce. Katalogda ya da eş anlamlılarda eksik olan kelimeler bunlar.",
+        query: "Sorgu", count: "Kez", last: "Son arama", none: "Henüz sonuçsuz dönen bir arama yok.",
+      },
+      error: "Bir hata oluştu: {msg}",
+    },
+    de: {
+      badge: "Inhaber",
+      back: "← Zurück zur App",
+      tabs: { overview: "Übersicht", users: "Benutzer", activity: "Aktivität", unmatched: "Suchen ohne Treffer" },
+      stats: {
+        users: "Benutzer", usersSub: "heute {today} · diese Woche {week}",
+        pending: "Offene Registrierungen", pendingSub: "Code noch nicht eingegeben",
+        sessions: "Aktive Sitzungen", sessionsSub: "gerade oder kürzlich angemeldet",
+        searches: "Suchen (24 Std.)", searchesSub: "{week} in den letzten 7 Tagen",
+        actions: "Alle Aktionen (24 Std.)", actionsSub: "{week} in den letzten 7 Tagen",
+      },
+      system: {
+        title: "Systemstatus", version: "Version", database: "Datenbank", mail: "E-Mail (Brevo)",
+        google: "Google-Anmeldung", demo: "Demo-Konten", cn: "EU-KN-Codes", hs6: "HS-6-Ergänzungscodes",
+        sanctions: "Sanktionierte Einträge", activityRows: "Gespeicherte Aktivitäten", retention: "Aufbewahrung",
+        on: "Eingerichtet", off: "Nicht eingerichtet", demoOn: "Aktiv (Passwörter sind öffentlich, im Betrieb abschalten)",
+        demoOff: "Deaktiviert", days: "{n} Tage", sqliteWarn: "SQLite (wird im kostenlosen Render-Plan bei jedem Deploy zurückgesetzt)",
+      },
+      users: {
+        title: "Benutzer", note: "Beim Löschen eines Kontos werden auch Sitzungen und E-Mail entfernt. Prüfentscheidungen und Aktivitäten bleiben als Prüfpfad erhalten.",
+        username: "Benutzername", email: "E-Mail", method: "Registrierung", role: "Rolle", created: "Erstellt",
+        lastActivity: "Letzte Aktivität", delete: "Löschen", you: "Sie", never: "—",
+        confirmDelete: "Konto \"{name}\" löschen? Das kann nicht rückgängig gemacht werden.",
+        deleted: "{name} gelöscht.", roleChanged: "{name} ist jetzt {role}.",
+      },
+      methods: { google: "Google", email: "E-Mail-Code", demo: "Demo", password: "Passwort" },
+      roles: { viewer: "Betrachter", analyst: "Analyst", compliance_officer: "Compliance-Beauftragte/r", admin: "Admin" },
+      activity: {
+        title: "Aktivität", user: "Benutzer", action: "Aktion", text: "Enthält", zeroOnly: "Nur ohne Treffer",
+        apply: "Filtern", clear: "Zurücksetzen", when: "Zeit", detail: "Details", results: "Treffer", topCode: "Erster Code",
+        all: "Alle Aktionen", prev: "← Neuere", next: "Ältere →", range: "{from}–{to} von {total}", none: "Noch keine Aktivität.",
+      },
+      actions: {
+        search: "Suche", classify: "Einreihung", screen: "Prüfung", duty: "Zoll", risk: "Risiko",
+        invoice: "Rechnungs-Upload", review: "Prüfentscheidung", login: "Anmeldung", google: "Google-Anmeldung",
+        signup: "Registrierung", logout: "Abmeldung",
+      },
+      unmatched: {
+        title: "Suchen ohne Treffer", note: "Die häufigsten zuerst. Diese Wörter fehlen im Katalog oder in den Synonymen.",
+        query: "Suchbegriff", count: "Anzahl", last: "Zuletzt gesucht", none: "Bisher ist keine Suche leer geblieben.",
+      },
+      error: "Etwas ist schiefgelaufen: {msg}",
+    },
+  };
+
+  const ACTIONS = ["search", "classify", "screen", "duty", "risk", "invoice", "review", "login", "google", "signup", "logout"];
+  const ROLES = ["viewer", "analyst", "compliance_officer", "admin"];
+  const PAGE = 50;
+
+  let lang = "en";
+  let overview = null;
+  let users = null;
+  let activity = null;
+  let unmatched = null;
+  const filters = { user: "", action: "", q: "", zero: false, offset: 0 };
+
+  function t(key, params) {
+    let value = key.split(".").reduce((node, part) => (node ? node[part] : undefined), STRINGS[lang]);
+    if (value === undefined) value = key.split(".").reduce((node, part) => (node ? node[part] : undefined), STRINGS.en);
+    if (typeof value !== "string") return key;
+    return value.replace(/\{(\w+)\}/g, (_, name) => (params && name in params ? params[name] : `{${name}}`));
+  }
+
+  function escapeHtml(text) {
+    return String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // A translated string made safe for an HTML attribute.
+  const L = (key) => escapeHtml(t(key));
+
+  function when(iso) {
+    if (!iso) return t("users.never");
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return escapeHtml(iso);
+    return date.toLocaleString(lang, { dateStyle: "medium", timeStyle: "short" });
+  }
+
+  function num(value) {
+    return Number(value || 0).toLocaleString(lang);
+  }
+
+  function toast(message) {
+    const el = document.getElementById("toast");
+    el.textContent = message;
+    el.hidden = false;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => { el.hidden = true; }, 3200);
+  }
+
+  async function api(url, options) {
+    const response = await fetch(url, options);
+    if (response.status === 401 || response.status === 404) {
+      window.location.href = "/";
+      throw new Error(String(response.status));
+    }
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || response.statusText);
+    return body;
+  }
+
+  // ---------- overview ----------
+  function renderOverview() {
+    if (!overview) return;
+    const o = overview;
+    const stat = (value, label, sub) =>
+      `<div class="stat"><div class="value">${num(value)}</div><div class="label">${escapeHtml(label)}</div>${sub ? `<div class="sub">${escapeHtml(sub)}</div>` : ""}</div>`;
+    document.getElementById("overview-stats").innerHTML = [
+      stat(o.users_total, t("stats.users"), t("stats.usersSub", { today: num(o.users_new_today), week: num(o.users_new_week) })),
+      stat(o.pending_signups, t("stats.pending"), t("stats.pendingSub")),
+      stat(o.active_sessions, t("stats.sessions"), t("stats.sessionsSub")),
+      stat(o.searches_day, t("stats.searches"), t("stats.searchesSub", { week: num(o.searches_week) })),
+      stat(o.actions_day, t("stats.actions"), t("stats.actionsSub", { week: num(o.actions_week) })),
+    ].join("");
+    const s = o.system;
+    const flag = (on) => `<span class="${on ? "ok" : "off"}">${escapeHtml(on ? t("system.on") : t("system.off"))}</span>`;
+    const rows = [
+      [t("system.version"), escapeHtml(s.version)],
+      [t("system.database"), s.database === "postgresql" ? "PostgreSQL" : `<span class="off">${escapeHtml(t("system.sqliteWarn"))}</span>`],
+      [t("system.mail"), flag(s.mail_configured)],
+      [t("system.google"), flag(s.google_configured)],
+      [t("system.demo"), s.demo_users_enabled ? `<span class="off">${escapeHtml(t("system.demoOn"))}</span>` : `<span class="ok">${escapeHtml(t("system.demoOff"))}</span>`],
+      [t("system.cn"), num(s.cn_codes)],
+      [t("system.hs6"), num(s.hs6_codes)],
+      [t("system.sanctions"), num(s.sanctioned_entities)],
+      [t("system.activityRows"), num(s.activity_rows)],
+      [t("system.retention"), escapeHtml(t("system.days", { n: s.retention_days }))],
+    ];
+    document.getElementById("system-status").innerHTML = rows
+      .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${value}</dd>`)
+      .join("");
+  }
+
+  async function loadOverview() {
+    overview = await api("/admin/api/overview");
+    renderOverview();
+  }
+
+  // ---------- users ----------
+  function renderUsers() {
+    if (!users) return;
+    const body = document.getElementById("users-body");
+    if (!users.length) {
+      body.innerHTML = `<tr><td colspan="7" class="empty">—</td></tr>`;
+      return;
+    }
+    body.innerHTML = users.map((u) => {
+      const roleCell = u.is_owner
+        ? `<span class="chip">${escapeHtml(t(`roles.${u.role}`))}</span>`
+        : `<select data-role-for="${escapeHtml(u.username)}" aria-label="${escapeHtml(t("users.role"))}">${ROLES.map((r) =>
+            `<option value="${r}"${r === u.role ? " selected" : ""}>${escapeHtml(t(`roles.${r}`))}</option>`).join("")}</select>`;
+      const action = u.is_owner
+        ? `<span class="chip gold">${escapeHtml(t("users.you"))}</span>`
+        : `<button type="button" class="danger" data-delete="${escapeHtml(u.username)}">${escapeHtml(t("users.delete"))}</button>`;
+      return `<tr>
+        <td data-label="${L("users.username")}"><button type="button" class="linkish" data-user-activity="${escapeHtml(u.username)}">${escapeHtml(u.username)}</button></td>
+        <td class="detail" data-label="${L("users.email")}">${escapeHtml(u.email || t("users.never"))}</td>
+        <td data-label="${L("users.method")}"><span class="chip">${escapeHtml(t(`methods.${u.method}`))}</span></td>
+        <td data-label="${L("users.role")}">${roleCell}</td>
+        <td class="nowrap" data-label="${L("users.created")}">${when(u.created_at)}</td>
+        <td class="nowrap" data-label="${L("users.lastActivity")}">${when(u.last_activity)}</td>
+        <td>${action}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  async function loadUsers() {
+    users = await api("/admin/api/users");
+    renderUsers();
+  }
+
+  document.getElementById("users-body").addEventListener("click", async (event) => {
+    const activityTarget = event.target.closest("[data-user-activity]");
+    if (activityTarget) {
+      Object.assign(filters, { user: activityTarget.dataset.userActivity, action: "", q: "", zero: false, offset: 0 });
+      syncFilterInputs();
+      showTab("activity");
+      return;
+    }
+    const deleteTarget = event.target.closest("[data-delete]");
+    if (deleteTarget) {
+      const name = deleteTarget.dataset.delete;
+      if (!window.confirm(t("users.confirmDelete", { name }))) return;
+      try {
+        await api(`/admin/api/users/${encodeURIComponent(name)}`, { method: "DELETE" });
+        toast(t("users.deleted", { name }));
+        await loadUsers();
+      } catch (err) {
+        toast(t("error", { msg: err.message }));
+      }
+    }
+  });
+
+  document.getElementById("users-body").addEventListener("change", async (event) => {
+    const select = event.target.closest("[data-role-for]");
+    if (!select) return;
+    const name = select.dataset.roleFor;
+    try {
+      await api(`/admin/api/users/${encodeURIComponent(name)}/role`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: select.value }),
+      });
+      toast(t("users.roleChanged", { name, role: t(`roles.${select.value}`) }));
+      await loadUsers();
+    } catch (err) {
+      toast(t("error", { msg: err.message }));
+      await loadUsers();
+    }
+  });
+
+  // ---------- activity ----------
+  function renderActionOptions() {
+    const select = document.getElementById("f-action");
+    select.innerHTML = `<option value="">${escapeHtml(t("activity.all"))}</option>` +
+      ACTIONS.map((a) => `<option value="${a}">${escapeHtml(t(`actions.${a}`))}</option>`).join("");
+    select.value = filters.action;
+  }
+
+  function syncFilterInputs() {
+    document.getElementById("f-user").value = filters.user;
+    document.getElementById("f-action").value = filters.action;
+    document.getElementById("f-text").value = filters.q;
+    document.getElementById("f-zero").checked = filters.zero;
+  }
+
+  function renderActivity() {
+    if (!activity) return;
+    const body = document.getElementById("activity-body");
+    if (!activity.items.length) {
+      body.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(t("activity.none"))}</td></tr>`;
+    } else {
+      body.innerHTML = activity.items.map((row) => {
+        const results = row.result_count === null || row.result_count === undefined
+          ? "—"
+          : `<span class="chip${row.result_count === 0 ? " zero" : ""}">${num(row.result_count)}</span>`;
+        return `<tr>
+          <td class="nowrap" data-label="${L("activity.when")}">${when(row.created_at)}</td>
+          <td data-label="${L("activity.user")}"><button type="button" class="linkish" data-user-activity="${escapeHtml(row.username)}">${escapeHtml(row.username)}</button></td>
+          <td class="nowrap" data-label="${L("activity.action")}">${escapeHtml(t(`actions.${row.action}`))}</td>
+          <td class="detail" data-label="${L("activity.detail")}">${escapeHtml(row.detail || "—")}</td>
+          <td class="num" data-label="${L("activity.results")}">${results}</td>
+          <td class="mono" data-label="${L("activity.topCode")}">${escapeHtml(row.top_code || "—")}</td>
+        </tr>`;
+      }).join("");
+    }
+    const from = activity.total ? filters.offset + 1 : 0;
+    const to = filters.offset + activity.items.length;
+    document.getElementById("activity-range").textContent = t("activity.range", { from: num(from), to: num(to), total: num(activity.total) });
+    document.getElementById("page-prev").disabled = filters.offset === 0;
+    document.getElementById("page-next").disabled = to >= activity.total;
+  }
+
+  async function loadActivity() {
+    const params = new URLSearchParams({ limit: PAGE, offset: filters.offset });
+    if (filters.user) params.set("user", filters.user);
+    if (filters.action) params.set("action", filters.action);
+    if (filters.q) params.set("q", filters.q);
+    if (filters.zero) params.set("zero", "true");
+    activity = await api(`/admin/api/activity?${params}`);
+    renderActivity();
+  }
+
+  document.getElementById("activity-body").addEventListener("click", (event) => {
+    const target = event.target.closest("[data-user-activity]");
+    if (!target) return;
+    Object.assign(filters, { user: target.dataset.userActivity, offset: 0 });
+    syncFilterInputs();
+    loadActivity().catch((err) => toast(t("error", { msg: err.message })));
+  });
+
+  document.getElementById("activity-filters").addEventListener("submit", (event) => {
+    event.preventDefault();
+    Object.assign(filters, {
+      user: document.getElementById("f-user").value.trim().toLowerCase(),
+      action: document.getElementById("f-action").value,
+      q: document.getElementById("f-text").value.trim(),
+      zero: document.getElementById("f-zero").checked,
+      offset: 0,
+    });
+    loadActivity().catch((err) => toast(t("error", { msg: err.message })));
+  });
+
+  document.getElementById("f-clear").addEventListener("click", () => {
+    Object.assign(filters, { user: "", action: "", q: "", zero: false, offset: 0 });
+    syncFilterInputs();
+    loadActivity().catch((err) => toast(t("error", { msg: err.message })));
+  });
+
+  document.getElementById("page-prev").addEventListener("click", () => {
+    filters.offset = Math.max(0, filters.offset - PAGE);
+    loadActivity().catch((err) => toast(t("error", { msg: err.message })));
+  });
+
+  document.getElementById("page-next").addEventListener("click", () => {
+    filters.offset += PAGE;
+    loadActivity().catch((err) => toast(t("error", { msg: err.message })));
+  });
+
+  // ---------- unmatched ----------
+  function renderUnmatched() {
+    if (!unmatched) return;
+    const body = document.getElementById("unmatched-body");
+    body.innerHTML = unmatched.length
+      ? unmatched.map((row) => `<tr>
+          <td class="detail" data-label="${L("unmatched.query")}">${escapeHtml(row.query)}</td>
+          <td class="num" data-label="${L("unmatched.count")}"><span class="chip zero">${num(row.count)}</span></td>
+          <td class="nowrap" data-label="${L("unmatched.last")}">${when(row.last_searched)}</td>
+        </tr>`).join("")
+      : `<tr><td colspan="3" class="empty">${escapeHtml(t("unmatched.none"))}</td></tr>`;
+  }
+
+  async function loadUnmatched() {
+    unmatched = await api("/admin/api/searches/unmatched");
+    renderUnmatched();
+  }
+
+  // ---------- tabs & language ----------
+  const LOADERS = { overview: loadOverview, users: loadUsers, activity: loadActivity, unmatched: loadUnmatched };
+
+  function showTab(name) {
+    document.querySelectorAll(".tab").forEach((tab) => {
+      const active = tab.dataset.tab === name;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    document.querySelectorAll(".panel").forEach((panel) => { panel.hidden = panel.id !== `panel-${name}`; });
+    LOADERS[name]().catch((err) => toast(t("error", { msg: err.message })));
+  }
+
+  document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => showTab(tab.dataset.tab)));
+
+  function applyLanguage(next) {
+    lang = STRINGS[next] ? next : "en";
+    document.documentElement.lang = lang;
+    try { localStorage.setItem("customsiq_lang", lang); } catch (err) { /* private mode */ }
+    document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+    document.querySelectorAll(".lang-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.lang === lang));
+    renderActionOptions();
+    renderOverview();
+    renderUsers();
+    renderActivity();
+    renderUnmatched();
+  }
+
+  document.querySelectorAll(".lang-btn").forEach((btn) => btn.addEventListener("click", () => applyLanguage(btn.dataset.lang)));
+
+  let initial = "en";
+  try {
+    initial = localStorage.getItem("customsiq_lang") || (navigator.language || "en").slice(0, 2);
+  } catch (err) { /* private mode */ }
+  applyLanguage(initial);
+  showTab("overview");
+})();
+</script>
+</body>
+</html>

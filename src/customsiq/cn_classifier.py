@@ -54,9 +54,10 @@ MAX_PER_HEADING = 3
 # A dozen entries cannot cover commercial and colloquial product language; real
 # coverage needs a maintained terminology database or a licensed thesaurus,
 # which is out of scope for this project. Every entry is checked by a test:
-# its target code must exist in the bundled nomenclature, and none of its words
-# may appear in that code's own hierarchy text (an alias for a word the corpus
-# already contains would only paper over the scorer). Keys are mostly English,
+# its target code must exist in the bundled nomenclature, and at least one of
+# its words (the distinctive one) must be absent from that code's own hierarchy
+# text (an alias for words the corpus already contains would only paper over
+# the scorer). Keys are mostly English,
 # with a few everyday Turkish/German words where the official DE/FR text uses a
 # different term.
 #
@@ -75,12 +76,19 @@ _ALIASES: dict[str, str] = {
     "earbuds": "8518300090",  # Headphones and earphones > Other
     "biro": "96081099",  # Ballpoint pens > Other
     "power bank": "8507600090",  # Electric accumulators > Lithium-ion > Other
-    # The CN calls condoms "sheath contraceptives". Latex ones are 4014 10 00,
-    # but heading 4014 is missing from the bundled data (a known bundle gap,
-    # like 8541), so these point at the only condom code the bundle has.
-    "condom": "3926909760",  # Sheath contraceptives of polyurethane
-    "prezervatif": "3926909760",  # Turkish for condom
-    "kondom": "3926909760",  # German and Turkish for condom
+    # The CN calls condoms "sheath contraceptives". Latex condoms are HS
+    # 4014 10; the EU CN bundle lacks heading 4014, so the target is the HS-6
+    # code from the HS 2022 supplement. (The polyurethane ones, 3926909760,
+    # are found by "contraceptive" without any alias.)
+    "condom": "401410",  # Rubber; vulcanised ..., sheath contraceptives
+    "prezervatif": "401410",  # Turkish for condom
+    "kondom": "401410",  # German and Turkish for condom
+    # The tariff says "photovoltaic", never "solar"; 8541 itself is also only
+    # in the HS 2022 supplement, not in the EU CN bundle.
+    "solar panel": "854143",  # Photovoltaic cells assembled in modules or panels
+    # The tariff writes "dish washing machines" / "dishwashing"; the everyday
+    # compound "dishwasher" is a different token.
+    "dishwasher": "842211",  # Dish washing machines; of the household type
 }
 
 # The score an alias hit is reported at. A curator's explicit mapping is not a

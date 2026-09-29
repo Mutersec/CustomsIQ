@@ -8,6 +8,7 @@ from src.customsiq.cn_classifier import _index_cache, _normalise, _singular, cla
 from src.customsiq.database import (
     get_connection,
     load_bundled_cn_nomenclature,
+    load_bundled_hs_supplement,
     seed,
     upsert_hs_codes,
 )
@@ -31,6 +32,7 @@ def real_corpus_conn() -> sqlite3.Connection:
     connection = get_connection(":memory:")
     seed(connection)
     load_bundled_cn_nomenclature(connection)
+    load_bundled_hs_supplement(connection)
     return connection
 
 

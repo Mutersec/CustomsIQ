@@ -240,3 +240,15 @@ def test_the_page_never_sends_a_reviewer_name(source: str) -> None:
     assert 'id="reviewer-name"' not in source
     assert not re.search(r"reviewer_name:", source), "the page still posts a reviewer_name"
     assert re.search(r"\breviewer_name\b", source), "history rendering should still read it"
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_the_hs6_note_exists_in_every_language(dictionaries: dict, language: str) -> None:
+    """Six-digit results from the HS 2022 supplement say they lack EU 8-digit detail."""
+    note = _leaf_value(dictionaries[language], "common.hs6Note")
+    assert note.startswith("HS-6") and "8" in note
+
+
+def test_the_hs6_note_is_shown_only_for_six_digit_codes(source: str) -> None:
+    assert "String(row.code).length === 6" in source
+    assert 't("common.hs6Note")' in source

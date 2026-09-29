@@ -32,12 +32,14 @@ from src.customsiq.database import (
     get_by_code,
     get_connection,
     load_bundled_cn_nomenclature,
+    load_bundled_hs_supplement,
     seed,
 )
 from src.customsiq.search import search
 from tests.helpers import signed_in_test_client
 
 BUNDLE = Path(__file__).parent.parent / "data" / "cn_nomenclature_2026.csv"
+SUPPLEMENT = Path(__file__).parent.parent / "data" / "hs2022_supplement.csv"
 
 # Every API route requires a session; anonymous behaviour is tested explicitly.
 client = signed_in_test_client()
@@ -49,6 +51,7 @@ def bundle() -> sqlite3.Connection:
     conn = get_connection(":memory:")
     seed(conn)
     load_bundled_cn_nomenclature(conn)
+    load_bundled_hs_supplement(conn)
     return conn
 
 
@@ -61,8 +64,11 @@ def sample_only() -> sqlite3.Connection:
 
 @pytest.fixture(scope="module")
 def bundle_codes() -> set:
+    """Every code the live catalogue holds: the EU CN bundle plus the HS-6 supplement."""
     with BUNDLE.open(encoding="utf-8") as handle:
-        return {row["cn_code"] for row in csv.DictReader(handle)}
+        codes = {row["cn_code"] for row in csv.DictReader(handle)}
+    with SUPPLEMENT.open(encoding="utf-8") as handle:
+        return codes | {row["hs_code"] for row in csv.DictReader(handle)}
 
 
 class TestOneEngine:
@@ -113,19 +119,15 @@ class TestProductionFailures:
         codes = [r.hs_code.code for r in search(bundle, query, limit=5, language="en")]
         assert any(code.startswith(prefix) for code in codes), codes
 
-    def test_solar_panel_cannot_reach_8541_because_the_bundle_lacks_it(
-        self, bundle: sqlite3.Connection, bundle_codes: set
-    ) -> None:
-        """The sixth query still fails, and why is pinned rather than hidden.
+    def test_solar_panel_now_reaches_photovoltaic_panels(self, bundle: sqlite3.Connection) -> None:
+        """The sixth production query, fixed by the HS-6 supplement.
 
-        Photovoltaic modules are heading 8541, and the committed bundle has no
-        8541 row at all (it covers 871 headings, well short of the full HS). No
-        scoring change can return a code that is not in the corpus. If a
-        regenerated bundle adds 8541, this test fails and says to revisit.
+        This used to pin the failure: the EU CN bundle has no heading 8541 at
+        all, so no scoring change could reach it. The supplement adds 854143,
+        "photovoltaic cells assembled in modules or made up into panels".
         """
-        assert not [code for code in bundle_codes if code.startswith("8541")]
         codes = [r.hs_code.code for r in search(bundle, "solar panel", limit=5)]
-        assert not [code for code in codes if code.startswith("8541")]
+        assert "854143" in codes, codes
 
 
 class TestHierarchyPath:
@@ -180,13 +182,19 @@ class TestAliases:
         assert code in bundle_codes, f"alias {key!r} points at {code}, which is not bundled"
 
     @pytest.mark.parametrize(("key", "code"), sorted(_ALIASES.items()))
-    def test_every_key_shares_no_word_with_its_target(
+    def test_every_key_has_a_word_its_target_lacks(
         self, bundle: sqlite3.Connection, key: str, code: str
     ) -> None:
-        """An alias for a word the target already contains would paper over the scorer."""
+        """An alias whose words the target already contains would paper over the scorer.
+
+        Was `test_every_key_shares_no_word_with_its_target`. For one-word keys
+        the rule is unchanged. A two-word key may share a generic word as long as
+        its distinctive word is missing: "solar panel" -> 854143, whose text says
+        "photovoltaic ... panels" and never "solar".
+        """
         record = get_by_code(bundle, code)
         text = _with_context(record.description, fetch_all_contexts(bundle, "en").get(code))
-        assert not set(_tokenize(key)) & set(_tokenize(text)), (key, text)
+        assert set(_tokenize(key)) - set(_tokenize(text)), (key, text)
 
     @pytest.mark.parametrize(("key", "code"), sorted(_ALIASES.items()))
     def test_every_alias_fires_and_ranks_first(
@@ -223,23 +231,30 @@ class TestAliases:
             ("latex condoms", "en"),
         ],
     )
-    def test_condom_searches_reach_the_sheath_contraceptive_code(
+    def test_condom_searches_reach_the_latex_condom_code(
         self, bundle: sqlite3.Connection, query: str, language: str
     ) -> None:
         """Reported from the live site: "condom" returned nothing at all.
 
-        The CN says "sheath contraceptives", so no word matched. The latex code
-        (4014 10 00) is missing from the bundle; the polyurethane one is the
-        only condom code there, and the alias points at it.
+        The CN says "sheath contraceptives", so no word matched. The aliases
+        first pointed at the polyurethane code 3926909760, the only condom code
+        the EU bundle has; with the HS-6 supplement they point at latex condoms,
+        HS 4014 10.
         """
         top = search(bundle, query, limit=5, language=language)[0]
-        assert top.hs_code.code == "3926909760"
+        assert top.hs_code.code == "401410"
         assert top.alias is not None
-        assert top.hierarchy_path == "Sheath contraceptives of polyurethane"
+        assert "sheath contraceptives" in top.hierarchy_path
 
-    def test_heading_4014_is_still_missing_from_the_bundle(self, bundle_codes: set) -> None:
-        """Pinned so the condom aliases get repointed once a rebuilt bundle has it."""
-        assert not [code for code in bundle_codes if code.startswith("4014")]
+    def test_polyurethane_condoms_are_still_found_by_their_tariff_wording(
+        self, bundle: sqlite3.Connection
+    ) -> None:
+        codes = [r.hs_code.code for r in search(bundle, "contraceptive", limit=5)]
+        assert "3926909760" in codes and "401410" in codes
+
+    def test_heading_4014_now_comes_from_the_supplement(self, bundle_codes: set) -> None:
+        """This used to pin 4014 as missing; the supplement now provides it."""
+        assert "401410" in bundle_codes
 
     def test_a_corpus_without_the_target_gets_nothing_invented(
         self, sample_only: sqlite3.Connection

@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from src.customsiq import auth, google_identity, mailer, review, sap_gts_bridge
+from src.customsiq import admin, auth, google_identity, mailer, review, sap_gts_bridge
 from src.customsiq.api_schemas import (
     AuthConfigResponse,
     ClassificationResultResponse,
@@ -37,13 +37,16 @@ from src.customsiq.api_schemas import (
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.dashboard import get_dashboard_stats
+from src.customsiq.database import delete_user as delete_user_row
 from src.customsiq.database import (
     fetch_hs_code_history,
     fetch_translations,
     fetch_users,
     get_by_code,
     get_connection,
+    get_user_by_username,
     load_bundled_cn_nomenclature,
+    load_bundled_hs_supplement,
     load_bundled_sanctions,
     seed,
     update_user_role,
@@ -81,6 +84,7 @@ app = FastAPI(
 # Resolved from this module, not the working directory: the deployed process
 # may be started from anywhere, and a missing directory would raise on import.
 _STATIC_DIR = Path(__file__).parent / "static"
+_PRIVATE_PAGES_DIR = Path(__file__).parent / "private_pages"
 
 _conn: sqlite3.Connection = get_connection(settings.database_target)
 seed(_conn)
@@ -90,6 +94,10 @@ seed(_conn)
 # access and survives every cold start; upsert_hs_codes is idempotent, so
 # re-running this on every restart is safe and cheap (~90 ms).
 load_bundled_cn_nomenclature(_conn)
+# The CN bundle misses 359 whole HS headings (4014, 8541, ...); the HS-6
+# supplement fills every uncovered subheading from the public-domain WCO HS
+# 2022 list, so a search never finds nothing merely because a heading is absent.
+load_bundled_hs_supplement(_conn)
 # Same arrangement for the sanctions list: the real OFAC SDN subset goes on top
 # of the 18 invented fixture rows seed() just wrote, not instead of them. Those
 # 18 are what the READMEs' worked examples and the pinned tests are built on;
@@ -143,6 +151,8 @@ async def require_sign_in(request: Request, call_next: Callable) -> Response:
         if request.method == "GET" and request.url.path == "/":
             return RedirectResponse("/login", status_code=303)
         return JSONResponse({"detail": "Sign in to use CustomsIQ."}, status_code=401)
+    # Handed to the route so `current_user` need not look the session up again.
+    request.state.user = user
     return await call_next(request)
 
 
@@ -189,10 +199,26 @@ MAX_NAME_QUERY = 60
 def current_user(request: Request) -> Optional[User]:
     """Resolve the signed-in user from the session cookie, or None.
 
-    A dependency rather than middleware: most routes here are public, so
-    identity is something a handler asks for, not a gate every request pays.
+    The sign-in middleware already resolved it for every private route; the
+    lookup here only runs for the public ones (/auth/me, /auth/logout).
     """
+    user = getattr(request.state, "user", None)
+    if user is not None:
+        return user
     return auth.user_for_token(_conn, request.cookies.get(SESSION_COOKIE))
+
+
+def _log(
+    request: Request,
+    action: str,
+    detail: Optional[str] = None,
+    result_count: Optional[int] = None,
+    top_code: Optional[str] = None,
+) -> None:
+    """Record what the signed-in user just did, for the owner's activity log."""
+    admin.record(
+        _conn, getattr(request.state, "user", None), action, detail, result_count, top_code
+    )
 
 
 def require_permission(action: str) -> Callable[[Optional[User]], User]:
@@ -349,6 +375,7 @@ def health() -> dict:
     "/search", response_model=list[SearchResult], dependencies=[Depends(_check_search_rate_limit)]
 )
 def search_hs_codes(
+    request: Request,
     q: str = Query(..., max_length=MAX_TEXT_QUERY, description="Free-text product description"),
     limit: int = Query(5, ge=1, le=50),
     language: Optional[str] = Query(
@@ -366,6 +393,7 @@ def search_hs_codes(
         results = search(_conn, q, limit=limit, language=language)
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log(request, "search", q, len(results), results[0].hs_code.code if results else None)
     return [
         {
             "code": r.hs_code.code,
@@ -385,6 +413,7 @@ def search_hs_codes(
     dependencies=[Depends(_check_search_rate_limit)],
 )
 def classify_description(
+    request: Request,
     description: str = Query(
         ..., max_length=MAX_TEXT_QUERY, description="Free-text description of the goods"
     ),
@@ -402,6 +431,13 @@ def classify_description(
         results = classify(_conn, description, top_n=top_n, language=language)
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log(
+        request,
+        "classify",
+        description,
+        len(results),
+        results[0].hs_code.code if results else None,
+    )
     return [
         {
             "code": r.hs_code.code,
@@ -423,6 +459,7 @@ def classify_description(
     dependencies=[Depends(_check_search_rate_limit)],
 )
 def screen_name(
+    request: Request,
     name: str = Query(
         ..., max_length=MAX_NAME_QUERY, description="Person or organisation name to screen"
     ),
@@ -436,6 +473,7 @@ def screen_name(
         matches = screen_entity(_conn, name)
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log(request, "screen", name, len(matches))
     return [
         {
             "name": m.entity.name,
@@ -451,6 +489,7 @@ def screen_name(
 
 @app.get("/calculate-duty", response_model=DutyCalculationResponse)
 def calculate_duty_for_consignment(
+    request: Request,
     hs_code: str = Query(..., description="CN-8 or TARIC-10 code"),
     country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
     customs_value: float = Query(..., description="Declared customs value"),
@@ -465,7 +504,15 @@ def calculate_duty_for_consignment(
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RateNotFoundError as exc:
+        _log(request, "duty", f"{hs_code} · {country_of_origin} · {customs_value:g}", 0)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _log(
+        request,
+        "duty",
+        f"{hs_code} · {country_of_origin} · {customs_value:g}",
+        1,
+        result.hs_code,
+    )
     return {
         "hs_code": result.hs_code,
         "country_of_origin": result.country_of_origin,
@@ -488,6 +535,7 @@ def calculate_duty_for_consignment(
     dependencies=[Depends(_check_search_rate_limit)],
 )
 def assess_risk(
+    request: Request,
     country_of_origin: str = Query(..., description="ISO 3166-1 alpha-2 origin code"),
     party_name: str = Query(
         ..., max_length=MAX_NAME_QUERY, description="Person or organisation to screen"
@@ -510,6 +558,15 @@ def assess_risk(
         )
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log(
+        request,
+        "risk",
+        " · ".join(
+            part for part in (party_name, country_of_origin, description or hs_code) if part
+        ),
+        None,
+        result.hs_code,
+    )
     return {
         "level": result.level,
         "composite_score": result.composite_score,
@@ -609,6 +666,17 @@ async def extract_invoice_upload(
         result = await run_in_threadpool(extract_invoice, data)
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # How many fields were found, never what they say: invoices carry names,
+    # addresses and prices that have no business in a log.
+    await run_in_threadpool(
+        admin.record,
+        _conn,
+        user,
+        "invoice",
+        f"{result.page_count} page(s)",
+        len(result.fields),
+    )
 
     return {
         "fields": [
@@ -842,6 +910,7 @@ def verify_signup(body: VerifyRequest, request: Request, response: Response) -> 
         user = auth.confirm_signup(_conn, body.email, body.code)
     except _SIGNUP_FAILURES as exc:
         raise _signup_errors(exc) from exc
+    admin.record(_conn, user, "signup")
     _set_session_cookie(request, response, auth.create_session(_conn, user))
     return _user_payload(user)
 
@@ -888,6 +957,7 @@ def google_sign_in(body: GoogleRequest, request: Request, response: Response) ->
         user = auth.google_sign_in(_conn, identity)
     except _SIGNUP_FAILURES as exc:
         raise _signup_errors(exc) from exc
+    admin.record(_conn, user, "google")
     _set_session_cookie(request, response, auth.create_session(_conn, user))
     return {"status": "signed_in", "user": _user_payload(user), "email": identity.email}
 
@@ -901,6 +971,7 @@ def login(body: Credentials, request: Request, response: Response) -> dict:
         user = auth.authenticate(_conn, body.username, body.password)
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    admin.record(_conn, user, "login")
     _set_session_cookie(request, response, auth.create_session(_conn, user))
     return _user_payload(user)
 
@@ -908,6 +979,7 @@ def login(body: Credentials, request: Request, response: Response) -> dict:
 @app.post("/auth/logout", response_model=LogoutResponse)
 def logout(request: Request, response: Response) -> dict:
     """End the current session. Safe to call when not signed in."""
+    admin.record(_conn, current_user(request), "logout")
     auth.logout(_conn, request.cookies.get(SESSION_COOKIE))
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"signed_out": True}
@@ -919,8 +991,10 @@ def whoami(user: Optional[User] = Depends(current_user)) -> dict:
 
     Deliberately 200 rather than 401 when anonymous: the frontend calls this on
     every page load, including for visitors who never intend to sign in.
+    `is_owner` only decides whether the page shows the admin link; the admin
+    routes check ownership again themselves.
     """
-    return {"user": _user_payload(user) if user else None}
+    return {"user": _user_payload(user) if user else None, "is_owner": admin.is_owner(_conn, user)}
 
 
 @app.get("/auth/users", response_model=list[UserResponse])
@@ -990,6 +1064,9 @@ def submit_review(body: ReviewSubmission, user: Optional[User] = Depends(current
         )
     except InvalidQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    admin.record(
+        _conn, user, "review", f"{body.subject_type}: {body.decision} · {body.subject_reference}"
+    )
     return {
         "id": result.id,
         "subject_type": result.subject_type,
@@ -1101,3 +1178,94 @@ def dashboard_stats(user: Optional[User] = Depends(current_user)) -> dict:
         ],
         "versioned_code_count": stats.versioned_code_count,
     }
+
+
+# ---------------------------------------------------------------------------
+# The site owner's admin panel
+#
+# Everything under /admin answers 404 to anyone who is not an owner (see
+# `admin.is_owner`) — signed in or not, admin role or not — so the panel's
+# existence is not even confirmed to them. Anonymous callers never get this far:
+# the sign-in middleware stops them first.
+# ---------------------------------------------------------------------------
+
+
+def require_owner(user: Optional[User] = Depends(current_user)) -> User:
+    """Admit only the site owner; everyone else sees a plain 404."""
+    if user is None or not admin.is_owner(_conn, user):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return user
+
+
+@app.get("/admin", response_class=FileResponse, include_in_schema=False)
+def admin_page(_: User = Depends(require_owner)) -> FileResponse:
+    """Serve the owner's admin panel.
+
+    Kept outside the public /static/ mount on purpose: from there anyone could
+    fetch the page (though not the data behind it) and learn the panel exists.
+    """
+    return FileResponse(_PRIVATE_PAGES_DIR / "admin.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/admin/api/overview", include_in_schema=False)
+def admin_overview(_: User = Depends(require_owner)) -> dict:
+    """Headline numbers and system status."""
+    return admin.overview(_conn, app.version)
+
+
+@app.get("/admin/api/users", include_in_schema=False)
+def admin_users(_: User = Depends(require_owner)) -> list[dict]:
+    """Every account, newest first, with e-mail, sign-up method and last activity."""
+    return admin.list_users(_conn)
+
+
+def _owner_target(owner: User, username: str) -> User:
+    """Resolve the account an admin action is aimed at; the owner may not target themselves."""
+    target = get_user_by_username(_conn, username.strip().lower())
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"No user named '{username}'")
+    if target.id == owner.id:
+        raise HTTPException(status_code=400, detail="You cannot change your own account here.")
+    return target
+
+
+@app.post("/admin/api/users/{username}/role", include_in_schema=False)
+def admin_change_role(
+    username: str, body: RoleChange, owner: User = Depends(require_owner)
+) -> dict:
+    """Change one account's role."""
+    if body.role not in auth.ROLE_ORDER:
+        raise HTTPException(status_code=400, detail=f"role must be one of {list(auth.ROLE_ORDER)}")
+    target = _owner_target(owner, username)
+    update_user_role(_conn, target.username, body.role)
+    return {"username": target.username, "role": body.role}
+
+
+@app.delete("/admin/api/users/{username}", include_in_schema=False)
+def admin_delete_user(username: str, owner: User = Depends(require_owner)) -> dict:
+    """Delete an account with its sessions and e-mail; its reviews and activity stay."""
+    target = _owner_target(owner, username)
+    delete_user_row(_conn, target.id)
+    return {"deleted": target.username}
+
+
+@app.get("/admin/api/activity", include_in_schema=False)
+def admin_activity(
+    user: Optional[str] = Query(None, max_length=64),
+    action: Optional[str] = Query(None, max_length=32),
+    q: Optional[str] = Query(None, max_length=MAX_TEXT_QUERY),
+    zero: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _: User = Depends(require_owner),
+) -> dict:
+    """One filtered page of the activity log, newest first."""
+    return admin.activity_page(_conn, user, action, q, zero, limit, offset)
+
+
+@app.get("/admin/api/searches/unmatched", include_in_schema=False)
+def admin_unmatched(
+    limit: int = Query(100, ge=1, le=500), _: User = Depends(require_owner)
+) -> list[dict]:
+    """Searches that found nothing, most frequent first."""
+    return admin.unmatched_searches(_conn, limit)

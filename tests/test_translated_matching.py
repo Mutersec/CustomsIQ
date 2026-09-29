@@ -20,6 +20,7 @@ from src.customsiq.database import (
     fetch_all_translations,
     get_connection,
     load_bundled_cn_nomenclature,
+    load_bundled_hs_supplement,
     seed,
     upsert_translations,
 )
@@ -37,6 +38,7 @@ def bundle() -> sqlite3.Connection:
     conn = get_connection(":memory:")
     seed(conn)
     load_bundled_cn_nomenclature(conn)
+    load_bundled_hs_supplement(conn)
     return conn
 
 

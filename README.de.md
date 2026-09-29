@@ -815,6 +815,61 @@ Dahinter läuft eine animierte Hafenszene:
 Alle Texte gibt es in EN/TR/DE. Das Layout wurde in allen drei Sprachen bei 390 px und
 1280 px im Browser geprüft: kein horizontaler Überlauf, keine abgeschnittenen Schaltflächen.
 
+### 🔑 Das Verwaltungspanel des Inhabers und das Aktivitätsprotokoll
+
+**Was es ist.** `/admin` ist ein privates Panel nur für den Inhaber der Website, mit vier
+Reitern:
+
+- **Übersicht:** Benutzer (neu heute und diese Woche), Registrierungen ohne eingegebenen
+  Code, aktive Sitzungen, Suchen und Aktionen der letzten 24 Stunden und 7 Tage. Dazu der
+  Systemstatus: ob Brevo und Google eingerichtet sind (nie die Schlüssel), Anzahl der KN- und
+  HS-6-Codes, Datenbank-Backend, Demo-Konten an oder aus.
+- **Benutzer:** jedes Konto mit E-Mail, Registrierungsweg (Google, E-Mail-Code, Demo),
+  Rolle, Erstellungsdatum und letzter Aktivität. Rollen lassen sich ändern und Konten
+  löschen. Beim Löschen werden auch Sitzungen und E-Mail entfernt. Prüfentscheidungen und
+  Aktivitäten bleiben als Prüfpfad erhalten. Ein Klick auf einen Namen öffnet dessen
+  Aktivität.
+- **Aktivität:** wer wann was getan hat: wonach gesucht wurde, wie viele Treffer es gab und
+  der erste Code. Filter: Benutzer, Aktion, Text, "nur ohne Treffer". Mit Seitenaufteilung.
+- **Suchen ohne Treffer:** Suchbegriffe ohne Ergebnis, die häufigsten zuerst. Das sind die
+  Wörter, die im Katalog oder in den Synonymen fehlen.
+
+**Wer es öffnen darf: eine E-Mail-Adresse, keine Rolle.**
+- Nur ein angemeldetes Konto, dessen *bestätigte* E-Mail in `CUSTOMSIQ_OWNER_EMAILS` steht,
+  kommt hinein. Groß-/Kleinschreibung und Leerzeichen spielen keine Rolle.
+- Alle anderen erhalten ein schlichtes **404**, auch mit der Rolle `admin`. Das gilt für die
+  Seite und für jede `/admin/api/*`-Route.
+- Eine Rollensperre hieße nicht "nur ich": `admin` kann jedem Konto gegeben werden, und das
+  Passwort von `demo_admin` steht in diesem Repository.
+- Ist die Einstellung leer, kommt niemand hinein.
+- Die Seite liegt in `private_pages/`, außerhalb des öffentlichen `/static/`.
+
+**Was protokolliert wird, und was nie.**
+
+| Protokolliert | Nie protokolliert |
+|---|---|
+| Suche, Einreihung, Prüfung, Risiko: eingegebener Text, Trefferzahl, erster Code | Passwörter, Bestätigungscodes |
+| Zoll: Code · Ursprung · Wert | Rechnungsinhalte (ein Upload protokolliert nur Seiten- und Feldanzahl) |
+| Prüfentscheidungen: Art, Entscheidung, Referenz | IP-Adressen |
+| Anmeldung, Google-Anmeldung, Registrierung, Abmeldung | nichts von nicht angemeldeten Besuchern |
+
+- Einträge, die älter als `CUSTOMSIQ_ACTIVITY_RETENTION_DAYS` (Standard 90) sind, werden
+  automatisch gelöscht.
+- Ein fehlgeschlagener Protokolleintrag lässt die Anfrage nie scheitern.
+- Die Anmeldeseite sagt es in allen drei Sprachen: "Suchen und Aktionen werden zum Betrieb
+  des Dienstes protokolliert". Der frühere Satz "kein Tracking" wurde entfernt, da er nicht
+  mehr stimmt.
+
+**Einrichtung auf Render** (Environment):
+
+| Einstellung | Wert |
+|---|---|
+| `CUSTOMSIQ_OWNER_EMAILS` | die E-Mail des Inhabers; mehrere durch Kommas getrennt |
+| `CUSTOMSIQ_SEED_DEMO_USERS` | `false` empfohlen: die Demo-Passwörter sind öffentlich |
+| `CUSTOMSIQ_DATABASE_URL` | eine PostgreSQL-URL (z. B. eine kostenlose Neon-Datenbank). Ohne sie werden Konten **und das Aktivitätsprotokoll** bei jedem Deploy gelöscht |
+
+Geänderte Tests und Details stehen in der [englischen README](README.md#-the-owners-admin-panel-and-the-activity-log).
+
 ### 🔐 Authentifizierung ohne Abhängigkeit
 
 `reviewer_name` war bisher das, was der Client hineingeschrieben hat. Fünf Stellen in
@@ -1627,6 +1682,8 @@ Alle Einstellungen stammen aus Umgebungsvariablen oder aus `.env`:
 | `CUSTOMSIQ_SEED_DEMO_USERS` | `true` | Legt die vier Demo-Konten in einer **leeren** users-Tabelle an. Für echte Deployments auf `false` setzen |
 | `CUSTOMSIQ_UPLOAD_MAX_BYTES` | `2097152` | Größter akzeptierter Rechnungs-Upload (2 MB), beim Streamen des Bodys geprüft |
 | `CUSTOMSIQ_UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | Erlaubte Uploads pro Konto und Minute |
+| `CUSTOMSIQ_OWNER_EMAILS` | *(leer)* | E-Mails des Inhabers (kommagetrennt); nur diese bestätigten Adressen öffnen `/admin`. Leer ⇒ niemand |
+| `CUSTOMSIQ_ACTIVITY_RETENTION_DAYS` | `90` | Wie viele Tage das Aktivitätsprotokoll einen Eintrag behält |
 
 ### 📄 Eine Rechnung auslesen
 
@@ -2222,6 +2279,12 @@ einfaches lokales `pytest` braucht weder PostgreSQL noch den Treiber).
 ---
 
 ## 🌍 Die echte EU-Kombinierte Nomenklatur 2026
+
+> **Nachtrag: HS-2022-Ergänzung.** Das KN-Bundle ist nicht vollständig: Es deckt nur 870 der
+> 1.229 HS-Positionen ab. Die fehlenden 359 Positionen (2.897 Unterpositionen) füllt
+> `data/hs2022_supplement.csv` aus der gemeinfreien WCO-HS-2022-Liste. Diese Codes sind
+> sechsstellig und nur englisch; in der Oberfläche sind sie als „HS-6“ gekennzeichnet.
+> Details in der englischen README unter „🧩 The HS 2022 supplement“.
 
 Jede frühere Phase betrieb die Such-/Einreihungs-Endpunkte gegen 20 erfundene Codes — genug, um
 die Algorithmen zu zeigen, unbrauchbar, um ein echtes Produkt tatsächlich zu finden. Diese Phase

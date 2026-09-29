@@ -65,6 +65,7 @@ _TABLES = (
     "review_authorship",
     "user_emails",
     "pending_signups",
+    "activity_log",
 )
 
 

@@ -72,6 +72,16 @@ class Settings(BaseSettings):
     verification_max_attempts: int = 5
     verification_resend_seconds: int = 60
 
+    # The site owner(s): comma-separated e-mail addresses. Only a signed-in
+    # account whose *verified* e-mail is listed here sees the admin panel
+    # (/admin); everyone else, admins by role included, gets a 404. Empty means
+    # nobody. Deliberately not role-based: the published demo_admin account has
+    # its password in the source code.
+    owner_emails: str = ""
+
+    # How long the per-user activity log keeps rows before they are pruned.
+    activity_retention_days: int = 90
+
     # "Sign in with Google". The OAuth client ID from Google Cloud Console
     # (type: Web application). Unset, the Google button is simply not shown.
     google_client_id: Optional[str] = None
@@ -93,6 +103,13 @@ class Settings(BaseSettings):
         if value is None or not value.strip():
             return None
         return value.strip()
+
+    @property
+    def owner_email_set(self) -> frozenset:
+        """`owner_emails` parsed: trimmed, lower-cased, blanks dropped."""
+        return frozenset(
+            part.strip().lower() for part in self.owner_emails.split(",") if part.strip()
+        )
 
     @property
     def database_target(self) -> str:

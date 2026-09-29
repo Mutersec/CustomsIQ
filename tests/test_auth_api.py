@@ -166,7 +166,7 @@ class TestLoginLogout:
         """Not a 401: the frontend calls this for visitors who never sign in."""
         response = client.get("/auth/me")
         assert response.status_code == 200
-        assert response.json() == {"user": None}
+        assert response.json() == {"user": None, "is_owner": False}
 
     def test_logout_ends_the_session(self) -> None:
         with signed_in_client(auth.ANALYST) as signed_in:

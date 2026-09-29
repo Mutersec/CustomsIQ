@@ -9,7 +9,7 @@ from typing import NamedTuple, Optional
 from src.customsiq.database import ALL_ORIGINS, fetch_rates_for_code
 from src.customsiq.exceptions import InvalidQueryError, RateNotFoundError
 from src.customsiq.models import TariffRate
-from src.utils.validators import validate_cn_code, validate_country_code
+from src.utils.validators import validate_country_code, validate_hs_code
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ def calculate_duty(
 
     Args:
         conn: An open database connection.
-        hs_code: CN-8 or TARIC-10 code of the goods.
+        hs_code: HS-6, CN-8 or TARIC-10 code of the goods.
         country_of_origin: ISO 3166-1 alpha-2 origin code.
         customs_value: Declared customs value; zero is valid, negative is not.
         as_of: Date to judge rate validity against. Defaults to today.
@@ -140,8 +140,8 @@ def calculate_duty(
         InvalidQueryError: If the code, origin or value is unusable.
         RateNotFoundError: If no rate is on record for the code.
     """
-    if not validate_cn_code(hs_code):
-        raise InvalidQueryError(f"{hs_code!r} is not a valid CN-8 or TARIC-10 code.")
+    if not validate_hs_code(hs_code):
+        raise InvalidQueryError(f"{hs_code!r} is not a valid HS-6, CN-8 or TARIC-10 code.")
     if not validate_country_code(country_of_origin):
         raise InvalidQueryError(
             f"{country_of_origin!r} is not a valid ISO 3166-1 alpha-2 country code."
