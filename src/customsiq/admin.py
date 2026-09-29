@@ -39,6 +39,7 @@ ACTIONS = (
     "risk",
     "invoice",
     "review",
+    "assistant",
     "login",
     "google",
     "signup",

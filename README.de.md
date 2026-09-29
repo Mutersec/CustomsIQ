@@ -815,6 +815,24 @@ Dahinter läuft eine animierte Hafenszene:
 Alle Texte gibt es in EN/TR/DE. Das Layout wurde in allen drei Sprachen bei 390 px und
 1280 px im Browser geprüft: kein horizontaler Überlauf, keine abgeschnittenen Schaltflächen.
 
+### 💬 Die Assistenten: Fragekarte und Hilfe-Blase (kostenlos)
+
+**Was sie sind.** Zwei Chatfenster auf der App-Seite, beide ohne Sprachmodell,
+also kostenlos und ohne API-Schlüssel.
+
+- **"Frage stellen"** ist eine Karte unter dem Dashboard. Sie nimmt eine Sendung
+  in eigenen Worten entgegen, z. B. "10 t Äpfel aus der Türkei, 1000 EUR pro
+  Tonne", und liefert Warenwert, Zoll und Summe.
+- **Die Hilfe-Blase** unten rechts beantwortet Fragen zur Nutzung der Website aus
+  einer festen Antwortliste und verweist sonst auf support@customsiq.org.
+
+**Wie die Fragekarte rechnet.**
+- Sie rechnet mit den vorhandenen Funktionen `classify` und `calculate_duty`.
+- Fehlende Angaben werden erfragt.
+- Es wird kein Zollsatz erfunden: Nur 18 Beispielsätze sind hinterlegt. Für andere
+  Codes nennt die Antwort den Warenwert und dass kein Satz vorliegt.
+- Bei einem Ursprung in der EU ist der Handel innergemeinschaftlich und zollfrei.
+
 ### 🔑 Das Verwaltungspanel des Inhabers und das Aktivitätsprotokoll
 
 **Was es ist.** `/admin` ist ein privates Panel nur für den Inhaber der Website, mit vier

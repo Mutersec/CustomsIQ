@@ -4,16 +4,17 @@ import sqlite3
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from src.customsiq import admin, auth, google_identity, mailer, review, sap_gts_bridge
+from src.customsiq import admin, assistant, auth, google_identity, mailer, review, sap_gts_bridge
 from src.customsiq.api_schemas import (
+    AssistantResponse,
     AuthConfigResponse,
     ClassificationResultResponse,
     CodeTranslationsResponse,
@@ -1015,6 +1016,44 @@ def change_role(
     if not update_user_role(_conn, username.strip().lower(), body.role):
         raise HTTPException(status_code=404, detail=f"No user named '{username}'")
     return {"username": username.strip().lower(), "role": body.role}
+
+
+class AssistantRequest(BaseModel):
+    """Body of POST /assistant."""
+
+    message: str = Field(..., min_length=1, max_length=assistant.MAX_MESSAGE)
+    mode: Literal["ask", "support"] = "ask"
+    language: str = "en"
+    context: dict = Field(default_factory=dict)
+
+
+@app.post(
+    "/assistant",
+    response_model=AssistantResponse,
+    dependencies=[Depends(_check_search_rate_limit)],
+)
+def ask_assistant(body: AssistantRequest, request: Request) -> dict:
+    """The rule-based assistant: a cost/code question ("ask") or a help-desk one ("support").
+
+    No language model: `assistant.py` takes the message apart with word lists and
+    patterns and answers with the same classification and duty functions the
+    rest of the API uses. Free to run, and it never invents a rate.
+    """
+    if body.mode == "support":
+        reply = assistant.support_answer(body.message, body.language)
+        _log(request, "assistant", f"[support] {body.message}", int(reply["matched"]))
+        return reply
+    reply = assistant.answer(_conn, body.message, body.context, body.language)
+    result = reply.get("result") or {}
+    candidates = result.get("candidates") or result.get("matches") or []
+    _log(
+        request,
+        "assistant",
+        body.message,
+        len(candidates) if result else None,
+        result.get("code"),
+    )
+    return reply
 
 
 class ReviewSubmission(BaseModel):
