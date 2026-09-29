@@ -27,6 +27,8 @@ extend-immutable-calls = [
 "scripts/*.py" = ["E402"]
 # SVG markup in the template string; wrapping it would only obscure the drawing.
 "scripts/make_harbor_scene.py" = ["E402", "E501"]
+# The assistant's reply wording and help-desk answers: prose, one sentence a line.
+"src/customsiq/assistant_texts.py" = ["E501"]
 
 [tool.black]
 line-length = 100

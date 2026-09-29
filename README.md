@@ -822,6 +822,43 @@ overflow and no clipped control.
 | `test_header_link.py` | anonymous `/` shows the app title | `/` read signed in; the sign-in page's brand links to `/login` |
 | Module-level `client` in `test_api.py`, `test_presentation_polish.py`, `test_sap_gts_bridge.py`, `test_security_patch.py`, `test_unified_search.py` | anonymous | signed in as a fresh viewer (`tests.helpers.signed_in_test_client`) |
 
+### 💬 The assistants: a question card and a help bubble, both free
+
+**What they are.** Two chat windows on the app page. Neither uses a language
+model, so they cost nothing to run and need no API key.
+
+- **"Ask a question"** is a card under the dashboard. It takes a shipment in
+  plain words, e.g. "10 t of apples from Turkey, 1000 EUR per tonne, calculate
+  the cost", and answers with the goods value, the duty and the total.
+- **The help bubble** sits at the bottom right. It answers questions about using
+  the site (search, sign-up, passwords, roles, privacy) from a fixed list of
+  answers and falls back to support@customsiq.org.
+
+**How the question card works** (`assistant.py`). The message is taken apart
+with word lists and patterns in EN/TR/DE:
+
+| Fact | Understood forms |
+|---|---|
+| Origin | "Türkiye'den", "from China", "aus der Türkei" (66 countries); a Turkish locative such as "türkiyedeyim" is read as where the importer is |
+| Quantity | `10 ton`, `2.500 kg`, `200 adet`, `500 t-shirts` (a count before a word means pieces) |
+| Price | per unit ("tonu 1000 euro", "4 EUR each", "pro Tonne") or total ("toplam 10.000 €"). A bare amount is taken as the total and the reply says so |
+| Goods | a typed code ("kod 0808.10"), or a product name. Turkish names go through a reviewed glossary (`assistant_glossary.py`) because the catalogue has no Turkish text |
+
+The figures come from the existing `classify` and `calculate_duty`:
+
+- A missing fact is asked for, and a short follow-up completes the question
+  (the page sends back the `context` from the previous reply).
+- **Nothing is invented.** Only 18 sample duty rates are on record. For any
+  other code the reply gives the goods value and says no rate is on record; it
+  does not guess one.
+- An EU-member origin is intra-EU trade and pays no duty, and the reply says so.
+- A non-EU destination (e.g. Turkey) is flagged: that country's own import
+  duties are not in this system.
+
+It is `POST /assistant`: signed-in only, rate-limited, messages capped at 300
+characters, and logged as the `assistant` action in the owner's activity log.
+Covered by `tests/test_assistant.py`.
+
 ### 🔑 The owner's admin panel and the activity log
 
 **What it is.** `/admin` is a private panel for the site owner, with four tabs:
@@ -2765,6 +2802,8 @@ CustomsIQ/
 │   │   ├── review.py            # human-review audit trail (four-eyes)
 │   │   ├── auth.py              # accounts, sessions, roles — stdlib only, no new deps
 │   │   ├── admin.py             # owner-only admin panel: who the owner is, activity log, reports
+│   │   ├── assistant.py         # rule-based chat: parses a shipment, asks for what's missing, answers
+│   │   ├── assistant_glossary.py · assistant_texts.py # its word lists and its EN/TR/DE wording
 │   │   ├── document_extraction.py # invoice PDF → fields (pypdf + labelled-line regex)
 │   │   ├── sap_gts_bridge.py     # renders results in SAP GTS terms — simulation, not an integration
 │   │   ├── dashboard.py         # read-only aggregation over Phases 1 & 2

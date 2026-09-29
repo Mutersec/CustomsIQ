@@ -853,6 +853,30 @@ denendi: yatay taşma ve kırpılan düğme yok.
 
 Değişen testlerin tam listesi [İngilizce README](README.md#-sign-in-required-e-mail-verified-sign-up-and-google)'de.
 
+### 💬 Asistanlar: soru kartı ve yardım balonu (ücretsiz)
+
+**Ne işe yarar.** Uygulama sayfasında iki sohbet penceresi var. İkisi de yapay zekâ
+kullanmaz; çalıştırmak ücretsizdir, API anahtarı gerekmez.
+
+- **"Soru sor" kartı** gösterge panelinin altındadır. Sevkiyatı kendi cümlenizle
+  yazarsınız, ör. "Türkiye'den 10 ton elma, tonu 1000 euro, maliyeti hesapla".
+  Mal bedelini, vergiyi ve toplamı verir.
+- **Yardım balonu** sağ alttadır. Siteyi kullanmayla ilgili soruları (arama, kayıt,
+  şifre, roller, gizlilik) hazır cevaplarla yanıtlar. Cevap bulamazsa
+  support@customsiq.org adresine yönlendirir.
+
+**Soru kartı nasıl çalışır** (`assistant.py`):
+- Mesajdan menşe, miktar, fiyat ve ürün çıkarılır (EN/TR/DE).
+- Türkçe ürün adları gözden geçirilmiş bir sözlükle İngilizceye çevrilir, çünkü
+  katalogda Türkçe metin yok.
+- Hesabı mevcut `classify` ve `calculate_duty` fonksiyonları yapar.
+- Eksik bilgi olursa sorar; kısa bir cevap ("1000") soruyu tamamlar.
+- **Oran uydurulmaz.** Sistemde yalnızca 18 örnek vergi oranı var. Diğer kodlarda mal
+  bedeli verilir ve "kayıtlı oran yok" denir.
+- Menşe AB üyesiyse AB içi ticarettir ve gümrük vergisi yoktur.
+- Varış ülkesi AB dışındaysa (ör. Türkiye) o ülkenin vergilerinin sistemde olmadığı
+  belirtilir.
+
 ### 🔑 Site sahibinin yönetim paneli ve etkinlik kaydı
 
 **Nedir.** `/admin`, yalnızca site sahibinin açabildiği bir paneldir. Dört sekmesi var:

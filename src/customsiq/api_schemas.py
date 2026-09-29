@@ -292,3 +292,16 @@ class DashboardStatsResponse(BaseModel):
     import_run_count: int
     recent_import_runs: list[ImportRunResponse]
     versioned_code_count: int
+
+
+class AssistantResponse(BaseModel):
+    """POST /assistant: the reply, the facts gathered so far, and any computed result.
+
+    `context` is opaque to the client: send it back with the next message so a
+    follow-up answer ("10 t") completes the earlier question.
+    """
+
+    reply: str
+    context: dict
+    suggestions: list[str]
+    result: Optional[dict] = None
