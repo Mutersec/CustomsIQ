@@ -51,12 +51,14 @@ MAX_PER_HEADING = 3
 # "Other live animals > Other".
 #
 # THIS IS A DEMO-SCALE ILLUSTRATION OF THE CONCEPT, NOT A SYNONYM DICTIONARY.
-# Ten entries cannot cover commercial and colloquial product language; real
+# A dozen entries cannot cover commercial and colloquial product language; real
 # coverage needs a maintained terminology database or a licensed thesaurus,
 # which is out of scope for this project. Every entry is checked by a test:
 # its target code must exist in the bundled nomenclature, and none of its words
 # may appear in that code's own hierarchy text (an alias for a word the corpus
-# already contains would only paper over the scorer). Keys are English only.
+# already contains would only paper over the scorer). Keys are mostly English,
+# with a few everyday Turkish/German words where the official DE/FR text uses a
+# different term.
 #
 # An alias is a signal blended into the results, not a shortcut: when every
 # word of a key appears in the query, its code joins the ranked list at
@@ -73,6 +75,12 @@ _ALIASES: dict[str, str] = {
     "earbuds": "8518300090",  # Headphones and earphones > Other
     "biro": "96081099",  # Ballpoint pens > Other
     "power bank": "8507600090",  # Electric accumulators > Lithium-ion > Other
+    # The CN calls condoms "sheath contraceptives". Latex ones are 4014 10 00,
+    # but heading 4014 is missing from the bundled data (a known bundle gap,
+    # like 8541), so these point at the only condom code the bundle has.
+    "condom": "3926909760",  # Sheath contraceptives of polyurethane
+    "prezervatif": "3926909760",  # Turkish for condom
+    "kondom": "3926909760",  # German and Turkish for condom
 }
 
 # The score an alias hit is reported at. A curator's explicit mapping is not a
