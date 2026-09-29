@@ -853,6 +853,78 @@ denendi: yatay taşma ve kırpılan düğme yok.
 
 Değişen testlerin tam listesi [İngilizce README](README.md#-sign-in-required-e-mail-verified-sign-up-and-google)'de.
 
+### 🔑 Site sahibinin yönetim paneli ve etkinlik kaydı
+
+**Nedir.** `/admin`, yalnızca site sahibinin açabildiği bir paneldir. Dört sekmesi var:
+
+- **Genel bakış:**
+  - kullanıcı sayısı (bugün ve bu hafta yeni kayıtlar);
+  - kodu henüz girilmemiş kayıtlar ve aktif oturumlar;
+  - son 24 saatte ve 7 günde yapılan arama ve işlem sayısı;
+  - sistem durumu: Brevo ve Google ayarlı mı (anahtarlar asla gösterilmez), CN ve HS-6 kod
+    sayıları, veritabanı türü, demo hesapların açık olup olmadığı.
+- **Kullanıcılar:**
+  - her hesabın e-postası, kayıt yöntemi (Google, e-posta kodu, demo), rolü, kayıt tarihi
+    ve son etkinliği;
+  - rol değiştirilebilir, hesap silinebilir. Silinen hesabın oturumları ve e-postası da
+    silinir; inceleme kararları ve etkinlik geçmişi denetim izi olarak kalır;
+  - bir isme tıklanınca o kişinin etkinlik geçmişi açılır.
+- **Etkinlik:** kim, ne zaman, ne yaptı; ne aradı, kaç sonuç aldı, ilk kod ne oldu.
+  Kullanıcıya, işlem türüne, metne ve "sadece sonuçsuzlar" seçeneğine göre filtrelenir;
+  sayfalıdır.
+- **Sonuçsuz aramalar:** hiç sonuç vermeyen sorgular, en sık arananlar önce. Katalogda ya da
+  eş anlamlılarda eksik kelimeleri bulmak içindir.
+
+**Kim açabilir: rol değil, e-posta.**
+- Yalnızca *doğrulanmış* e-postası `CUSTOMSIQ_OWNER_EMAILS` listesinde olan, giriş yapmış
+  hesap girer. Büyük/küçük harf ve boşluk önemsizdir.
+- Diğer herkes, `admin` rolündekiler de dahil, sayfada ve tüm `/admin/api/*` uçlarında düz
+  bir **404** görür; panelin var olduğu bile belli olmaz.
+- Rol tabanlı bir kilit "sadece ben" anlamına gelmezdi: `admin` rolü herhangi bir hesaba
+  verilebilir ve `demo_admin` şifresi bu depoda açıkça yazılı.
+- Ayar boşsa kimse giremez.
+- Sayfa, herkese açık `/static/` klasörünün dışında, `private_pages/` içinde durur.
+- `/auth/me` yanıtındaki `is_owner` yalnızca üst menüde "Yönetim" bağlantısının görünüp
+  görünmeyeceğini belirler. Sunucu, her yönetim isteğinde sahipliği yeniden kontrol eder.
+
+**Neler kaydedilir, neler asla kaydedilmez.** Her route kendi `activity_log` satırını açıkça
+yazar; genel bir middleware kullanılmaz, böylece satır sonuç sayısını ve ilk kodu da taşıyabilir.
+
+| Kaydedilir | Kaydedilmez |
+|---|---|
+| arama, sınıflandırma, tarama, risk: yazılan metin, sonuç sayısı, ilk kod | parolalar, doğrulama kodları |
+| gümrük vergisi: kod · menşe · değer | fatura içeriği (yüklemede yalnızca sayfa ve alan sayısı) |
+| inceleme kararları: tür, karar, referans | IP adresleri |
+| giriş, Google ile giriş, kayıt, çıkış | giriş yapmamış ziyaretçilere ait hiçbir şey |
+
+- Sorgular 200 karaktere kırpılır.
+- `CUSTOMSIQ_ACTIVITY_RETENTION_DAYS` süresinden (varsayılan 90 gün) eski kayıtlar, bir yazma
+  sırasında ve en fazla saatte bir, otomatik silinir.
+- Kayıt yazılamazsa hata yakalanıp loglanır; ilgili istek asla bozulmaz.
+- Giriş sayfası bunu üç dilde söyler: "Hizmetin işletilmesi için aramalar ve işlemler kayıt
+  altına alınır". Eski "izleme yok" cümlesi artık yanlış olacağı için kaldırıldı.
+
+**Render'da yapmanız gerekenler** (servis → **Environment**):
+
+| Anahtar | Değer |
+|---|---|
+| `CUSTOMSIQ_OWNER_EMAILS` | kendi e-postanız, ör. Google ile giriş yaptığınız adres; birden fazlaysa virgülle ayırın |
+| `CUSTOMSIQ_SEED_DEMO_USERS` | `false` önerilir: demo hesapların şifreleri herkese açık |
+| `CUSTOMSIQ_DATABASE_URL` | PostgreSQL adresi (aşağıya bakın). Bu olmadan hesaplar **ve etkinlik geçmişi** her deploy'da silinir |
+
+**Kalıcı veritabanı: ücretsiz Neon PostgreSQL**
+
+1. [neon.tech](https://neon.tech)'e girin ve ücretsiz bir proje oluşturun. Bölge olarak
+   Render servisinize yakın olanı seçin (ör. Frankfurt).
+2. Proje panelinde **Connect** düğmesine basın ve bağlantı adresini kopyalayın. Adres
+   `postgresql://kullanici:parola@….neon.tech/neondb?sslmode=require` biçimindedir.
+3. Render → **Environment** bölümünde `CUSTOMSIQ_DATABASE_URL` anahtarına bu adresi yapıştırın
+   ve kaydedin.
+4. Servis yeniden başlayınca tablolar kendiliğinden oluşur. Önceki SQLite verisi taşınmaz;
+   hesabınıza bir kez yeniden kaydolun (Google ile giriş yeterlidir).
+
+Değişen testler ve ayrıntılar [İngilizce README](README.md#-the-owners-admin-panel-and-the-activity-log)'de.
+
 ### 🔐 Bağımlılıksız kimlik doğrulama
 
 `reviewer_name` eskiden istemcinin yazdığı şeydi. Bu depodaki beş ayrı yer bunu
@@ -1630,6 +1702,8 @@ Tüm ayarlar ortam değişkenlerinden veya `.env` dosyasından okunur:
 | `CUSTOMSIQ_SEED_DEMO_USERS` | `true` | Dört demo hesabını **boş** bir users tablosuna ekler. Gerçek dağıtımda `false` yapın |
 | `CUSTOMSIQ_UPLOAD_MAX_BYTES` | `2097152` | Kabul edilen en büyük fatura yüklemesi (2 MB); gövde akarken uygulanır |
 | `CUSTOMSIQ_UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | Hesap başına dakikada izin verilen yükleme sayısı |
+| `CUSTOMSIQ_OWNER_EMAILS` | *(boş)* | Site sahibinin e-postaları (virgülle ayrılmış); `/admin`'i yalnızca bu doğrulanmış adresler açabilir. Boş ⇒ kimse |
+| `CUSTOMSIQ_ACTIVITY_RETENTION_DAYS` | `90` | Etkinlik kaydının kaç gün saklanacağı |
 
 ### 📄 Fatura okuma
 

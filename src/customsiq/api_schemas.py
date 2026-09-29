@@ -240,6 +240,8 @@ class WhoAmIResponse(BaseModel):
     """GET /auth/me — `user` is null when nobody is signed in."""
 
     user: Optional[UserResponse]
+    # True only for the site owner (see admin.is_owner); shows the admin link.
+    is_owner: bool = False
 
 
 class RoleChangeResponse(BaseModel):

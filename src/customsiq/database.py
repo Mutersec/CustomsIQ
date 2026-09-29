@@ -128,6 +128,21 @@ CREATE TABLE IF NOT EXISTS pending_signups (
     expires_at TEXT NOT NULL
 );
 
+-- What signed-in users did: searches, calculations, uploads, sign-ins. Read
+-- only by the site owner's admin panel. `detail` is the query a user typed, or
+-- a short summary — never a password, a code, or invoice content. `username`
+-- is copied in so a row still reads after its account is deleted.
+CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT NOT NULL,
+    action TEXT NOT NULL,
+    detail TEXT,
+    result_count INTEGER,
+    top_code TEXT,
+    created_at TEXT NOT NULL
+);
+
 -- Supplementary German/French descriptions for hs_codes. A separate table,
 -- not description_de/description_fr columns on hs_codes, for the same reason
 -- hs_code_history is separate from hs_codes: CREATE TABLE IF NOT EXISTS never
@@ -1159,6 +1174,137 @@ def get_email_for_user(conn: sqlite3.Connection, user_id: int) -> Optional[str]:
     """Return a user's verified e-mail, or None for accounts that have none."""
     row = conn.execute("SELECT email FROM user_emails WHERE user_id = ?", (user_id,)).fetchone()
     return str(row[0]) if row else None
+
+
+class ActivityEntry(NamedTuple):
+    """One row of `activity_log`."""
+
+    id: int
+    user_id: Optional[int]
+    username: str
+    action: str
+    detail: Optional[str]
+    result_count: Optional[int]
+    top_code: Optional[str]
+    created_at: str
+
+
+_ACTIVITY_COLUMNS = "id, user_id, username, action, detail, result_count, top_code, created_at"
+
+
+def insert_activity(
+    conn: sqlite3.Connection,
+    user_id: Optional[int],
+    username: str,
+    action: str,
+    detail: Optional[str],
+    result_count: Optional[int],
+    top_code: Optional[str],
+    created_at: str,
+) -> None:
+    """Append one activity row."""
+    conn.execute(
+        "INSERT INTO activity_log (user_id, username, action, detail, result_count, top_code,"
+        " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, username, action, detail, result_count, top_code, created_at),
+    )
+    conn.commit()
+
+
+def delete_activity_before(conn: sqlite3.Connection, cutoff: str) -> int:
+    """Delete activity rows older than `cutoff` (ISO 8601), returning how many."""
+    cursor = conn.execute("DELETE FROM activity_log WHERE created_at < ?", (cutoff,))
+    conn.commit()
+    return int(cursor.rowcount)
+
+
+def fetch_activity(
+    conn: sqlite3.Connection,
+    username: Optional[str] = None,
+    action: Optional[str] = None,
+    text: Optional[str] = None,
+    zero_only: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[ActivityEntry], int]:
+    """Return one page of activity, newest first, and the total matching count."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if username:
+        clauses.append("username = ?")
+        params.append(username)
+    if action:
+        clauses.append("action = ?")
+        params.append(action)
+    if text:
+        clauses.append("LOWER(detail) LIKE ?")
+        params.append("%" + text.lower() + "%")
+    if zero_only:
+        clauses.append("result_count = 0")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    total = int(conn.execute(f"SELECT COUNT(*) FROM activity_log{where}", params).fetchone()[0])
+    rows = conn.execute(
+        f"SELECT {_ACTIVITY_COLUMNS} FROM activity_log{where} ORDER BY id DESC LIMIT ? OFFSET ?",
+        (*params, limit, offset),
+    ).fetchall()
+    return [ActivityEntry(*row) for row in rows], total
+
+
+def count_activity_since(conn: sqlite3.Connection, since: str, actions: Sequence[str]) -> int:
+    """Count activity rows of the given actions at or after `since`."""
+    placeholders = ", ".join("?" for _ in actions)
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM activity_log WHERE created_at >= ? AND action IN ({placeholders})",
+        (since, *actions),
+    ).fetchone()
+    return int(row[0])
+
+
+def fetch_unmatched_searches(
+    conn: sqlite3.Connection, actions: Sequence[str], limit: int = 100
+) -> list[tuple[str, int, str]]:
+    """Group searches that returned nothing: (query, times, last searched), most frequent first."""
+    placeholders = ", ".join("?" for _ in actions)
+    rows = conn.execute(
+        "SELECT LOWER(detail), COUNT(*), MAX(created_at) FROM activity_log"
+        f" WHERE result_count = 0 AND detail IS NOT NULL AND action IN ({placeholders})"
+        " GROUP BY LOWER(detail) ORDER BY COUNT(*) DESC, MAX(created_at) DESC LIMIT ?",
+        (*actions, limit),
+    ).fetchall()
+    return [(str(r[0]), int(r[1]), str(r[2])) for r in rows]
+
+
+def fetch_last_activity_by_user(conn: sqlite3.Connection) -> dict[int, str]:
+    """Return each user's most recent activity timestamp, keyed by user id."""
+    rows = conn.execute(
+        "SELECT user_id, MAX(created_at) FROM activity_log"
+        " WHERE user_id IS NOT NULL GROUP BY user_id"
+    ).fetchall()
+    return {int(r[0]): str(r[1]) for r in rows}
+
+
+def fetch_user_emails(conn: sqlite3.Connection) -> dict[int, tuple[str, bool]]:
+    """Return every verified e-mail as {user_id: (email, signed up with Google)}."""
+    rows = conn.execute("SELECT user_id, email, google_sub FROM user_emails").fetchall()
+    return {int(r[0]): (str(r[1]), r[2] is not None) for r in rows}
+
+
+def count_rows(conn: sqlite3.Connection, table: str, where: str = "", params: Sequence = ()) -> int:
+    """COUNT(*) over a table. `table` and `where` are module-internal literals only."""
+    clause = f" WHERE {where}" if where else ""
+    return int(conn.execute(f"SELECT COUNT(*) FROM {table}{clause}", tuple(params)).fetchone()[0])
+
+
+def delete_user(conn: sqlite3.Connection, user_id: int) -> None:
+    """Delete an account with its sessions and e-mail.
+
+    Review decisions and activity rows are kept: they are the audit trail and
+    carry the username as text, so they still read after the account is gone.
+    """
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM user_emails WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
 
 
 class ImportStats(NamedTuple):

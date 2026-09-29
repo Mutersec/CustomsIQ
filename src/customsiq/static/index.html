@@ -485,6 +485,18 @@
     cursor: pointer;
   }
 
+  .header-links .admin-link,
+  .header-links .admin-link:hover {
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: var(--gold);
+    color: var(--primary);
+    font-weight: 700;
+    text-decoration: none;
+    border-bottom: none;
+  }
+  .admin-link[hidden] { display: none; }
+
   .auth-user { display: flex; align-items: center; gap: 6px; }
   .auth-user[hidden] { display: none; }
   .auth-user strong { color: #ffffff; font-weight: 600; }
@@ -866,6 +878,7 @@
           <strong id="auth-username"></strong>
           <span class="role-badge" id="auth-role"></span>
         </span>
+        <a class="admin-link" id="admin-link" href="/admin" data-i18n="auth.admin" hidden></a>
         <button type="button" id="auth-toggle" data-i18n="auth.signIn"></button>
       </span>
       <span class="lang-switch" role="group" aria-label="Language">
@@ -1105,6 +1118,7 @@
       auth: {
         signIn: "Sign in",
         signOut: "Sign out",
+        admin: "Admin",
         loginToReview: "Sign in to review this result.",
         roleCannotReview: (role) => `Your role (${role}) cannot sign off on this result.`,
         restricted: "Sign in to see who reviewed what.",
@@ -1329,6 +1343,7 @@
       auth: {
         signIn: "Oturum aç",
         signOut: "Çıkış yap",
+        admin: "Yönetim",
         loginToReview: "Bu sonucu incelemek için oturum açın.",
         roleCannotReview: (role) => `Rolünüz (${role}) bu sonucu onaylayamaz.`,
         restricted: "Kimin neyi incelediğini görmek için oturum açın.",
@@ -1554,6 +1569,7 @@
       auth: {
         signIn: "Anmelden",
         signOut: "Abmelden",
+        admin: "Verwaltung",
         loginToReview: "Zum Prüfen dieses Ergebnisses bitte anmelden.",
         roleCannotReview: (role) => `Ihre Rolle (${role}) darf dieses Ergebnis nicht freigeben.`,
         restricted: "Melden Sie sich an, um zu sehen, wer was geprüft hat.",
@@ -1873,6 +1889,8 @@
       const response = await fetch("/auth/me");
       const payload = await response.json();
       currentUser = response.ok ? payload.user : null;
+      // Display only: /admin itself answers 404 to anyone but the owner.
+      document.getElementById("admin-link").hidden = !(response.ok && payload.is_owner);
     } catch (err) {
       currentUser = null;
     }

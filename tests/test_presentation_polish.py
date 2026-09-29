@@ -242,7 +242,7 @@ class TestResponseBodyUnchanged:
 
     def test_auth_me_still_returns_null_user_when_anonymous(self) -> None:
         """/auth/me stays reachable without a session; the sign-in page calls it."""
-        assert TestClient(app).get("/auth/me").json() == {"user": None}
+        assert TestClient(app).get("/auth/me").json() == {"user": None, "is_owner": False}
 
     def test_dashboard_stats_field_set_is_unchanged(self) -> None:
         body = client.get("/dashboard/stats").json()
