@@ -1071,8 +1071,9 @@ kümesinde 8541 pozisyonu hiç yok. Bu, eşleştirmedeki değil veri kümesindek
 
 Ek olarak: `hierarchy_path` (açıklama, üst bağlamıyla birlikte; iki sonuç kartında da „Tarife
 hiyerarşisi“ olarak gösterilir), dört haneli pozisyon başına en fazla 3 sonuç (8712'nin beş 8714
-parça satırı tarafından dışarı itilmemesi için) ve **bilerek küçük tutulmuş, elle derlenmiş on
-girdilik bir eş anlamlı tablosu** (`leech → 0106900090` vb.). Bu tablo kavramın bir demosudur,
+parça satırı tarafından dışarı itilmemesi için) ve **bilerek küçük tutulmuş, elle derlenmiş bir
+eş anlamlı tablosu** (`leech → 0106900090` vb.; sonradan `condom`, `prezervatif` ve `kondom`
+eklendi, ayrıntı İngilizce README'de). Bu tablo kavramın bir demosudur,
 kapsamlı bir eş anlamlılar sözlüğü değildir; gerçek kapsam, bakımı yapılan bir terminoloji
 veritabanı gerektirir. Sıcak gecikme: 220–440 ms → **29–36 ms** (İngilizce). Düşük güven eşiği
 TF-IDF için yeniden kalibre edildi (0,50 → 0,30). Her iki panel artık aynı sıralamayı verdiği

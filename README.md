@@ -1089,6 +1089,15 @@ Three additions came with the move:
   `live leeches for medical purposes` now puts the leech basket first and still shows the
   evidence around it.
 
+  *Later addition, from a live report:* `condom` returned no result at all, because the CN
+  calls condoms "sheath contraceptives". Three keys now cover it: `condom`, and the Turkish
+  and German everyday words `prezervatif` and `kondom`. They point at `3926909760`, "Sheath
+  contraceptives of polyurethane". That is only the second-best answer: latex condoms are
+  **4014 10 00**, and heading 4014 is missing from the bundled data. It is the same bundle
+  coverage gap as 8541 under "solar panel", and it is pinned by
+  `test_heading_4014_is_still_missing_from_the_bundle` so the aliases get repointed once a
+  rebuilt bundle has it.
+
 **Latency, measured on the real bundle (median of 5, same six queries):**
 
 | | before (difflib `search()`) | after (shared engine) |

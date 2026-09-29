@@ -1043,7 +1043,8 @@ im Matching.
 Neu dazu kamen: `hierarchy_path` (die Beschreibung mit ihrem Vorfahren-Kontext, in beiden
 Ergebniskarten als „Zolltarif-Hierarchie“ angezeigt), höchstens 3 Treffer je vierstelliger
 Position, damit z. B. 8712 nicht von fünf 8714-Teilezeilen verdrängt wird, und eine **bewusst
-winzige, kuratierte Alias-Tabelle** mit zehn Einträgen (`leech → 0106900090` u. a.). Diese ist
+winzige, kuratierte Alias-Tabelle** (`leech → 0106900090` u. a.; später kamen `condom`,
+`prezervatif` und `kondom` hinzu, Details in der englischen README). Diese ist
 ausdrücklich eine Demo des Konzepts und kein Synonymwörterbuch; echte Abdeckung bräuchte eine
 gepflegte Terminologiedatenbank. Latenz warm: 220–440 ms → **29–36 ms** (Englisch). Die
 Warnschwelle wurde für TF-IDF neu kalibriert (0,50 → 0,30), und der Hinweis „Code-Einreihung

@@ -213,6 +213,34 @@ class TestAliases:
         assert all(r.alias is None for r in classify(bundle, "power supply", top_n=5))
         assert classify(bundle, "power bank", top_n=1)[0].alias == "power bank"
 
+    @pytest.mark.parametrize(
+        ("query", "language"),
+        [
+            ("condom", "en"),
+            ("condoms", "en"),
+            ("prezervatif", "tr"),
+            ("Kondom", "de"),
+            ("latex condoms", "en"),
+        ],
+    )
+    def test_condom_searches_reach_the_sheath_contraceptive_code(
+        self, bundle: sqlite3.Connection, query: str, language: str
+    ) -> None:
+        """Reported from the live site: "condom" returned nothing at all.
+
+        The CN says "sheath contraceptives", so no word matched. The latex code
+        (4014 10 00) is missing from the bundle; the polyurethane one is the
+        only condom code there, and the alias points at it.
+        """
+        top = search(bundle, query, limit=5, language=language)[0]
+        assert top.hs_code.code == "3926909760"
+        assert top.alias is not None
+        assert top.hierarchy_path == "Sheath contraceptives of polyurethane"
+
+    def test_heading_4014_is_still_missing_from_the_bundle(self, bundle_codes: set) -> None:
+        """Pinned so the condom aliases get repointed once a rebuilt bundle has it."""
+        assert not [code for code in bundle_codes if code.startswith("4014")]
+
     def test_a_corpus_without_the_target_gets_nothing_invented(
         self, sample_only: sqlite3.Connection
     ) -> None:
