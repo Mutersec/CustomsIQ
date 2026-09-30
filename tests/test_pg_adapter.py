@@ -108,7 +108,7 @@ class TestDdlTranslation:
         """Postgres has no AUTOINCREMENT; identity columns replace it."""
         ddl = to_postgres_ddl(SCHEMA)
         assert "AUTOINCREMENT" not in ddl
-        assert ddl.count("INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY") == 5
+        assert ddl.count("INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY") == 6
 
     def test_real_becomes_double_precision(self) -> None:
         """REAL is 4-byte float4 on Postgres, which would corrupt 16.9."""
@@ -132,6 +132,7 @@ class TestDdlTranslation:
             "user_emails",
             "pending_signups",
             "activity_log",
+            "site_ratings",
         ):
             assert f"CREATE TABLE IF NOT EXISTS {table}" in ddl
 

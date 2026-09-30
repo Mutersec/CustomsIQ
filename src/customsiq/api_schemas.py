@@ -305,3 +305,29 @@ class AssistantResponse(BaseModel):
     context: dict
     suggestions: list[str]
     result: Optional[dict] = None
+
+
+class PublicRatingResponse(BaseModel):
+    """One approved rating as other users see it: no user id, no status."""
+
+    username: str
+    rating: int
+    comment: str
+    company: Optional[str] = None
+    date: str
+
+
+class OwnRatingResponse(PublicRatingResponse):
+    """The caller's own rating (POST /ratings, and `mine` in GET /ratings)."""
+
+    status: str
+
+
+class RatingsResponse(BaseModel):
+    """GET /ratings: approved ratings, their average and distribution, and the caller's own."""
+
+    average: Optional[float] = None
+    count: int
+    distribution: dict[str, int]
+    items: list[PublicRatingResponse]
+    mine: Optional[OwnRatingResponse] = None

@@ -833,6 +833,18 @@ also kostenlos und ohne API-Schlüssel.
   Codes nennt die Antwort den Warenwert und dass kein Satz vorliegt.
 - Bei einem Ursprung in der EU ist der Handel innergemeinschaftlich und zollfrei.
 
+### ⭐ Bewertungen & Kommentare (nach Freigabe veröffentlicht)
+
+Die letzte Karte der App-Seite lässt angemeldete Nutzer CustomsIQ mit **1–5 Sternen**
+bewerten und kommentieren. Das Unternehmen ist optional.
+
+- Neue und geänderte Bewertungen warten auf die Freigabe durch den Inhaber (Reiter
+  **Bewertungen** im Verwaltungspanel).
+- Nur freigegebene Bewertungen erscheinen und zählen zum Durchschnitt.
+- Pro Konto gibt es eine Bewertung.
+- Auf Render mit SQLite gehen Bewertungen bei jedem Deploy verloren; mit PostgreSQL
+  bleiben sie erhalten.
+
 ### 🔑 Das Verwaltungspanel des Inhabers und das Aktivitätsprotokoll
 
 **Was es ist.** `/admin` ist ein privates Panel nur für den Inhaber der Website, mit vier

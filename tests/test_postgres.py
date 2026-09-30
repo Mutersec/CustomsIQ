@@ -66,6 +66,7 @@ _TABLES = (
     "user_emails",
     "pending_signups",
     "activity_log",
+    "site_ratings",
 )
 
 

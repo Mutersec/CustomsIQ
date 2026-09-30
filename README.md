@@ -859,6 +859,39 @@ It is `POST /assistant`: signed-in only, rate-limited, messages capped at 300
 characters, and logged as the `assistant` action in the owner's activity log.
 Covered by `tests/test_assistant.py`.
 
+### ⭐ Ratings & comments, published after approval
+
+The last card on the app page lets signed-in users rate CustomsIQ with **1–5 stars**
+and a comment. The company name is optional. It shows:
+
+- the average, the number of ratings and a 5→1 distribution;
+- every approved comment, with the author's username.
+
+**Moderation.**
+- A new or edited rating is `pending`, and only its author and the site owner see
+  it.
+- The owner approves, rejects or deletes it in the admin panel's **Ratings** tab.
+  The tab shows a counter of ratings waiting for approval.
+- Only approved ratings are shown and counted in the average.
+- Each account has one rating. Editing it sends it back for approval, and the author
+  can withdraw it.
+- Deleting an account removes its rating too. Unlike review decisions, a rating is
+  not part of the audit trail.
+
+**Limits and safety.**
+- 1–5 stars, a comment of 10–500 characters, a company name of at most 80.
+- Rate-limited, signed-in only, and logged as the `rating` action.
+- Comments are stored as plain text and escaped on both pages.
+
+**Endpoints.**
+- User: `GET/POST /ratings`, `DELETE /ratings/mine`.
+- Owner: `GET /admin/api/ratings`, `POST /admin/api/ratings/{id}/status`,
+  `DELETE /admin/api/ratings/{id}`.
+- Tests: `tests/test_ratings.py`.
+
+Ratings live in the database, so on Render's free SQLite they are lost on every
+deploy. Use the PostgreSQL backend to keep them.
+
 ### 🔑 The owner's admin panel and the activity log
 
 **What it is.** `/admin` is a private panel for the site owner, with four tabs:
@@ -2803,6 +2836,7 @@ CustomsIQ/
 │   │   ├── auth.py              # accounts, sessions, roles — stdlib only, no new deps
 │   │   ├── admin.py             # owner-only admin panel: who the owner is, activity log, reports
 │   │   ├── assistant.py         # rule-based chat: parses a shipment, asks for what's missing, answers
+│   │   ├── ratings.py           # star ratings & comments, published after the owner approves them
 │   │   ├── assistant_glossary.py · assistant_texts.py # its word lists and its EN/TR/DE wording
 │   │   ├── document_extraction.py # invoice PDF → fields (pypdf + labelled-line regex)
 │   │   ├── sap_gts_bridge.py     # renders results in SAP GTS terms — simulation, not an integration

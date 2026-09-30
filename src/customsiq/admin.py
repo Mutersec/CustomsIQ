@@ -40,6 +40,7 @@ ACTIONS = (
     "invoice",
     "review",
     "assistant",
+    "rating",
     "login",
     "google",
     "signup",
@@ -126,6 +127,7 @@ def overview(conn: sqlite3.Connection, version: str) -> dict:
         "searches_week": database.count_activity_since(conn, week_ago, SEARCH_ACTIONS),
         "actions_day": database.count_activity_since(conn, day_ago, ACTIONS),
         "actions_week": database.count_activity_since(conn, week_ago, ACTIONS),
+        "ratings_pending": database.count_rows(conn, "site_ratings", "status = ?", ("pending",)),
         "system": {
             "version": version,
             "database": getattr(conn, "dialect", "sqlite"),
