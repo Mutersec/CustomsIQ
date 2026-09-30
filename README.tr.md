@@ -877,6 +877,29 @@ kullanmaz; çalıştırmak ücretsizdir, API anahtarı gerekmez.
 - Varış ülkesi AB dışındaysa (ör. Türkiye) o ülkenin vergilerinin sistemde olmadığı
   belirtilir.
 
+### ⭐ Yorumlar ve puanlar (onaydan sonra yayınlanır)
+
+Uygulama sayfasındaki son kartta giriş yapmış kullanıcılar CustomsIQ'ya **1–5 yıldız**
+verip yorum yazabilir. Şirket adı isteğe bağlıdır. Kartta şunlar görünür:
+- ortalama puan, yorum sayısı ve 5→1 dağılım;
+- onaylanmış yorumlar, yazanın kullanıcı adıyla.
+
+**Onay.**
+- Yeni ya da düzenlenmiş yorum "onay bekliyor" durumundadır. Onu yalnızca yazan kişi
+  ve site sahibi görür.
+- Site sahibi admin panelindeki **Yorumlar** sekmesinden onaylar, reddeder ya da
+  siler. Sekmede bekleyenlerin sayısı rozet olarak görünür.
+- Sitede yalnızca onaylananlar görünür ve ortalamaya katılır.
+- Her hesabın tek yorumu olur. Düzenlenen yorum yeniden onaya düşer; kullanıcı
+  yorumunu silebilir.
+
+**Kurallar.**
+- Yıldız 1–5 arası, yorum 10–500 karakter, şirket adı en fazla 80 karakter.
+- Hız sınırı uygulanır ve etkinlik kaydına `rating` olarak yazılır.
+
+**Not:** Render'ın ücretsiz SQLite'ında yorumlar her deploy'da silinir. Kalıcı olmaları
+için PostgreSQL (ör. Neon) gerekir.
+
 ### 🔑 Site sahibinin yönetim paneli ve etkinlik kaydı
 
 **Nedir.** `/admin`, yalnızca site sahibinin açabildiği bir paneldir. Dört sekmesi var:

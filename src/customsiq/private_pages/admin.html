@@ -174,6 +174,21 @@
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--navy-deep); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 13.5px; max-width: calc(100% - 32px); }
   .toast[hidden] { display: none; }
 
+  .tab-badge { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--red); color: #ffffff; font-size: 11.5px; line-height: 18px; text-align: center; }
+  .tab-badge[hidden] { display: none; }
+  #rating-filter button.selected { background: var(--primary); color: #ffffff; }
+  .rating-items { display: grid; gap: 10px; }
+  .rating-item { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface-2); min-width: 0; }
+  .rating-item .top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .rating-item .stars { color: var(--gold); letter-spacing: 2px; font-size: 16px; }
+  .rating-item .stars .off { color: #d5dbe5; }
+  .rating-item p { margin: 8px 0; white-space: pre-line; overflow-wrap: anywhere; }
+  .rating-item .who { font-size: 12.5px; color: var(--text-dim); overflow-wrap: anywhere; }
+  .rating-item .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chip.pending { background: #fff6e0; color: #7a5d00; }
+  .chip.approved { background: #e6f4ea; color: var(--green); }
+  .chip.rejected { background: #fdecea; color: var(--red); }
+
   @media (max-width: 600px) {
     header { padding: 12px 16px; }
     .filters label { flex: 1 1 140px; }
@@ -218,6 +233,7 @@
     <button type="button" class="tab" data-tab="users" data-i18n="tabs.users"></button>
     <button type="button" class="tab" data-tab="activity" data-i18n="tabs.activity"></button>
     <button type="button" class="tab" data-tab="unmatched" data-i18n="tabs.unmatched"></button>
+    <button type="button" class="tab" data-tab="ratings"><span data-i18n="tabs.ratings"></span> <span class="tab-badge" id="ratings-badge" hidden></span></button>
   </nav>
 
   <section class="panel" id="panel-overview">
@@ -303,6 +319,20 @@
       </div>
     </div>
   </section>
+
+  <section class="panel" id="panel-ratings" hidden>
+    <div class="card">
+      <h2 data-i18n="ratings.title"></h2>
+      <p class="note" data-i18n="ratings.note"></p>
+      <div class="filters" role="group" id="rating-filter">
+        <button type="button" class="ghost" data-rating-status="pending" data-i18n="ratings.pending"></button>
+        <button type="button" class="ghost" data-rating-status="approved" data-i18n="ratings.approved"></button>
+        <button type="button" class="ghost" data-rating-status="rejected" data-i18n="ratings.rejected"></button>
+        <button type="button" class="ghost" data-rating-status="" data-i18n="ratings.all"></button>
+      </div>
+      <div class="rating-items" id="rating-items"></div>
+    </div>
+  </section>
 </main>
 
 <div class="toast" id="toast" role="status" hidden></div>
@@ -313,13 +343,14 @@
     en: {
       badge: "Owner",
       back: "← Back to the app",
-      tabs: { overview: "Overview", users: "Users", activity: "Activity", unmatched: "No-result searches" },
+      tabs: { overview: "Overview", users: "Users", activity: "Activity", unmatched: "No-result searches", ratings: "Ratings" },
       stats: {
         users: "Users", usersSub: "{today} today · {week} this week",
         pending: "Pending sign-ups", pendingSub: "code not entered yet",
         sessions: "Active sessions", sessionsSub: "signed in right now or recently",
         searches: "Searches (24 h)", searchesSub: "{week} in the last 7 days",
         actions: "All actions (24 h)", actionsSub: "{week} in the last 7 days",
+        ratingsPending: "Ratings to approve", ratingsPendingSub: "waiting in the Ratings tab",
       },
       system: {
         title: "System status", version: "Version", database: "Database", mail: "E-mail (Brevo)",
@@ -344,25 +375,32 @@
       },
       actions: {
         search: "Search", classify: "Classify", screen: "Screening", duty: "Duty", risk: "Risk",
-        invoice: "Invoice upload", review: "Review", assistant: "Assistant", login: "Sign-in", google: "Google sign-in",
+        invoice: "Invoice upload", review: "Review", assistant: "Assistant", rating: "Rating", login: "Sign-in", google: "Google sign-in",
         signup: "Sign-up", logout: "Sign-out",
       },
       unmatched: {
         title: "Searches with no results", note: "The most frequent first. These are the words the catalogue or its synonyms are missing.",
         query: "Query", count: "Times", last: "Last searched", none: "No search has come back empty yet.",
       },
+      ratings: {
+        title: "Ratings & comments", note: "New and edited comments wait here. Only approved ones are shown on the site and counted in the average.",
+        pending: "Waiting", approved: "Published", rejected: "Rejected", all: "All",
+        approve: "Approve", reject: "Reject", remove: "Delete", none: "Nothing here.",
+        confirmDelete: "Delete this comment for good?", changed: "Saved.",
+      },
       error: "Something went wrong: {msg}",
     },
     tr: {
       badge: "Site sahibi",
       back: "← Uygulamaya dön",
-      tabs: { overview: "Genel bakış", users: "Kullanıcılar", activity: "Etkinlik", unmatched: "Sonuçsuz aramalar" },
+      tabs: { overview: "Genel bakış", users: "Kullanıcılar", activity: "Etkinlik", unmatched: "Sonuçsuz aramalar", ratings: "Yorumlar" },
       stats: {
         users: "Kullanıcı", usersSub: "bugün {today} · bu hafta {week}",
         pending: "Bekleyen kayıt", pendingSub: "kodu henüz girilmedi",
         sessions: "Aktif oturum", sessionsSub: "şu an ya da yakın zamanda girişli",
         searches: "Arama (24 sa)", searchesSub: "son 7 günde {week}",
         actions: "Tüm işlemler (24 sa)", actionsSub: "son 7 günde {week}",
+        ratingsPending: "Onay bekleyen yorum", ratingsPendingSub: "Yorumlar sekmesinde",
       },
       system: {
         title: "Sistem durumu", version: "Sürüm", database: "Veritabanı", mail: "E-posta (Brevo)",
@@ -387,25 +425,32 @@
       },
       actions: {
         search: "Arama", classify: "Sınıflandırma", screen: "Tarama", duty: "Gümrük vergisi", risk: "Risk",
-        invoice: "Fatura yükleme", review: "İnceleme", assistant: "Asistan", login: "Giriş", google: "Google ile giriş",
+        invoice: "Fatura yükleme", review: "İnceleme", assistant: "Asistan", rating: "Yorum", login: "Giriş", google: "Google ile giriş",
         signup: "Kayıt", logout: "Çıkış",
       },
       unmatched: {
         title: "Sonuç vermeyen aramalar", note: "En sık arananlar önce. Katalogda ya da eş anlamlılarda eksik olan kelimeler bunlar.",
         query: "Sorgu", count: "Kez", last: "Son arama", none: "Henüz sonuçsuz dönen bir arama yok.",
       },
+      ratings: {
+        title: "Yorumlar ve puanlar", note: "Yeni ve düzenlenen yorumlar burada bekler. Sitede yalnızca onaylananlar görünür ve ortalamaya katılır.",
+        pending: "Bekleyen", approved: "Yayında", rejected: "Reddedilen", all: "Tümü",
+        approve: "Onayla", reject: "Reddet", remove: "Sil", none: "Burada bir şey yok.",
+        confirmDelete: "Bu yorum kalıcı olarak silinsin mi?", changed: "Kaydedildi.",
+      },
       error: "Bir hata oluştu: {msg}",
     },
     de: {
       badge: "Inhaber",
       back: "← Zurück zur App",
-      tabs: { overview: "Übersicht", users: "Benutzer", activity: "Aktivität", unmatched: "Suchen ohne Treffer" },
+      tabs: { overview: "Übersicht", users: "Benutzer", activity: "Aktivität", unmatched: "Suchen ohne Treffer", ratings: "Bewertungen" },
       stats: {
         users: "Benutzer", usersSub: "heute {today} · diese Woche {week}",
         pending: "Offene Registrierungen", pendingSub: "Code noch nicht eingegeben",
         sessions: "Aktive Sitzungen", sessionsSub: "gerade oder kürzlich angemeldet",
         searches: "Suchen (24 Std.)", searchesSub: "{week} in den letzten 7 Tagen",
         actions: "Alle Aktionen (24 Std.)", actionsSub: "{week} in den letzten 7 Tagen",
+        ratingsPending: "Freizugebende Bewertungen", ratingsPendingSub: "im Reiter Bewertungen",
       },
       system: {
         title: "Systemstatus", version: "Version", database: "Datenbank", mail: "E-Mail (Brevo)",
@@ -430,18 +475,24 @@
       },
       actions: {
         search: "Suche", classify: "Einreihung", screen: "Prüfung", duty: "Zoll", risk: "Risiko",
-        invoice: "Rechnungs-Upload", review: "Prüfentscheidung", assistant: "Assistent", login: "Anmeldung", google: "Google-Anmeldung",
+        invoice: "Rechnungs-Upload", review: "Prüfentscheidung", assistant: "Assistent", rating: "Bewertung", login: "Anmeldung", google: "Google-Anmeldung",
         signup: "Registrierung", logout: "Abmeldung",
       },
       unmatched: {
         title: "Suchen ohne Treffer", note: "Die häufigsten zuerst. Diese Wörter fehlen im Katalog oder in den Synonymen.",
         query: "Suchbegriff", count: "Anzahl", last: "Zuletzt gesucht", none: "Bisher ist keine Suche leer geblieben.",
       },
+      ratings: {
+        title: "Bewertungen & Kommentare", note: "Neue und geänderte Kommentare warten hier. Nur freigegebene erscheinen auf der Website und zählen zum Durchschnitt.",
+        pending: "Wartend", approved: "Veröffentlicht", rejected: "Abgelehnt", all: "Alle",
+        approve: "Freigeben", reject: "Ablehnen", remove: "Löschen", none: "Nichts vorhanden.",
+        confirmDelete: "Diesen Kommentar endgültig löschen?", changed: "Gespeichert.",
+      },
       error: "Etwas ist schiefgelaufen: {msg}",
     },
   };
 
-  const ACTIONS = ["search", "classify", "screen", "duty", "risk", "invoice", "review", "assistant", "login", "google", "signup", "logout"];
+  const ACTIONS = ["search", "classify", "screen", "duty", "risk", "invoice", "review", "assistant", "rating", "login", "google", "signup", "logout"];
   const ROLES = ["viewer", "analyst", "compliance_officer", "admin"];
   const PAGE = 50;
 
@@ -450,6 +501,8 @@
   let users = null;
   let activity = null;
   let unmatched = null;
+  let ratingItems = null;
+  let ratingStatus = "pending";
   const filters = { user: "", action: "", q: "", zero: false, offset: 0 };
 
   function t(key, params) {
@@ -508,7 +561,9 @@
       stat(o.active_sessions, t("stats.sessions"), t("stats.sessionsSub")),
       stat(o.searches_day, t("stats.searches"), t("stats.searchesSub", { week: num(o.searches_week) })),
       stat(o.actions_day, t("stats.actions"), t("stats.actionsSub", { week: num(o.actions_week) })),
+      stat(o.ratings_pending, t("stats.ratingsPending"), t("stats.ratingsPendingSub")),
     ].join("");
+    setRatingsBadge(o.ratings_pending);
     const s = o.system;
     const flag = (on) => `<span class="${on ? "ok" : "off"}">${escapeHtml(on ? t("system.on") : t("system.off"))}</span>`;
     const rows = [
@@ -712,8 +767,85 @@
     renderUnmatched();
   }
 
+  // ---------- ratings ----------
+  function setRatingsBadge(count) {
+    const badge = document.getElementById("ratings-badge");
+    badge.hidden = !count;
+    badge.textContent = count ? String(count) : "";
+  }
+
+  function stars(value) {
+    return `<span class="stars" aria-label="${value}/5">${"★".repeat(value)}<span class="off">${"★".repeat(5 - value)}</span></span>`;
+  }
+
+  function renderRatings() {
+    document.querySelectorAll("[data-rating-status]").forEach((btn) => {
+      btn.classList.toggle("selected", btn.dataset.ratingStatus === ratingStatus);
+    });
+    if (!ratingItems) return;
+    const box = document.getElementById("rating-items");
+    if (!ratingItems.length) {
+      box.innerHTML = `<p class="empty">${escapeHtml(t("ratings.none"))}</p>`;
+      return;
+    }
+    box.innerHTML = ratingItems.map((r) => {
+      const buttons = [
+        r.status !== "approved" ? `<button type="button" class="primary" data-rating-set="approved" data-id="${r.id}">${L("ratings.approve")}</button>` : "",
+        r.status !== "rejected" ? `<button type="button" class="ghost" data-rating-set="rejected" data-id="${r.id}">${L("ratings.reject")}</button>` : "",
+        `<button type="button" class="danger" data-rating-delete="${r.id}">${L("ratings.remove")}</button>`,
+      ].join("");
+      return `<article class="rating-item">
+        <div class="top">${stars(r.rating)}<span class="chip ${escapeHtml(r.status)}">${escapeHtml(t(`ratings.${r.status}`))}</span></div>
+        <p>${escapeHtml(r.comment)}</p>
+        <div class="who"><strong>${escapeHtml(r.username)}</strong>${r.company ? ` · ${escapeHtml(r.company)}` : ""} · ${when(r.date)}</div>
+        <div class="buttons">${buttons}</div>
+      </article>`;
+    }).join("");
+  }
+
+  async function loadRatings() {
+    const query = ratingStatus ? `?status=${ratingStatus}` : "";
+    ratingItems = await api(`/admin/api/ratings${query}`);
+    renderRatings();
+    if (ratingStatus === "pending") setRatingsBadge(ratingItems.length);
+  }
+
+  document.getElementById("rating-filter").addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-rating-status]");
+    if (!btn) return;
+    ratingStatus = btn.dataset.ratingStatus;
+    loadRatings().catch((err) => toast(t("error", { msg: err.message })));
+  });
+
+  document.getElementById("rating-items").addEventListener("click", async (event) => {
+    const setBtn = event.target.closest("[data-rating-set]");
+    const deleteBtn = event.target.closest("[data-rating-delete]");
+    try {
+      if (setBtn) {
+        await api(`/admin/api/ratings/${setBtn.dataset.id}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: setBtn.dataset.ratingSet }),
+        });
+      } else if (deleteBtn) {
+        if (!window.confirm(t("ratings.confirmDelete"))) return;
+        await api(`/admin/api/ratings/${deleteBtn.dataset.ratingDelete}`, { method: "DELETE" });
+      } else {
+        return;
+      }
+      toast(t("ratings.changed"));
+      await loadRatings();
+      if (ratingStatus !== "pending") {
+        const pending = await api("/admin/api/ratings?status=pending");
+        setRatingsBadge(pending.length);
+      }
+    } catch (err) {
+      toast(t("error", { msg: err.message }));
+    }
+  });
+
   // ---------- tabs & language ----------
-  const LOADERS = { overview: loadOverview, users: loadUsers, activity: loadActivity, unmatched: loadUnmatched };
+  const LOADERS = { overview: loadOverview, users: loadUsers, activity: loadActivity, unmatched: loadUnmatched, ratings: loadRatings };
 
   function showTab(name) {
     document.querySelectorAll(".tab").forEach((tab) => {
@@ -738,6 +870,7 @@
     renderUsers();
     renderActivity();
     renderUnmatched();
+    renderRatings();
   }
 
   document.querySelectorAll(".lang-btn").forEach((btn) => btn.addEventListener("click", () => applyLanguage(btn.dataset.lang)));

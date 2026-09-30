@@ -1490,6 +1490,81 @@
     *, *::before, *::after { animation: none !important; transition: none !important; }
     .js-reveal .reveal { opacity: 1; transform: none; }
   }
+  /* ---------- ratings & comments ---------- */
+  .rating-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 32px; margin-bottom: 18px; }
+  .rating-average { display: flex; align-items: center; gap: 14px; }
+  .rating-average .big { font-size: 44px; font-weight: 800; line-height: 1; color: var(--primary); }
+  .rating-average .meta { color: var(--text-dim); font-size: 13px; }
+  .stars { color: var(--gold); letter-spacing: 2px; font-size: 18px; white-space: nowrap; }
+  .stars .off { color: #d5dbe5; }
+  .rating-bars { flex: 1 1 240px; display: grid; gap: 4px; min-width: 0; }
+  .rating-bar { display: grid; grid-template-columns: 34px 1fr 30px; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); }
+  .rating-bar .track { height: 8px; border-radius: 999px; background: #e8edf4; overflow: hidden; }
+  .rating-bar .track, .rating-bar .fill { display: block; }
+  .rating-bar .fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #d8b54a, var(--gold)); transition: width 0.8s var(--ease); }
+  .rating-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .rating-card { background: #fbfcfe; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; min-width: 0; }
+  .rating-card p { margin: 8px 0 10px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-line; }
+  .rating-card .who { font-size: 12.5px; color: var(--text-dim); overflow-wrap: anywhere; }
+  .rating-card .who strong { color: var(--text); }
+  .rating-empty { color: var(--text-dim); padding: 6px 0 18px; }
+  .rating-form { display: grid; gap: 12px; align-items: start; border-top: 1px solid var(--border); padding-top: 18px; max-width: 720px; }
+  .rating-form h3 { margin: 0; font-size: 15px; color: var(--primary); }
+  .rating-form .field { flex: none; }
+  .rating-form textarea {
+    width: 100%;
+    resize: vertical;
+    min-height: 84px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fbfcfe;
+    color: var(--text);
+    font: inherit;
+    font-size: 14.5px;
+  }
+  .rating-form textarea:focus { outline: none; background: #ffffff; border-color: var(--sky); box-shadow: var(--ring); }
+  .char-count { display: block; text-align: right; font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+  .rating-note { margin: 0; }
+  .rating-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .rating-actions button { align-self: auto; }
+  .ghost-btn, .ghost-btn:hover:not(:disabled) {
+    background: #ffffff;
+    color: var(--red);
+    border: 1px solid var(--red);
+    box-shadow: none;
+  }
+  .rating-error { margin: 0; color: var(--red); font-size: 13px; }
+  .rating-status { padding: 9px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; }
+  .rating-status.pending { background: #fff6e0; color: #7a5d00; }
+  .rating-status.approved { background: #e6f4ea; color: var(--green); }
+  .rating-status.rejected { background: #fdecea; color: var(--red); }
+
+  /* Five radio buttons drawn as stars. Laid out right-to-left so the CSS
+     sibling selector can light up every star up to the hovered/checked one. */
+  .star-input { border: 0; padding: 0; margin: 0; display: inline-flex; flex-direction: row-reverse; justify-content: flex-end; gap: 4px; }
+  .star-input legend { width: 100%; font-size: 11.5px; font-weight: 600; letter-spacing: 0.9px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+  .star-input input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .star-input label {
+    font-size: 34px;
+    line-height: 1;
+    color: #d5dbe5;
+    cursor: pointer;
+    margin: 0;
+    letter-spacing: 0;
+    text-transform: none;
+    transition: color 0.15s var(--ease), transform 0.15s var(--ease);
+  }
+  .star-input label:hover,
+  .star-input label:hover ~ label,
+  .star-input input:checked ~ label { color: var(--gold); }
+  .star-input label:hover { transform: scale(1.12); }
+  .star-input input:focus-visible + label { outline: 2px solid var(--sky); outline-offset: 2px; border-radius: 4px; }
+
+  @media (max-width: 600px) {
+    .rating-average .big { font-size: 36px; }
+    .star-input label { font-size: 38px; }
+  }
 </style>
 </head>
 <body>
@@ -1753,6 +1828,47 @@
       <div class="results" id="review-history-results" aria-live="polite"></div>
     </div>
   </section>
+
+  <!-- ============ Ratings & comments about the service ============ -->
+  <section class="panel wide" id="ratings-panel">
+    <div class="panel-head">
+      <span class="rule"></span>
+      <h2 data-i18n="ratings.title"></h2>
+    </div>
+    <div class="panel-body">
+      <p class="hint" data-i18n="ratings.hint"></p>
+      <div class="rating-summary" id="rating-summary"></div>
+      <div class="rating-list" id="rating-list" aria-live="polite"></div>
+
+      <form class="rating-form" id="rating-form" novalidate>
+        <h3 id="rating-form-title" data-i18n="ratings.formTitle"></h3>
+        <div class="rating-status" id="rating-status" hidden></div>
+        <fieldset class="star-input" id="star-input">
+          <legend data-i18n="ratings.yourStars"></legend>
+          <input type="radio" name="stars" id="star-5" value="5"><label for="star-5" data-i18n-aria="ratings.star5">★</label>
+          <input type="radio" name="stars" id="star-4" value="4"><label for="star-4" data-i18n-aria="ratings.star4">★</label>
+          <input type="radio" name="stars" id="star-3" value="3"><label for="star-3" data-i18n-aria="ratings.star3">★</label>
+          <input type="radio" name="stars" id="star-2" value="2"><label for="star-2" data-i18n-aria="ratings.star2">★</label>
+          <input type="radio" name="stars" id="star-1" value="1"><label for="star-1" data-i18n-aria="ratings.star1">★</label>
+        </fieldset>
+        <div class="field">
+          <label for="rating-comment" data-i18n="ratings.comment"></label>
+          <textarea id="rating-comment" rows="3" maxlength="500" data-i18n-placeholder="ratings.commentPlaceholder"></textarea>
+          <span class="char-count" id="rating-count">0 / 500</span>
+        </div>
+        <div class="field">
+          <label for="rating-company" data-i18n="ratings.company"></label>
+          <input type="text" id="rating-company" maxlength="80" data-i18n-placeholder="ratings.companyPlaceholder" autocomplete="organization">
+        </div>
+        <p class="hint rating-note" data-i18n="ratings.note"></p>
+        <div class="rating-actions">
+          <button type="submit" id="rating-submit" data-i18n="ratings.submit"></button>
+          <button type="button" class="ghost-btn" id="rating-delete" data-i18n="ratings.delete" hidden></button>
+        </div>
+        <p class="rating-error" id="rating-error" role="alert" hidden></p>
+      </form>
+    </div>
+  </section>
 </main>
 
 <button type="button" class="support-fab" id="support-fab" aria-controls="support-panel" aria-expanded="false">
@@ -1981,6 +2097,35 @@
         sourceSystem: "Source system",
         returnTable: (n) => `RETURN table — ${n} message(s)`,
         failed: "Could not render the GTS view.",
+      },
+      ratings: {
+        title: "Ratings & comments",
+        hint: "What people who use CustomsIQ think of it. Comments appear after the site owner has approved them.",
+        average: "average",
+        count: (n) => (n === 1 ? "1 rating" : `${n} ratings`),
+        none: "No ratings yet. Be the first to leave one below.",
+        formTitle: "Leave a rating",
+        formTitleEdit: "Your rating",
+        yourStars: "Your rating",
+        star1: "1 star", star2: "2 stars", star3: "3 stars", star4: "4 stars", star5: "5 stars",
+        comment: "Comment",
+        commentPlaceholder: "What was useful, what could be better?",
+        company: "Company (optional)",
+        companyPlaceholder: "e.g. Acme Logistics",
+        note: "Your comment will be published with your username once it is approved.",
+        submit: "Send",
+        update: "Update",
+        sending: "Sending…",
+        delete: "Delete my comment",
+        confirmDelete: "Delete your comment?",
+        needStars: "Please choose 1 to 5 stars.",
+        tooShort: "Please write at least 10 characters.",
+        error: "Could not save. Please try again.",
+        status: {
+          pending: "Waiting for approval — only you can see it for now.",
+          approved: "Published — thank you!",
+          rejected: "Not published. You can edit it and send it again.",
+        },
       },
       reviewHistory: {
         title: "Review History",
@@ -2228,6 +2373,35 @@
         returnTable: (n) => `RETURN tablosu — ${n} mesaj`,
         failed: "GTS görünümü oluşturulamadı.",
       },
+      ratings: {
+        title: "Yorumlar ve puanlar",
+        hint: "CustomsIQ'yu kullananların görüşleri. Yorumlar site sahibi onayladıktan sonra yayınlanır.",
+        average: "ortalama",
+        count: (n) => `${n} yorum`,
+        none: "Henüz yorum yok. Aşağıdan ilk yorumu siz yazın.",
+        formTitle: "Puan ver ve yorum yaz",
+        formTitleEdit: "Yorumunuz",
+        yourStars: "Puanınız",
+        star1: "1 yıldız", star2: "2 yıldız", star3: "3 yıldız", star4: "4 yıldız", star5: "5 yıldız",
+        comment: "Yorum",
+        commentPlaceholder: "Neyi faydalı buldunuz, ne daha iyi olabilir?",
+        company: "Şirket (isteğe bağlı)",
+        companyPlaceholder: "ör. Acme Lojistik",
+        note: "Yorumunuz onaylandıktan sonra kullanıcı adınızla yayınlanır.",
+        submit: "Gönder",
+        update: "Güncelle",
+        sending: "Gönderiliyor…",
+        delete: "Yorumumu sil",
+        confirmDelete: "Yorumunuz silinsin mi?",
+        needStars: "Lütfen 1 ile 5 arasında yıldız seçin.",
+        tooShort: "Lütfen en az 10 karakter yazın.",
+        error: "Kaydedilemedi. Lütfen tekrar deneyin.",
+        status: {
+          pending: "Onay bekliyor — şimdilik yalnızca siz görüyorsunuz.",
+          approved: "Yayında — teşekkürler!",
+          rejected: "Yayınlanmadı. Düzenleyip tekrar gönderebilirsiniz.",
+        },
+      },
       reviewHistory: {
         title: "İnceleme Geçmişi",
         hint: "Sınıflandırma, tarama ve vergi sonuçlarına ilişkin onaylar — yalnızca eklenir, en yeni önce.",
@@ -2474,6 +2648,35 @@
         returnTable: (n) => `RETURN-Tabelle — ${n} Meldung(en)`,
         failed: "Die GTS-Ansicht konnte nicht erstellt werden.",
       },
+      ratings: {
+        title: "Bewertungen & Kommentare",
+        hint: "Was Nutzerinnen und Nutzer über CustomsIQ denken. Kommentare erscheinen, nachdem der Inhaber sie freigegeben hat.",
+        average: "Durchschnitt",
+        count: (n) => (n === 1 ? "1 Bewertung" : `${n} Bewertungen`),
+        none: "Noch keine Bewertungen. Schreiben Sie unten die erste.",
+        formTitle: "Bewertung abgeben",
+        formTitleEdit: "Ihre Bewertung",
+        yourStars: "Ihre Sterne",
+        star1: "1 Stern", star2: "2 Sterne", star3: "3 Sterne", star4: "4 Sterne", star5: "5 Sterne",
+        comment: "Kommentar",
+        commentPlaceholder: "Was war hilfreich, was könnte besser sein?",
+        company: "Unternehmen (optional)",
+        companyPlaceholder: "z. B. Acme Logistik",
+        note: "Ihr Kommentar wird nach der Freigabe mit Ihrem Benutzernamen veröffentlicht.",
+        submit: "Senden",
+        update: "Aktualisieren",
+        sending: "Wird gesendet…",
+        delete: "Meinen Kommentar löschen",
+        confirmDelete: "Ihren Kommentar löschen?",
+        needStars: "Bitte wählen Sie 1 bis 5 Sterne.",
+        tooShort: "Bitte mindestens 10 Zeichen schreiben.",
+        error: "Speichern fehlgeschlagen. Bitte erneut versuchen.",
+        status: {
+          pending: "Wartet auf Freigabe — vorerst nur für Sie sichtbar.",
+          approved: "Veröffentlicht — vielen Dank!",
+          rejected: "Nicht veröffentlicht. Sie können ihn bearbeiten und erneut senden.",
+        },
+      },
       reviewHistory: {
         title: "Prüfprotokoll",
         hint: "Freigaben zu Einreihungs-, Prüf- und Zollergebnissen — nur anhängend, neueste zuerst.",
@@ -2579,6 +2782,7 @@
       loadReviewHistory();
       loadDashboard();
       assistants.forEach((chat) => chat.relabel());
+      renderRatings();
     });
   });
 
@@ -3484,7 +3688,146 @@
     if (event.key === "Escape" && !supportPanel.hidden) setSupportOpen(false);
   });
 
-  loadCurrentUser().then(loadReviewHistory);
+
+  // ---------- ratings & comments ----------
+  // Approved ratings are shown to everyone signed in; the caller's own rating
+  // comes back with its status so the form can say "waiting for approval".
+  let ratingData = null;
+  const ratingForm = document.getElementById("rating-form");
+  const ratingComment = document.getElementById("rating-comment");
+  const ratingCompany = document.getElementById("rating-company");
+  const ratingError = document.getElementById("rating-error");
+  const ratingSubmit = document.getElementById("rating-submit");
+  const ratingDelete = document.getElementById("rating-delete");
+
+  function starsHtml(value) {
+    const full = Math.round(value);
+    return `<span class="stars" aria-hidden="true">${"★".repeat(full)}<span class="off">${"★".repeat(5 - full)}</span></span>`;
+  }
+
+  function formatDate(iso) {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(lang, { dateStyle: "medium" });
+  }
+
+  function chosenStars() {
+    const checked = ratingForm.querySelector('input[name="stars"]:checked');
+    return checked ? Number(checked.value) : 0;
+  }
+
+  function updateCount() {
+    document.getElementById("rating-count").textContent = `${ratingComment.value.length} / 500`;
+  }
+
+  function renderRatings() {
+    if (!ratingData) return;
+    const d = ratingData;
+    const summary = document.getElementById("rating-summary");
+    if (d.count) {
+      const bars = [5, 4, 3, 2, 1].map((stars) => {
+        const n = d.distribution[String(stars)] || 0;
+        const width = Math.round((n / d.count) * 100);
+        return `<div class="rating-bar"><span>${stars} ★</span><span class="track"><span class="fill" style="width:${width}%"></span></span><span>${n}</span></div>`;
+      }).join("");
+      summary.innerHTML = `
+        <div class="rating-average">
+          <span class="big">${d.average.toLocaleString(lang, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>
+          <div>${starsHtml(d.average)}<div class="meta">${escapeHtml(t("ratings.average"))} · ${escapeHtml(t("ratings.count")(d.count))}</div></div>
+        </div>
+        <div class="rating-bars">${bars}</div>`;
+    } else {
+      summary.innerHTML = "";
+    }
+    document.getElementById("rating-list").innerHTML = d.items.length
+      ? d.items.map((r) => `
+          <article class="rating-card">
+            <span role="img" aria-label="${escapeHtml(t(`ratings.star${r.rating}`))}">${starsHtml(r.rating)}</span>
+            <p>${escapeHtml(r.comment)}</p>
+            <div class="who"><strong>${escapeHtml(r.username)}</strong>${r.company ? ` · ${escapeHtml(r.company)}` : ""} · ${escapeHtml(formatDate(r.date))}</div>
+          </article>`).join("")
+      : `<p class="rating-empty">${escapeHtml(t("ratings.none"))}</p>`;
+
+    const mine = d.mine;
+    const status = document.getElementById("rating-status");
+    status.hidden = !mine;
+    if (mine) {
+      status.className = `rating-status ${mine.status}`;
+      status.textContent = t(`ratings.status.${mine.status}`);
+    }
+    document.getElementById("rating-form-title").textContent = t(mine ? "ratings.formTitleEdit" : "ratings.formTitle");
+    ratingSubmit.textContent = t(mine ? "ratings.update" : "ratings.submit");
+    ratingDelete.hidden = !mine;
+  }
+
+  function fillRatingForm(mine) {
+    ratingForm.querySelectorAll('input[name="stars"]').forEach((input) => {
+      input.checked = Boolean(mine) && Number(input.value) === mine.rating;
+    });
+    ratingComment.value = mine ? mine.comment : "";
+    ratingCompany.value = mine && mine.company ? mine.company : "";
+    updateCount();
+  }
+
+  async function loadRatings() {
+    try {
+      const response = await fetch("/ratings");
+      if (!response.ok) return;
+      ratingData = await response.json();
+      fillRatingForm(ratingData.mine);
+      renderRatings();
+    } catch (err) {
+      /* the card simply stays empty */
+    }
+  }
+
+  function showRatingError(key) {
+    ratingError.hidden = !key;
+    ratingError.textContent = key ? t(key) : "";
+  }
+
+  ratingComment.addEventListener("input", updateCount);
+
+  ratingForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const stars = chosenStars();
+    if (!stars) return showRatingError("ratings.needStars");
+    if (ratingComment.value.trim().length < 10) return showRatingError("ratings.tooShort");
+    showRatingError(null);
+    ratingSubmit.disabled = true;
+    const label = ratingSubmit.textContent;
+    ratingSubmit.textContent = t("ratings.sending");
+    try {
+      const response = await fetch("/ratings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rating: stars,
+          comment: ratingComment.value.trim(),
+          company: ratingCompany.value.trim() || null,
+        }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      await loadRatings();
+    } catch (err) {
+      ratingSubmit.textContent = label;
+      showRatingError("ratings.error");
+    } finally {
+      ratingSubmit.disabled = false;
+    }
+  });
+
+  ratingDelete.addEventListener("click", async () => {
+    if (!window.confirm(t("ratings.confirmDelete"))) return;
+    try {
+      const response = await fetch("/ratings/mine", { method: "DELETE" });
+      if (!response.ok) throw new Error(String(response.status));
+      await loadRatings();
+    } catch (err) {
+      showRatingError("ratings.error");
+    }
+  });
+
+  loadCurrentUser().then(loadReviewHistory).then(loadRatings);
 
   // ---------- Dashboard ----------
   async function loadDashboard() {

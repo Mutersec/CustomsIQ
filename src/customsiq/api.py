@@ -12,7 +12,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from src.customsiq import admin, assistant, auth, google_identity, mailer, review, sap_gts_bridge
+from src.customsiq import (
+    admin,
+    assistant,
+    auth,
+    google_identity,
+    mailer,
+    ratings,
+    review,
+    sap_gts_bridge,
+)
 from src.customsiq.api_schemas import (
     AssistantResponse,
     AuthConfigResponse,
@@ -26,6 +35,8 @@ from src.customsiq.api_schemas import (
     HealthResponse,
     HSCodeVersionResponse,
     LogoutResponse,
+    OwnRatingResponse,
+    RatingsResponse,
     ReviewResponse,
     RiskAssessmentResponse,
     RoleChangeResponse,
@@ -38,8 +49,9 @@ from src.customsiq.api_schemas import (
 from src.customsiq.cn_classifier import classify
 from src.customsiq.config import settings
 from src.customsiq.dashboard import get_dashboard_stats
-from src.customsiq.database import delete_user as delete_user_row
 from src.customsiq.database import (
+    delete_rating,
+    delete_rating_for_user,
     fetch_hs_code_history,
     fetch_translations,
     fetch_users,
@@ -50,8 +62,10 @@ from src.customsiq.database import (
     load_bundled_hs_supplement,
     load_bundled_sanctions,
     seed,
+    set_rating_status,
     update_user_role,
 )
+from src.customsiq.database import delete_user as delete_user_row
 from src.customsiq.document_extraction import PDF_MAGIC, extract_invoice
 from src.customsiq.embargo_screener import screen_entity
 from src.customsiq.exceptions import (
@@ -1056,6 +1070,51 @@ def ask_assistant(body: AssistantRequest, request: Request) -> dict:
     return reply
 
 
+class RatingSubmission(BaseModel):
+    """Body of POST /ratings: stars and a comment about the service."""
+
+    rating: int = Field(..., ge=1, le=5)
+    comment: str = Field(..., min_length=ratings.MIN_COMMENT, max_length=ratings.MAX_COMMENT)
+    company: Optional[str] = Field(None, max_length=ratings.MAX_COMPANY)
+
+
+def _require_user(user: Optional[User] = Depends(current_user)) -> User:
+    """The signed-in user (the sign-in middleware has already turned everyone else away)."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in to use CustomsIQ.")
+    return user
+
+
+@app.get("/ratings", response_model=RatingsResponse)
+def list_ratings(user: User = Depends(_require_user)) -> dict:
+    """Approved ratings with their average and distribution, and the caller's own rating."""
+    return ratings.overview(_conn, user)
+
+
+@app.post(
+    "/ratings",
+    response_model=OwnRatingResponse,
+    dependencies=[Depends(_check_search_rate_limit)],
+)
+def submit_rating(body: RatingSubmission, request: Request) -> dict:
+    """Save the caller's rating. It is published only after the site owner approves it."""
+    user = _require_user(getattr(request.state, "user", None))
+    if len(body.comment.strip()) < ratings.MIN_COMMENT:
+        raise HTTPException(
+            status_code=422,
+            detail=f"The comment must be at least {ratings.MIN_COMMENT} characters.",
+        )
+    saved = ratings.submit(_conn, user, body.rating, body.comment, body.company)
+    _log(request, "rating", f"{body.rating}★ {body.comment}", body.rating)
+    return saved
+
+
+@app.delete("/ratings/mine")
+def delete_my_rating(user: User = Depends(_require_user)) -> dict:
+    """Withdraw the caller's own rating."""
+    return {"deleted": delete_rating_for_user(_conn, user.id)}
+
+
 class ReviewSubmission(BaseModel):
     """Body of a POST /review request.
 
@@ -1308,3 +1367,36 @@ def admin_unmatched(
 ) -> list[dict]:
     """Searches that found nothing, most frequent first."""
     return admin.unmatched_searches(_conn, limit)
+
+
+class RatingStatusChange(BaseModel):
+    """Body of POST /admin/api/ratings/{id}/status."""
+
+    status: Literal["pending", "approved", "rejected"]
+
+
+@app.get("/admin/api/ratings", include_in_schema=False)
+def admin_ratings(
+    status: Optional[Literal["pending", "approved", "rejected"]] = Query(None),
+    _: User = Depends(require_owner),
+) -> list[dict]:
+    """Every rating (or those of one status), most recently updated first."""
+    return ratings.for_owner(_conn, status)
+
+
+@app.post("/admin/api/ratings/{rating_id}/status", include_in_schema=False)
+def admin_rating_status(
+    rating_id: int, body: RatingStatusChange, _: User = Depends(require_owner)
+) -> dict:
+    """Approve, reject, or send a rating back to pending."""
+    if not set_rating_status(_conn, rating_id, body.status):
+        raise HTTPException(status_code=404, detail="No such rating.")
+    return {"id": rating_id, "status": body.status}
+
+
+@app.delete("/admin/api/ratings/{rating_id}", include_in_schema=False)
+def admin_delete_rating(rating_id: int, _: User = Depends(require_owner)) -> dict:
+    """Delete a rating outright."""
+    if not delete_rating(_conn, rating_id):
+        raise HTTPException(status_code=404, detail="No such rating.")
+    return {"deleted": rating_id}

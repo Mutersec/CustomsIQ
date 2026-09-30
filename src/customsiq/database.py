@@ -143,6 +143,22 @@ CREATE TABLE IF NOT EXISTS activity_log (
     created_at TEXT NOT NULL
 );
 
+-- Star ratings and comments about the service itself, one per account. Not to
+-- be confused with review_decisions (sign-offs on individual results). A
+-- rating is shown to other users only once the site owner has approved it;
+-- editing an approved one sends it back to 'pending'.
+CREATE TABLE IF NOT EXISTS site_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE,
+    username TEXT NOT NULL,
+    rating INTEGER NOT NULL,
+    comment TEXT NOT NULL,
+    company TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- Supplementary German/French descriptions for hs_codes. A separate table,
 -- not description_de/description_fr columns on hs_codes, for the same reason
 -- hs_code_history is separate from hs_codes: CREATE TABLE IF NOT EXISTS never
@@ -1300,11 +1316,115 @@ def delete_user(conn: sqlite3.Connection, user_id: int) -> None:
 
     Review decisions and activity rows are kept: they are the audit trail and
     carry the username as text, so they still read after the account is gone.
+    The account's public star rating is not an audit record and goes with it.
     """
     conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM user_emails WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM site_ratings WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
+
+
+class SiteRating(NamedTuple):
+    """One row of `site_ratings`."""
+
+    id: int
+    user_id: int
+    username: str
+    rating: int
+    comment: str
+    company: Optional[str]
+    status: str
+    created_at: str
+    updated_at: str
+
+
+_RATING_COLUMNS = "id, user_id, username, rating, comment, company, status, created_at, updated_at"
+
+
+def upsert_rating(
+    conn: sqlite3.Connection,
+    user_id: int,
+    username: str,
+    rating: int,
+    comment: str,
+    company: Optional[str],
+    status: str,
+    now: str,
+) -> None:
+    """Create or replace one account's rating, keeping its original created_at."""
+    existing = get_rating_for_user(conn, user_id)
+    if existing is None:
+        conn.execute(
+            "INSERT INTO site_ratings (user_id, username, rating, comment, company, status,"
+            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, username, rating, comment, company, status, now, now),
+        )
+    else:
+        conn.execute(
+            "UPDATE site_ratings SET username = ?, rating = ?, comment = ?, company = ?,"
+            " status = ?, updated_at = ? WHERE user_id = ?",
+            (username, rating, comment, company, status, now, user_id),
+        )
+    conn.commit()
+
+
+def get_rating_for_user(conn: sqlite3.Connection, user_id: int) -> Optional[SiteRating]:
+    """Return one account's rating, or None."""
+    row = conn.execute(
+        f"SELECT {_RATING_COLUMNS} FROM site_ratings WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return SiteRating(*row) if row else None
+
+
+def fetch_ratings(
+    conn: sqlite3.Connection, status: Optional[str] = None, limit: int = 50
+) -> list[SiteRating]:
+    """Return ratings, most recently updated first, optionally of one status."""
+    if status:
+        rows = conn.execute(
+            f"SELECT {_RATING_COLUMNS} FROM site_ratings WHERE status = ?"
+            " ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (status, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"SELECT {_RATING_COLUMNS} FROM site_ratings ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [SiteRating(*row) for row in rows]
+
+
+def rating_distribution(conn: sqlite3.Connection, status: str) -> dict[int, int]:
+    """Count ratings of one status by star value: {5: n, 4: n, ..., 1: n}."""
+    rows = conn.execute(
+        "SELECT rating, COUNT(*) FROM site_ratings WHERE status = ? GROUP BY rating", (status,)
+    ).fetchall()
+    counts = {stars: 0 for stars in range(5, 0, -1)}
+    for stars, count in rows:
+        counts[int(stars)] = int(count)
+    return counts
+
+
+def set_rating_status(conn: sqlite3.Connection, rating_id: int, status: str) -> bool:
+    """Set one rating's status; False if there is no such rating."""
+    cursor = conn.execute("UPDATE site_ratings SET status = ? WHERE id = ?", (status, rating_id))
+    conn.commit()
+    return bool(cursor.rowcount)
+
+
+def delete_rating(conn: sqlite3.Connection, rating_id: int) -> bool:
+    """Delete one rating by id; False if there is no such rating."""
+    cursor = conn.execute("DELETE FROM site_ratings WHERE id = ?", (rating_id,))
+    conn.commit()
+    return bool(cursor.rowcount)
+
+
+def delete_rating_for_user(conn: sqlite3.Connection, user_id: int) -> bool:
+    """Delete one account's own rating; False if it had none."""
+    cursor = conn.execute("DELETE FROM site_ratings WHERE user_id = ?", (user_id,))
+    conn.commit()
+    return bool(cursor.rowcount)
 
 
 class ImportStats(NamedTuple):
