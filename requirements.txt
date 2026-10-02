@@ -18,3 +18,7 @@ pypdf==6.19.0
 # step) and pyasn1-modules. Its HTTP fetches go through a stdlib urllib
 # transport (src/customsiq/google_identity.py), so `requests` is not needed.
 google-auth==2.58.1
+# PostgreSQL driver for the live deploy: Render's disk resets on every restart,
+# so sign-ups, reviews and the admin log persist only when CUSTOMSIQ_DATABASE_URL
+# points at an external Postgres (Neon). Still imported only when that is set.
+psycopg[binary]==3.2.13
