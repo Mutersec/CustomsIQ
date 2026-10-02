@@ -1756,11 +1756,13 @@ because it already reads `fetch_all_entities(conn)`, so the richer data arrives 
 that was already there. The only new code is a bundle builder, an idempotent `upsert_entities`,
 a loader, and one call at startup.
 
-**One behaviour worth naming, now that the data is real.** `screen_entity(conn, "Sberbank")`
-returns nothing, and that is correct rather than a gap: `name_similarity` distrusts token overlap
-for a single-token name, because a lone common word would otherwise match every record containing
-it. Real Sberbank entities *are* in the bundle — `"Sberbank Insurance"` finds them. The rule was
-always there; real data just makes it visible.
+**Single-word queries.** `name_similarity` distrusts token overlap for a one-word name, so
+`screen_entity(conn, "Sberbank")` used to return nothing even though 15 Sberbank records are
+listed. In a compliance tool that is a false negative. `screen_entity` now handles one-word queries
+itself: a word that appears in at most 25 listed records (`_RARE_TOKEN_MAX_RECORDS`) hits every
+record carrying it as a whole word. Sberbank (15), VTB (17) and Gazprom (10) match. Common words
+like company (573), bank (124) and mohammad (73) still need more of the name, so they do not
+flood the results.
 
 ### 🚫 Name matching is not product matching
 

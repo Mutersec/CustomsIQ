@@ -1671,11 +1671,13 @@ aynen eskisi gibi. `embargo_screener` hiç düzenleme gerektirmedi çünkü zate
 kodun tamamı: bir bundle üreticisi, idempotent bir `upsert_entities`, bir yükleyici ve açılışta bir
 çağrı.
 
-**Veri gerçekleştiği için adı anılmaya değer bir davranış.** `screen_entity(conn, "Sberbank")` hiçbir
-şey döndürmüyor ve bu bir eksik değil, doğru olan: `name_similarity` tek kelimelik bir isimde
-token-örtüşmesine güvenmiyor, çünkü tek başına yaygın bir kelime onu içeren her kayda uyardı. Gerçek
-Sberbank kayıtları bundle'da *var* — `"Sberbank Insurance"` onları buluyor. Kural baştan beri
-oradaydı; gerçek veri sadece görünür kıldı.
+**Tek kelimelik sorgular.** `name_similarity` tek kelimelik bir isimde token-örtüşmesine
+güvenmiyor. Bu yüzden listede 15 Sberbank kaydı olduğu hâlde `screen_entity(conn, "Sberbank")`
+eskiden hiçbir şey döndürmüyordu; bir uyum aracında bu yanlış negatiftir. Artık `screen_entity`
+tek kelimelik sorguyu kendisi ele alıyor: listede en fazla 25 kayıtta geçen bir kelime
+(`_RARE_TOKEN_MAX_RECORDS`), onu tam kelime olarak içeren her kayıtla eşleşir. Sberbank (15), VTB
+(17) ve Gazprom (10) eşleşir. company (573), bank (124) ve mohammad (73) gibi yaygın kelimeler için
+ismin devamı gerekir, böylece sonuçlar sahte alarmla dolmaz.
 
 ### 🚫 İsim eşleştirmesi, ürün eşleştirmesi değildir
 

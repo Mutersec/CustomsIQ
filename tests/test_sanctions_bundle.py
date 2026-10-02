@@ -418,16 +418,21 @@ class TestScreeningRealEntities:
     def test_a_real_listed_bank_hits(self, loaded: sqlite3.Connection) -> None:
         assert screen_entity(loaded, "Bank Melli Iran")[0].entity.name == "BANK MELLI IRAN"
 
-    def test_a_single_token_query_still_does_not_hit(self, loaded: sqlite3.Connection) -> None:
-        """Unchanged behaviour, worth pinning now that the data is real.
+    def test_a_distinctive_single_word_hits_every_record_carrying_it(
+        self, loaded: sqlite3.Connection
+    ) -> None:
+        """ "Sberbank" alone used to return nothing: a false negative in a compliance tool."""
+        matches = screen_entity(loaded, "Sberbank")
+        assert len(matches) >= 10
+        assert all("SBERBANK" in m.entity.name.upper() for m in matches)
+        assert screen_entity(loaded, "sberbank") == matches
 
-        "Sberbank" alone stays below the threshold because `name_similarity`
-        distrusts token overlap for a one-token name — otherwise a common word
-        would match every record containing it. Real listed Sberbank entities
-        *are* in the bundle; two tokens find them.
-        """
-        assert screen_entity(loaded, "Sberbank") == []
-        assert screen_entity(loaded, "Sberbank Insurance")
+    @pytest.mark.parametrize("word", ["Company", "Bank", "Mohammad", "Trading"])
+    def test_a_common_single_word_does_not_flood_the_results(
+        self, loaded: sqlite3.Connection, word: str
+    ) -> None:
+        """Hundreds of records carry these; a one-word query must not match them all."""
+        assert len(screen_entity(loaded, word)) < 10
 
     def test_an_invented_name_screens_clean_against_real_data(
         self, loaded: sqlite3.Connection

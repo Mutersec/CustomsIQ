@@ -1632,12 +1632,13 @@ Zwei-Token-Regel und `screening_threshold` sind genau wie vorher. `embargo_scree
 Naht, die schon da war. Der komplette neue Code: ein Bundle-Builder, ein idempotentes
 `upsert_entities`, ein Loader und ein Aufruf beim Start.
 
-**Ein Verhalten, das jetzt Erwähnung verdient, wo die Daten echt sind.**
-`screen_entity(conn, "Sberbank")` liefert nichts, und das ist richtig und keine Lücke:
-`name_similarity` misstraut dem Token-Overlap bei einem Namen aus einem einzigen Token, weil ein
-einzelnes häufiges Wort sonst auf jeden Eintrag passen würde, der es enthält. Echte Sberbank-Einträge
-*sind* im Bundle — `"Sberbank Insurance"` findet sie. Die Regel war immer da; echte Daten machen sie
-nur sichtbar.
+**Ein-Wort-Abfragen.** `name_similarity` misstraut dem Token-Overlap bei einem Namen aus einem
+einzigen Wort. Deshalb lieferte `screen_entity(conn, "Sberbank")` früher nichts, obwohl 15
+Sberbank-Einträge gelistet sind; in einem Compliance-Werkzeug ist das ein falsch-negatives Ergebnis.
+Jetzt behandelt `screen_entity` Ein-Wort-Abfragen selbst: Ein Wort, das in höchstens 25 Einträgen
+vorkommt (`_RARE_TOKEN_MAX_RECORDS`), trifft jeden Eintrag, der es als ganzes Wort enthält.
+Sberbank (15), VTB (17) und Gazprom (10) treffen. Häufige Wörter wie company (573), bank (124) und
+mohammad (73) brauchen weiterhin mehr vom Namen, damit die Ergebnisse nicht überflutet werden.
 
 ### 🚫 Namensabgleich ist kein Produktabgleich
 
