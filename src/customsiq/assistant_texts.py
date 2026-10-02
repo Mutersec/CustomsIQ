@@ -35,6 +35,10 @@ TEXT: dict[str, dict[str, str]] = {
             "I took {amount} as the total price. If it is per unit, write e.g. "
             '"1000 EUR per tonne".'
         ),
+        "currency_note": (
+            "EU duty is assessed in EUR; amounts are shown in {currency} and the official "
+            "customs exchange rate may differ."
+        ),
         "disclaimer": (
             "Estimate only: import VAT, freight, insurance and other charges are not included."
         ),
@@ -80,6 +84,10 @@ TEXT: dict[str, dict[str, str]] = {
             '{amount} tutarını toplam fiyat olarak aldım. Birim fiyatsa ör. "tonu 1000 euro" '
             "şeklinde yazın."
         ),
+        "currency_note": (
+            "AB gümrük vergisi EUR üzerinden hesaplanır; tutarlar {currency} olarak gösterildi, "
+            "resmi gümrük kuru farklı olabilir."
+        ),
         "disclaimer": "Tahmini hesaptır: ithalat KDV'si, navlun, sigorta ve diğer masraflar dahil değildir.",
         "classify_intro": '"{product}" için en yakın kodlar:',
         "screen_none": '"{name}" için yaptırım listesinde eşleşme yok.',
@@ -123,6 +131,10 @@ TEXT: dict[str, dict[str, str]] = {
         "assumed_total": (
             "Ich habe {amount} als Gesamtpreis genommen. Ist es ein Stückpreis, schreiben Sie "
             'z. B. "1000 EUR pro Tonne".'
+        ),
+        "currency_note": (
+            "Der EU-Zoll wird in EUR bemessen; die Beträge sind in {currency} angegeben, "
+            "der amtliche Zollkurs kann abweichen."
         ),
         "disclaimer": (
             "Nur eine Schätzung: Einfuhrumsatzsteuer, Fracht, Versicherung und weitere "

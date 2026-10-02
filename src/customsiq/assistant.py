@@ -115,7 +115,10 @@ _CURRENCY_WORDS = "|".join(re.escape(w) for w in sorted(_CURRENCY_OF, key=len, r
 _QUANTITY = re.compile(rf"(?<![\d.,])({_NUMBER})\s*({_UNIT_WORDS})(?![{_LETTER}-])")
 #: "500 t-shirts": a count straight before a word is a number of pieces.
 _COUNT = re.compile(rf"(?<![\d.,])(\d+)\s+(?=[{_LETTER}])")
-_MONEY_AFTER = re.compile(rf"(?<![\d.,])({_NUMBER})\s*({_CURRENCY_WORDS})(?![{_LETTER}])")
+#: "1000 dolarlık", "500 euroluk": Turkish "worth of" suffix after the currency.
+_MONEY_AFTER = re.compile(
+    rf"(?<![\d.,])({_NUMBER})\s*({_CURRENCY_WORDS})(?:l[ıiuü]k)?(?![{_LETTER}])"
+)
 _MONEY_BEFORE = re.compile(rf"({_CURRENCY_WORDS})\s*({_NUMBER})")
 
 #: Words right next to a price that say it is per unit, and of which unit.
@@ -640,6 +643,8 @@ def _cost(conn: sqlite3.Connection, merged: dict, lang: str) -> dict:
             break
         if duty is None:
             notes.append(_t(lang, "no_rate", code=code))
+    if currency != "EUR":
+        notes.append(_t(lang, "currency_note", currency=currency))
     notes.append(_t(lang, "disclaimer"))
 
     product = merged.get("product") or code
@@ -740,6 +745,15 @@ def _screen_answer(conn: sqlite3.Connection, message: str, lang: str) -> dict:
     }
 
 
+#: Greetings, thanks and "what can you do": answered with the help text.
+_SMALL_TALK = re.compile(
+    r"(?:h[iı]|hey|hello|hello there|good morning|selam|merhaba|meraba|slm|iyi günler|hallo|"
+    r"guten tag|moin|thanks?|thank you|thx|teşekkürler|teşekkür ederim|sağ ?ol|danke|"
+    r"what can you do|what do you do|ne yapabilirsin|neler yapabilirsin|ne yaparsın|"
+    r"was kannst du)[\s!?.,]*"
+)
+
+
 def answer(
     conn: sqlite3.Connection, message: str, context: Optional[dict] = None, lang: str = "en"
 ) -> dict:
@@ -750,6 +764,14 @@ def answer(
     the earlier question.
     """
     lang = lang if lang in LANGUAGES else "en"
+    if _SMALL_TALK.fullmatch(normalize(message).strip()):
+        # "hi" would otherwise be classified (to "Hi-Lok" bolts).
+        return {
+            "reply": _t(lang, "help"),
+            "context": {},
+            "result": None,
+            "suggestions": SUGGESTIONS[lang],
+        }
     facts = parse(message)
     intents = facts.get("intents", [])
     if "screen" in intents:

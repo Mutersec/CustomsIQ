@@ -369,3 +369,44 @@ class TestThePage:
             assert len(blocks) == 3, section
             keys = [set(re.findall(r"^\s+(\w+):", block, re.M)) for block in blocks]
             assert keys[0] == keys[1] == keys[2], section
+
+
+class TestSmallTalkAndCurrency:
+    @pytest.mark.parametrize(
+        ("message", "lang"),
+        [
+            ("hi", "en"),
+            ("Hello!", "en"),
+            ("thanks", "en"),
+            ("what can you do?", "en"),
+            ("Merhaba", "tr"),
+            ("teşekkürler", "tr"),
+            ("ne yapabilirsin?", "tr"),
+            ("Hallo", "de"),
+        ],
+    )
+    def test_greetings_get_the_help_text_not_a_code(
+        self, conn: sqlite3.Connection, message: str, lang: str
+    ) -> None:
+        """ "hi" used to be classified as "Hi-Lok" bolts."""
+        reply = assistant.answer(conn, message, {}, lang)
+        assert reply["result"] is None
+        assert reply["reply"] == TEXT[lang]["help"]
+
+    def test_a_product_is_still_classified(self, conn: sqlite3.Connection) -> None:
+        assert assistant.answer(conn, "laptop", {}, "en")["result"]["kind"] == "classify"
+
+    def test_dolarlik_is_a_price_not_a_quantity(self) -> None:
+        facts = assistant.parse("Çin'den 1000 dolarlık tişört getireceğim")
+        assert facts["price"]["amount"] == "1000"
+        assert facts["price"]["currency"] == "USD"
+        assert "quantity" not in facts
+
+    def test_a_non_euro_cost_says_duty_is_assessed_in_euro(self, conn: sqlite3.Connection) -> None:
+        reply = assistant.answer(conn, "1000 USD of t-shirts from China", {}, "en")
+        assert reply["result"]["currency"] == "USD"
+        assert "assessed in EUR" in reply["reply"]
+
+    def test_a_euro_cost_has_no_exchange_rate_note(self, conn: sqlite3.Connection) -> None:
+        reply = assistant.answer(conn, "1000 EUR of t-shirts from China", {}, "en")
+        assert "assessed in EUR" not in reply["reply"]
