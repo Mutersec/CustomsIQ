@@ -436,6 +436,19 @@ def _seed_if_empty(
     logger.info("seeded %d rows into %s", len(rows), table)
 
 
+def _insert_missing(
+    conn: sqlite3.Connection, table: str, columns: Sequence[str], rows: list[tuple]
+) -> None:
+    """Insert the rows whose primary key is not in `table` yet (SQLite and Postgres alike)."""
+    placeholders = ", ".join("?" for _ in columns)
+    conn.executemany(
+        f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders}) "
+        "ON CONFLICT DO NOTHING",
+        rows,
+    )
+    conn.commit()
+
+
 def seed(
     conn: sqlite3.Connection,
     records: Iterable[HSCode] = SAMPLE_DATA,
@@ -462,7 +475,10 @@ def seed(
         ("name", "country", "list_source", "date_added"),
         [(e.name, e.country, e.list_source, e.date_added) for e in entities],
     )
-    _seed_if_empty(
+    # Rates are reference data that grows with the code (854143 was added after
+    # the live database was first seeded), so missing rows are added on every
+    # start instead of only into an empty table. Existing rows are left alone.
+    _insert_missing(
         conn,
         "tariff_rates",
         (

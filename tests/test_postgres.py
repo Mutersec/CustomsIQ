@@ -112,6 +112,12 @@ class TestSchemaAndSeeding:
         seed(conn)
         assert len(fetch_all(conn)) == len(SAMPLE_DATA)
 
+    def test_a_rate_added_later_reaches_an_already_seeded_database(self, conn) -> None:
+        """ON CONFLICT DO NOTHING must behave the same on Postgres."""
+        seed(conn, rates=[r for r in TARIFF_RATES if r.hs_code != "854143"])
+        seed(conn)
+        assert len(fetch_all_rates(conn)) == len(TARIFF_RATES)
+
 
 class TestPositionalRowReads:
     """Every column must land in the right dataclass field, not just the right count."""

@@ -45,6 +45,10 @@ _CENTS = Decimal("0.01")
 
 def normalize(text: str) -> str:
     """Lower-case with Turkish rules (İ -> i, I -> ı) and one kind of apostrophe."""
+    # "Iran", "Indien", "Italy": a capital I opening a lower-case word is a dotted
+    # i in every language but Turkish, and no Turkish place or product name in the
+    # glossary starts with ı. ponytail: all-caps "IRAN" still becomes "ıran".
+    text = re.sub(r"\bI(?=[a-zçğöşüäß])", "i", text)
     text = text.replace("İ", "i").replace("I", "ı").lower()
     return re.sub(r"[’‘`´]", "'", text)
 
@@ -282,7 +286,8 @@ _STOPWORDS = set(
     import importing imported buy buying bought order ordered want would like
     calculate calculation cost costs price priced total duty tariff how much what is
     please can could will need landed value worth code which classify
-    ich wir sie es der die das ein eine einen von aus nach mit und für pro je zu im
+    ich wir sie es der die das dem den des ein eine einen einem einer
+    von aus nach mit und für pro je zu im
     importieren import kaufe kaufen berechne berechnen kosten preis gesamt insgesamt
     zoll wie viel welche nummer bitte
     """.split()

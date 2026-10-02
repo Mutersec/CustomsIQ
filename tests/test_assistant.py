@@ -410,3 +410,24 @@ class TestSmallTalkAndCurrency:
     def test_a_euro_cost_has_no_exchange_rate_note(self, conn: sqlite3.Connection) -> None:
         reply = assistant.answer(conn, "1000 EUR of t-shirts from China", {}, "en")
         assert "assessed in EUR" not in reply["reply"]
+
+
+class TestGerman:
+    def test_iran_with_a_capital_i_is_a_country_not_ıran(self) -> None:
+        """Turkish I -> ı used to apply to every language, so "Iran" was never found."""
+        facts = assistant.parse("aus dem Iran 100 Tonnen Zwiebeln, 200.000 Euro")
+        assert facts["origin"] == "IR"
+        assert facts["product_query"] == "onions"
+        assert facts["quantity"] == "100" and facts["unit"] == "t"
+
+    def test_indien_is_india(self) -> None:
+        assert assistant.parse("100 Tonnen Zwiebeln aus Indien, 200.000 Euro")["origin"] == "IN"
+
+    def test_all_caps_turkish_keeps_the_dotless_i(self) -> None:
+        assert assistant.normalize("KIBRIS") == "kıbrıs"
+
+    def test_the_german_onion_question_is_answered(self, conn: sqlite3.Connection) -> None:
+        reply = assistant.answer(conn, "aus dem Iran 100 Tonnen Zwiebeln, 200.000 Euro", {}, "de")
+        assert reply["result"]["kind"] == "cost"
+        assert reply["result"]["origin"] == "IR"
+        assert reply["result"]["customs_value"] == "200000.00"

@@ -35,6 +35,14 @@ class TestSeeding:
         seed(conn)
         assert sum(len(fetch_rates_for_code(conn, r.hs_code)) for r in TARIFF_RATES) == total
 
+    def test_a_rate_added_later_reaches_an_already_seeded_database(self) -> None:
+        """The live Postgres was seeded before 854143 existed; restarts must add it."""
+        connection = get_connection(":memory:")
+        seed(connection, rates=[r for r in TARIFF_RATES if r.hs_code != "854143"])
+        assert not fetch_rates_for_code(connection, "854143")
+        seed(connection)
+        assert fetch_rates_for_code(connection, "854143")
+
 
 class TestRateSelection:
     """Which of a code's rates applies to a given origin."""
