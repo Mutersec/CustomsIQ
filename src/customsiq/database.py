@@ -279,6 +279,9 @@ TARIFF_RATES: list[TariffRate] = [
     TariffRate("4011100000", ALL_ORIGINS, "standard", 4.5, None, "2024-01-01"),
     TariffRate("9403300000", ALL_ORIGINS, "standard", 0.0, None, "2024-01-01"),
     TariffRate("7326909800", ALL_ORIGINS, "standard", 2.7, None, "2024-01-01"),
+    # Real, not illustrative: photovoltaic modules are duty-free under the WTO ITA.
+    # HS-6 because the CN bundle lacks heading 8541; the code comes from the HS supplement.
+    TariffRate("854143", ALL_ORIGINS, "standard", 0.0, None, "2024-01-01"),
     TariffRate("6109100000", "NO", "preferential", 0.0, _SOLVIA, "2024-01-01"),
     TariffRate("6203420000", "NO", "preferential", 4.0, _SOLVIA, "2024-01-01"),
     TariffRate("8528721000", "CH", "preferential", 7.0, _SOLVIA, "2024-01-01"),

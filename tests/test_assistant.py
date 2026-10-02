@@ -158,6 +158,14 @@ class TestCostAnswers:
         assert "kayıtlı bir vergi oranı yok" in reply["reply"]
         assert "10.000,00 EUR" in reply["reply"]
 
+    def test_solar_panels_have_a_rate_on_record(self, conn: sqlite3.Connection) -> None:
+        """8541 used to classify but stop at "no duty rate"; PV modules are duty-free."""
+        reply = assistant.answer(conn, "solar panel from China 2000 EUR", {}, "en")
+        assert reply["result"]["code"] == "854143"
+        assert reply["result"]["rate_percent"] == 0.0
+        assert reply["result"]["duty_amount"] == "0.00"
+        assert "No duty rate" not in reply["reply"]
+
     def test_the_users_original_sentence_is_intra_eu(self, conn: sqlite3.Connection) -> None:
         reply = assistant.answer(
             conn,
