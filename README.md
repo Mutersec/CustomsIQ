@@ -454,7 +454,9 @@ Two honest caveats, both consequences of the free tier this demo already documen
 
 - **Accounts are ephemeral.** The filesystem resets, so registrations and role changes
   disappear on restart and the demo accounts are re-seeded — the same behaviour the
-  rest of the seeded data already has. Don't reuse a real password.
+  rest of the seeded data already has. Don't reuse a real password. To keep sign-ups,
+  reviews and the admin activity log across restarts, point `CUSTOMSIQ_DATABASE_URL` at a
+  persistent Postgres (e.g. Neon or Supabase free tier) in the Render dashboard — no code change.
 - **`Secure` on the session cookie is derived, not hardcoded**, from `X-Forwarded-Proto`
   (Render terminates TLS at a proxy, so the app itself sees plain HTTP). Hardcoding it
   would have broken `http://localhost`; ignoring it would have sent the cookie in the

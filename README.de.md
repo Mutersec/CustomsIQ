@@ -464,7 +464,9 @@ Zwei ehrliche Einschränkungen, beide Folge des ohnehin dokumentierten kostenlos
 - **Konten sind flüchtig.** Das Dateisystem wird zurückgesetzt, Registrierungen und
   Rollenwechsel verschwinden beim Neustart, die Demo-Konten werden neu angelegt — genau
   das Verhalten, das die übrigen eingesäten Daten schon haben. Verwenden Sie hier kein
-  echtes Passwort.
+  echtes Passwort. Damit Registrierungen, Reviews und das Admin-Aktivitätsprotokoll Neustarts
+  überleben, `CUSTOMSIQ_DATABASE_URL` im Render-Dashboard auf eine dauerhafte Postgres-Datenbank
+  (z. B. Neon oder Supabase) setzen — keine Codeänderung nötig.
 - **`Secure` am Session-Cookie ist abgeleitet, nicht fest verdrahtet**, nämlich aus
   `X-Forwarded-Proto` (Render terminiert TLS an einem Proxy, die App selbst sieht reines
   HTTP). Fest verdrahtet hätte es `http://localhost` zerstört; ignoriert hätte es das
