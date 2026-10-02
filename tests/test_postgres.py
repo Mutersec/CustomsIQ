@@ -274,3 +274,18 @@ class TestModulesOnPostgres:
         assert result.level == "high"
         assert result.composite_score == pytest.approx(0.6609, abs=1e-4)
         assert result.hs_code == "6109100000"
+
+
+class TestReconnect:
+    """Neon's free tier suspends after 5 idle minutes and drops every connection."""
+
+    def test_recovers_after_server_drops_the_connection(self, conn) -> None:
+        seed(conn)
+        killer = get_connection(POSTGRES_URL)
+        killer.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE pid <> pg_backend_pid() AND datname = current_database()"
+        )
+        killer.close()
+
+        assert len(fetch_all(conn)) == len(SAMPLE_DATA)

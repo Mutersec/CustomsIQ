@@ -17,7 +17,7 @@ and only the handful of genuine dialect differences are translated here.
 
 import logging
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from types import TracebackType
 from typing import Any, Optional
 
@@ -78,28 +78,53 @@ class PgConnection:
 
     dialect = "postgresql"
 
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Any, url: Optional[str] = None) -> None:
         self._connection = connection
+        self._url = url
+
+    def _run(self, work: Callable[[Any], None]) -> Any:
+        """Run `work` on a fresh cursor, reconnecting once if the server dropped us.
+
+        The app holds this one connection for its whole life, and hosted Postgres
+        closes idle ones (Neon's free tier suspends after five idle minutes), so
+        without this every query after the first nap fails until a restart.
+        Only a *broken* connection is retried, never a failing statement.
+        """
+        import psycopg
+
+        try:
+            cursor = self._connection.cursor()
+            work(cursor)
+            return cursor
+        except psycopg.OperationalError:
+            if self._url is None or not (self._connection.closed or self._connection.broken):
+                raise
+            # ponytail: a statement cut off mid-flight is re-sent; with autocommit
+            # that can double one insert in a rare race. A pool fixes it if it matters.
+            logger.warning("PostgreSQL connection lost, reconnecting")
+            self._connection = _open(self._url)
+            cursor = self._connection.cursor()
+            work(cursor)
+            return cursor
 
     def execute(self, sql: str, parameters: Sequence[Any] = ()) -> Any:
         """Run one statement and return its cursor (already executed, like sqlite3)."""
-        cursor = self._connection.cursor()
-        cursor.execute(translate_placeholders(sql), tuple(parameters))
-        return cursor
+        return self._run(lambda c: c.execute(translate_placeholders(sql), tuple(parameters)))
 
     def executemany(self, sql: str, seq_of_parameters: Iterable[Sequence[Any]]) -> Any:
         """Run one statement for each parameter row (psycopg has this on the cursor)."""
-        cursor = self._connection.cursor()
-        cursor.executemany(translate_placeholders(sql), [tuple(p) for p in seq_of_parameters])
-        return cursor
+        rows = [tuple(p) for p in seq_of_parameters]
+        return self._run(lambda c: c.executemany(translate_placeholders(sql), rows))
 
     def executescript(self, script: str) -> Any:
         """Run a multi-statement script; psycopg has no executescript of its own."""
-        cursor = self._connection.cursor()
-        for statement in (s.strip() for s in script.split(";")):
-            if statement:
-                cursor.execute(statement)
-        return cursor
+
+        def run_all(cursor: Any) -> None:
+            for statement in (s.strip() for s in script.split(";")):
+                if statement:
+                    cursor.execute(statement)
+
+        return self._run(run_all)
 
     def commit(self) -> None:
         """No-op in practice (autocommit), kept so callers need no dialect branch."""
@@ -134,14 +159,21 @@ def connect_postgres(url: str) -> PgConnection:
         RuntimeError: If the optional psycopg driver isn't installed.
     """
     try:
-        import psycopg
-        from psycopg.rows import tuple_row
+        import psycopg  # noqa: F401
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise RuntimeError(_MISSING_DRIVER) from exc
+
+    connection = _open(url)
+    logger.info("connected to PostgreSQL")
+    return PgConnection(connection, url)
+
+
+def _open(url: str) -> Any:
+    """Open the raw psycopg connection (also used to reconnect)."""
+    import psycopg
+    from psycopg.rows import tuple_row
 
     # tuple_row is psycopg's default, but it is set explicitly here because
     # database.py reads every row positionally (`HSCode(*row)`, `row[0]`): with
     # dict rows those unpack the column *names* and silently produce garbage.
-    connection = psycopg.connect(url, autocommit=True, row_factory=tuple_row)
-    logger.info("connected to PostgreSQL")
-    return PgConnection(connection)
+    return psycopg.connect(url, autocommit=True, row_factory=tuple_row)
